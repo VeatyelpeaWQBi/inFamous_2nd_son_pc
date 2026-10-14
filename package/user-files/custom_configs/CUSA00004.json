@@ -1,0 +1,12 @@
+{
+    "General": {
+        "neo_mode": true,
+        "extra_dmem_in_mbytes": 512
+    },
+    "GPU": {
+        "readbacks_mode": 2
+    },
+    "Vulkan": {
+        "pipeline_cache_enabled": true
+    }
+}

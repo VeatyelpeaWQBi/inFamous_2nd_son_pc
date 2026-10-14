@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  inFAMOUS Second Son (CUSA00004, APP_VER 01.00) - patches for the shadPS4-AYOUB1080p build.
+  Unofficial, not affiliated with or endorsed by Sony Interactive Entertainment or Sucker Punch Productions.
+  No game code is included: every line carries OriginalHash, a FNV-1a 64-bit checksum of the bytes it
+  replaces. If the game is another version, the line is skipped ("Patch ... skipped" in the log).
+  isEnabled="true" / "false" to switch a patch on or off, then restart the game.
+  FR : patchs non officiels. Aucun code du jeu n est inclus : chaque ligne porte une somme de controle
+  (OriginalHash) des octets remplaces ; sur une autre version du jeu, la ligne est ignoree.
+-->
+<Patch>
+  <TitleID>
+    <ID>CUSA00004</ID>
+  </TitleID>
+  <Metadata Title="inFAMOUS Second Son" Name="Dynamic quality thresholds x2 (no quality drops in busy scenes)" Note="The dynamic quality system of the game lowers the quality (sun shadow cascades, resolution) when the per-frame GPU command buffer gets busy; its limits are doubled. FR : limites du systeme de qualite dynamique du jeu doublees : il ne baisse plus la qualite (ombres du soleil, resolution) dans les scenes chargees." Author="AYOUB1080p" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
+    <PatchList>
+      <Line Type="bytes" Address="0x005f1736" Value="00000003" OriginalHash="4b72757f9c5c7dc2"/>
+      <Line Type="bytes" Address="0x005f1b19" Value="CCCC8C02" OriginalHash="2c21d479393d51d0"/>
+      <Line Type="bytes" Address="0x005f1b32" Value="CCCC8C02" OriginalHash="2c21d479393d51d0"/>
+      <Line Type="bytes" Address="0x005f1b7a" Value="00000003" OriginalHash="4b72757f9c5c7dc2"/>
+    </PatchList>
+  </Metadata>
+  <Metadata Title="inFAMOUS Second Son" Name="Anti-freeze guard (collision loop)" Note="Stops a collision query loop after 200 000 iterations instead of hanging the game. FR : securite anti-blocage, le calcul de collisions s arrete au bout de 200 000 tours au lieu de figer le jeu." Author="AYOUB1080p" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
+    <PatchList>
+      <Line Type="bytes" Address="0x010c5680" Value="FF057AFE2D07813D70FE2D07400D03007313488B85B8FFFFFF4D8BE54C8B6800E9C8A166FFE96BA366FFCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC70536FE2D0700000000488B152F870D00E946A366FFCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" OriginalHash="8421ae126c7ced25"/>
+      <Line Type="bytes" Address="0x0072f863" Value="E9185E99000F1F440000" OriginalHash="1f843bcacf7ad694"/>
+      <Line Type="bytes" Address="0x0072fa15" Value="E9A65C99006690" OriginalHash="3ee41d36233286e4"/>
+    </PatchList>
+  </Metadata>
+  <Metadata Title="inFAMOUS Second Son" Name="Bigger light list (needed for native 4K)" Note="The game sizes its light lists for 25 600 tiles of 16 pixels (enough up to 1800p); 4K needs 32 400. FR : liste des lumieres agrandie, necessaire pour la 4K native." Author="AYOUB1080p" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
+    <PatchList>
+      <Line Type="bytes" Address="0x0056be07" Value="00004800" OriginalHash="4cf5e27f9da5a7b7"/>
+      <Line Type="bytes" Address="0x0056be1f" Value="00004800" OriginalHash="4cf5e27f9da5a7b7"/>
+    </PatchList>
+  </Metadata>
+  <Metadata Title="inFAMOUS Second Son" Name="Streaming: closest city blocks first" Note="Lower priority penalties of the world block streamer (3000/2000/2000 -&gt; 1000/700/700): the blocks nearest to the player are loaded and kept in high detail sooner. FR : streaming, les blocs de la ville les plus proches passent en priorite." Author="AYOUB1080p" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+    <PatchList>
+      <Line Type="bytes" Address="0x00d91e14" Value="00007A4400002F44" OriginalHash="972c64e9a22e1c43"/>
+      <Line Type="bytes" Address="0x00d91e04" Value="00002F44" OriginalHash="4a4e6e7f9b6495a3"/>
+    </PatchList>
+  </Metadata>
+  <Metadata Title="inFAMOUS Second Son" Name="Native 2560x1440 (render and output)" Note="Renders and outputs 2560x1440 instead of 1920x1080 (base PS4 mode). Enable only one resolution patch. FR : rendu et sortie en 2560x1440, n activer qu un seul patch de resolution." Author="AYOUB1080p" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+    <PatchList>
+      <Line Type="bytes" Address="0x005eff4a" Value="000A0000" OriginalHash="0dd91daa965465c8"/>
+      <Line Type="bytes" Address="0x005eff51" Value="A0050000" OriginalHash="2aaa2a3cd88034c1"/>
+      <Line Type="bytes" Address="0x005eff57" Value="000A0000" OriginalHash="0dd91daa965465c8"/>
+      <Line Type="bytes" Address="0x005eff5e" Value="A0050000" OriginalHash="2aaa2a3cd88034c1"/>
+      <Line Type="bytes" Address="0x005f0d39" Value="000A0000" OriginalHash="cb37417f543627f0"/>
+      <Line Type="bytes" Address="0x005f0d3e" Value="000A0000" OriginalHash="0dd91daa965465c8"/>
+      <Line Type="bytes" Address="0x005f0d43" Value="000A0000" OriginalHash="e289b6aa7dcc6c71"/>
+      <Line Type="bytes" Address="0x005f0d48" Value="A0050000" OriginalHash="06d9e00fa0a179cd"/>
+      <Line Type="bytes" Address="0x005f0d4d" Value="A0050000" OriginalHash="2aaa2a3cd88034c1"/>
+      <Line Type="bytes" Address="0x005f0d52" Value="A0050000" OriginalHash="105879c22d2401d0"/>
+    </PatchList>
+  </Metadata>
+  <Metadata Title="inFAMOUS Second Son" Name="Native 3840x2160 (render and output)" Note="Renders and outputs 3840x2160 instead of 1920x1080 (base PS4 mode). Enable only one resolution patch. FR : rendu et sortie en 3840x2160, n activer qu un seul patch de resolution." Author="AYOUB1080p" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+    <PatchList>
+      <Line Type="bytes" Address="0x005eff4a" Value="000F0000" OriginalHash="0dd91daa965465c8"/>
+      <Line Type="bytes" Address="0x005eff51" Value="70080000" OriginalHash="2aaa2a3cd88034c1"/>
+      <Line Type="bytes" Address="0x005eff57" Value="000F0000" OriginalHash="0dd91daa965465c8"/>
+      <Line Type="bytes" Address="0x005eff5e" Value="70080000" OriginalHash="2aaa2a3cd88034c1"/>
+      <Line Type="bytes" Address="0x005f0d3e" Value="000F0000" OriginalHash="0dd91daa965465c8"/>
+      <Line Type="bytes" Address="0x005f0d43" Value="000F0000" OriginalHash="e289b6aa7dcc6c71"/>
+      <Line Type="bytes" Address="0x005f0d4d" Value="70080000" OriginalHash="2aaa2a3cd88034c1"/>
+      <Line Type="bytes" Address="0x005f0d52" Value="70080000" OriginalHash="105879c22d2401d0"/>
+    </PatchList>
+  </Metadata>
+  <Metadata Title="inFAMOUS Second Son" Name="PS4 Pro mode: native 3840x2160 without checkerboard" Note="Needs PS4 Pro mode (neo_mode); turn it off with the Pro mode. Native 3840x2160 rendering instead of the checkerboard rendering of the Pro mode, which shows a green screen in shadPS4. Enable only one resolution patch. FR : mode PS4 Pro requis (a desactiver avec lui), rendu natif 3840x2160 au lieu du damier du mode Pro (ecran vert dans shadPS4)." Author="AYOUB1080p" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+    <PatchList>
+      <Line Type="bytes" Address="0x005f0cbd" Value="4531C990" OriginalHash="5c04f08ca74bb842"/>
+      <Line Type="bytes" Address="0x005f0d3e" Value="000F0000" OriginalHash="0dd91daa965465c8"/>
+      <Line Type="bytes" Address="0x005f0d4d" Value="70080000" OriginalHash="2aaa2a3cd88034c1"/>
+    </PatchList>
+  </Metadata>
+  <Metadata Title="inFAMOUS Second Son" Name="PS4 Pro mode: native 3200x1800 without checkerboard" Note="Needs PS4 Pro mode (neo_mode); turn it off with the Pro mode. Native 3200x1800 rendering instead of the checkerboard rendering of the Pro mode, which shows a green screen in shadPS4. Enable only one resolution patch. FR : mode PS4 Pro requis (a desactiver avec lui), rendu natif 3200x1800 au lieu du damier du mode Pro (ecran vert dans shadPS4)." Author="AYOUB1080p" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
+    <PatchList>
+      <Line Type="bytes" Address="0x005f0cbd" Value="4531C990" OriginalHash="5c04f08ca74bb842"/>
+      <Line Type="bytes" Address="0x005f0d3e" Value="800C0000" OriginalHash="0dd91daa965465c8"/>
+      <Line Type="bytes" Address="0x005f0d4d" Value="08070000" OriginalHash="2aaa2a3cd88034c1"/>
+    </PatchList>
+  </Metadata>
+  <Metadata Title="inFAMOUS Second Son" Name="PS4 Pro mode: native 2560x1440 without checkerboard" Note="Needs PS4 Pro mode (neo_mode); turn it off with the Pro mode. Native 2560x1440 rendering instead of the checkerboard rendering of the Pro mode, which shows a green screen in shadPS4. Enable only one resolution patch. FR : mode PS4 Pro requis (a desactiver avec lui), rendu natif 2560x1440 au lieu du damier du mode Pro (ecran vert dans shadPS4)." Author="AYOUB1080p" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+    <PatchList>
+      <Line Type="bytes" Address="0x005f0cbd" Value="4531C990" OriginalHash="5c04f08ca74bb842"/>
+      <Line Type="bytes" Address="0x005f0d3e" Value="000A0000" OriginalHash="0dd91daa965465c8"/>
+      <Line Type="bytes" Address="0x005f0d4d" Value="A0050000" OriginalHash="2aaa2a3cd88034c1"/>
+    </PatchList>
+  </Metadata>
+  <Metadata Title="inFAMOUS Second Son" Name="Wider field of view x1.15" Note="Wider view angle (picture only, the game camera is unchanged). Enable only one FOV patch. FR : champ de vision plus large (x1.15), n activer qu un seul patch de champ de vision." Author="AYOUB1080p" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+    <PatchList>
+      <Line Type="bytes" Address="0x010c5720" Value="3333133F" OriginalHash="4d25767f9dce13f5"/>
+      <Line Type="bytes" Address="0x00980eb6" Value="66487400" OriginalHash="9ab1d7571b4fe17a"/>
+      <Line Type="bytes" Address="0x00980f7d" Value="9F477400" OriginalHash="d278f8221bd41bd0"/>
+      <Line Type="bytes" Address="0x009805b5" Value="67517400" OriginalHash="b5bbd82d8d2994d2"/>
+      <Line Type="bytes" Address="0x009810e3" Value="39467400" OriginalHash="e62862773e182757"/>
+    </PatchList>
+  </Metadata>
+  <Metadata Title="inFAMOUS Second Son" Name="Wider field of view x1.30" Note="Wider view angle (picture only, the game camera is unchanged). Enable only one FOV patch. FR : champ de vision plus large (x1.30), n activer qu un seul patch de champ de vision." Author="AYOUB1080p" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+    <PatchList>
+      <Line Type="bytes" Address="0x010c5720" Value="6666263F" OriginalHash="4d25767f9dce13f5"/>
+      <Line Type="bytes" Address="0x00980eb6" Value="66487400" OriginalHash="9ab1d7571b4fe17a"/>
+      <Line Type="bytes" Address="0x00980f7d" Value="9F477400" OriginalHash="d278f8221bd41bd0"/>
+      <Line Type="bytes" Address="0x009805b5" Value="67517400" OriginalHash="b5bbd82d8d2994d2"/>
+      <Line Type="bytes" Address="0x009810e3" Value="39467400" OriginalHash="e62862773e182757"/>
+    </PatchList>
+  </Metadata>
+</Patch>

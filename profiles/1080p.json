@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "mode": "1080p",
+  "overrides": {
+    "General": {
+      "neo_mode": false
+    },
+    "GPU": {
+      "window_width": 1920,
+      "window_height": 1080,
+      "readbacks_mode": 2,
+      "hdr_allowed": false
+    }
+  },
+  "resolution_patch": null,
+  "acceptance": {
+    "mean_fps": 60,
+    "stable_gameplay_required": true,
+    "brightness_correct": true,
+    "particles_complete": true
+  }
+}

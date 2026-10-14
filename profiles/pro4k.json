@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "mode": "pro4k",
+  "overrides": {
+    "General": {
+      "neo_mode": true
+    },
+    "GPU": {
+      "window_width": 3840,
+      "window_height": 2160,
+      "readbacks_mode": 2,
+      "hdr_allowed": false
+    }
+  },
+  "resolution_patch": "PS4 Pro mode: native 3840x2160 without checkerboard",
+  "acceptance": {
+    "minimum_fps": 40,
+    "brightness_correct": true,
+    "particles_complete": true
+  }
+}

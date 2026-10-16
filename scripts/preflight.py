@@ -5,9 +5,10 @@ import json
 import sys
 import xml.etree.ElementTree as ET
 from game_image import Image, read_identity, fnv1a
+from build_identity import verify_project_build
 from launcher_settings import (RESOLUTION_CONFIG, load_settings, apply_settings,
                                apply_resolution, resolution_config)
-from project_paths import ROOT, resolve_project_path, project_child, relative_path, read_object, write_json, write_text
+from project_paths import ROOT, project_child, relative_path, read_object, write_json, write_text
 
 def digest(path):
     h = hashlib.sha256()
@@ -82,9 +83,10 @@ def inspect(mode, runtime=None, session=None, frozen=False):
     width, height, baseline_mode, _ = resolution_config(mode)
     project = read_object(ROOT / "project.json")
     game = project_child(project["game_relative_path"])
-    executable = resolve_project_path(runtime or project["runtime_path"])
+    executable = project_child(runtime or project["runtime_path"])
+    runtime_build = verify_project_build(project, executable)
     if digest(executable) != project["runtime_sha256"]:
-        raise ValueError("Runtime fingerprint changed; review and pin it before use")
+        raise ValueError("Project runtime fingerprint changed. Run build.bat before use.")
     image = Image(game / "eboot.bin")
     if hashlib.sha256(image.data).hexdigest() != project["game_sha256"]:
         raise ValueError("Game executable fingerprint does not match the baseline")
@@ -114,12 +116,12 @@ def inspect(mode, runtime=None, session=None, frozen=False):
     report = {
         "schema": 3, "path_base": "project", "mode": mode, "runtime": relative_path(executable),
         "resolution": {"width": width, "height": height}, "baseline_profile": baseline_mode,
-        "runtime_sha256": project["runtime_sha256"], "identity": identity,
+        "runtime_sha256": project["runtime_sha256"], "runtime_build": runtime_build, "identity": identity,
         "game_sha256": project["game_sha256"], "patches": patches,
         "gpu_config": config["GPU"], "neo_mode": config["General"]["neo_mode"],
         "launcher_settings": launcher_settings,
         "runtime_capabilities": {"benchmark_dir": True, "wait_for_debugger": True,
-                                 "evidence": "runtime log revision 3c3a06a282203045994ec48afd9c307e00e473ba and matching src/main.cpp",
+                                 "evidence": "project build receipt and checked source snapshot",
                                  "dynamic_probe_executed": False},
         "source_game_written": False, "game_launched": False,
         "brightness_verified": False, "particles_verified": False, "fps_verified": False,

@@ -22,6 +22,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/buffer_cache/memory_tracker.h"
+#include "video_core/buffer_cache/readback_dependencies.h"
 #include "video_core/buffer_cache/region_definitions.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
@@ -335,8 +336,12 @@ void BufferCache::WaitArenaBinds(Vulkan::SubmitInfo& info) {
 }
 
 BufferCache::WindowWriters BufferCache::WindowWritersOf(VAddr start, u64 size) {
+    return ClassifyWriters(memory_tracker->GetWriteTicks(start, size));
+}
+
+BufferCache::WindowWriters BufferCache::ClassifyWriters(std::array<u64, 2> ticks) {
     WindowWriters writers;
-    writers.ticks = memory_tracker->GetWriteTicks(start, size);
+    writers.ticks = ticks;
     if (compute_queue == nullptr) {
         writers.ticks[1] = 0;
     }
@@ -883,6 +888,52 @@ bool BufferCache::CollectReadback(const Buffer* arena, PendingReadback& readback
     return true;
 }
 
+bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback,
+                                   WindowWriters& writers, bool queue_enabled, bool& on_queue) {
+    on_queue = queue_enabled && writers.submitted;
+    const bool refine = Common::Perf::GetTuning().readback_range_dependencies.load(
+                            std::memory_order_relaxed) &&
+                        EmulatorSettings.GetReadbacksMode() == GpuReadbacksMode::Precise;
+    const u64 sequence = memory_tracker->CurrentWriteSeq();
+    if (!CollectReadback(arena, readback)) {
+        return false;
+    }
+    if (refine) {
+        Common::Perf::Add(Common::Perf::ReadbackDependencyChecks);
+        const auto ticks = SelectReadbackDependencies(
+            readback.arena_base, readback.window_start, readback.window_end, readback.copies,
+            writers.ticks, sequence, BYTES_PER_WORD,
+            [this](u64 start, u64 size) { return memory_tracker->GetWriteTicks(start, size); },
+            [this] { return memory_tracker->CurrentWriteSeq(); });
+        if (ticks) {
+            if (*ticks != writers.ticks) {
+                Common::Perf::Add(Common::Perf::ReadbackDependenciesReduced);
+            }
+            writers = ClassifyWriters(*ticks);
+            const bool refined_queue = queue_enabled && writers.submitted;
+            if (refined_queue && !on_queue) {
+                Common::Perf::Add(Common::Perf::ReadbackQueuePromotions);
+            }
+            on_queue = refined_queue;
+        } else {
+            Common::Perf::Add(Common::Perf::ReadbackDependencyFallbacks);
+            // A changed version must not leave us waiting on the old window snapshot. Keep
+            // every old dependency and include any newly observed writer before copying.
+            const auto fresh = memory_tracker->GetWriteTicks(
+                readback.window_start, readback.window_end - readback.window_start);
+            for (u32 q = 0; q < 2; ++q) {
+                writers.ticks[q] = std::max(writers.ticks[q], fresh[q]);
+            }
+            writers = ClassifyWriters(writers.ticks);
+            on_queue = queue_enabled && writers.submitted;
+        }
+    }
+    if (!on_queue) {
+        runtime.CopyBuffer(arena, readback.download.buffer, readback.copies);
+    }
+    return true;
+}
+
 void BufferCache::NoteHotWindow(VAddr start, VAddr end) {
     const u64 now = Common::Perf::NowNs();
     for (auto& window : hot_windows) {
@@ -925,7 +976,7 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     };
     // The command buffers that last wrote the GPU modified pages of the window, and where they
     // are now (statistics: what the guest waits for).
-    const WindowWriters writers = WindowWritersOf(window_start, window_end - window_start);
+    WindowWriters writers = WindowWritersOf(window_start, window_end - window_start);
     if (!is_write && size <= BYTES_PER_PAGE) {
         if (writers.done) {
             Common::Perf::Add(Common::Perf::ReadbackProducerDone);
@@ -943,7 +994,7 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     // command buffer: the readback queue never waits for a signal that is not submitted yet
     // (with threaded recording, such a wait froze the game).
     const bool queue_enabled = UseReadbackQueue();
-    const bool use_queue = queue_enabled && writers.submitted;
+    bool use_queue = queue_enabled && writers.submitted;
     // Pages of the window downloaded by earlier readbacks stay protected until those complete:
     // wait for the last overlapping one (earlier ones of another queue may complete after it,
     // the guest thread then waits for them too, see ReadMemory).
@@ -961,7 +1012,7 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
         // pending one, which was recorded after the last GPU write of the window.
         memory_tracker->AddPendingReadback(window_start, window_end);
     } else {
-        recorded = use_queue ? CollectReadback(arena, readback) : RecordReadback(arena, readback);
+        recorded = PrepareReadback(arena, readback, writers, queue_enabled, use_queue);
     }
     if (!recorded) {
         // Nothing left to download in the window.
@@ -1094,8 +1145,8 @@ void BufferCache::PrefetchReadbacks() {
             // the last prefetch tell whether there is anything new to download.
             continue;
         }
-        const WindowWriters writers = WindowWritersOf(start, end - start);
-        const bool on_queue = queue_enabled && writers.submitted;
+        WindowWriters writers = WindowWritersOf(start, end - start);
+        bool on_queue = queue_enabled && writers.submitted;
         const auto* arena = GetArena(start >> block_shift, (end - 1) >> block_shift);
         PendingReadback readback{
             .tick = tick,
@@ -1103,12 +1154,12 @@ void BufferCache::PrefetchReadbacks() {
             .window_start = start,
             .window_end = end,
             .prefetch = true,
-            .on_readback_queue = on_queue,
         };
-        if (!(on_queue ? CollectReadback(arena, readback) : RecordReadback(arena, readback))) {
+        if (!PrepareReadback(arena, readback, writers, queue_enabled, on_queue)) {
             memory_tracker->RemovePendingReadback(start, end);
             continue;
         }
+        readback.on_readback_queue = on_queue;
         prefetched_bytes += readback.download.size;
         window.prefetch_tick = tick;
         window.prefetch_seq = window_write_seq;

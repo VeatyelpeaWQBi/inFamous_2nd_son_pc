@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import time
 from game_identity import ROOT, GAME_NAME
-from project_paths import resolve_project_path, project_child, relative_path, read_object, write_json
+from project_paths import project_child, relative_path, read_object, write_json
 
 
 def filetime(value):
@@ -52,8 +52,8 @@ def run(session):
     try:
         name=ctypes.create_unicode_buffer(32768);length=wintypes.DWORD(len(name))
         if not kernel.QueryFullProcessImageNameW(handle,0,name,ctypes.byref(length)):raise ctypes.WinError(ctypes.get_last_error())
-        expected=os.path.normcase(str(resolve_project_path(manifest['runtime_path'])))
-        if os.path.normcase(str(Path(name.value).resolve()))!=expected or os.path.normcase(str(resolve_project_path(launch['runtime'])))!=expected:
+        expected=os.path.normcase(str(project_child(manifest['runtime_path'])))
+        if os.path.normcase(str(Path(name.value).resolve()))!=expected or os.path.normcase(str(project_child(launch['runtime'])))!=expected:
             raise ValueError('Window branding process path differs from the pinned runtime')
         times=[wintypes.FILETIME() for _ in range(4)]
         if not kernel.GetProcessTimes(handle,*(ctypes.byref(t) for t in times)):raise ctypes.WinError(ctypes.get_last_error())

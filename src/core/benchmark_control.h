@@ -15,6 +15,13 @@ namespace Core::Benchmark {
 // Explicit local test mode only. Ordinary launches never poll command files or redirect saves.
 void Configure(const std::filesystem::path& directory);
 bool Enabled();
+// Diagnostic SDK injection before Vulkan objects exist; ordinary launches do nothing.
+void PrepareGpuDiagnostics();
+// Bounded native exception evidence during profiler DLL teardown; never handles faults.
+void ArmShutdownTrace();
+// Only after an acknowledged diagnostic quit and successful collector export.
+bool ProfilerFastExitReady();
+[[noreturn]] void ExitAfterProfilerShutdown();
 std::filesystem::path TuningPath();
 void PrepareGame(std::string_view serial);
 void Poll(Input::GameController& controller);

@@ -13,12 +13,16 @@
 #define VK_USE_PLATFORM_XLIB_KHR
 #endif
 
+#include <atomic>
+#include <cstring>
+#include <filesystem>
 #include <vector>
 #include <fmt/ranges.h>
 
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "common/path_util.h"
+#include "core/benchmark_control.h"
 #include "core/emulator_settings.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
@@ -26,11 +30,46 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace Vulkan {
 
 static const char* const VALIDATION_LAYER_NAME = "VK_LAYER_KHRONOS_validation";
 static const char* const CRASH_DIAGNOSTIC_LAYER_NAME = "VK_LAYER_LUNARG_crash_diagnostic";
+
+#ifdef _WIN32
+// Attribute layer-generated calls without requiring matching third-party PDBs.
+static void LogValidationCaller(const char* message_id) {
+    if (!message_id ||
+        (!std::strstr(message_id, "VkPrivateDataSlotCreateInfo") &&
+         !std::strstr(message_id, "VkSwapchainCreateInfoKHR-flags") &&
+         !std::strstr(message_id, "vkCmdPipelineBarrier-pImageMemoryBarriers-02819"))) {
+        return;
+    }
+    static std::atomic<u32> traces{};
+    if (traces.fetch_add(1, std::memory_order_relaxed) >= 4) {
+        return;
+    }
+    void* frames[16]{};
+    const auto count = CaptureStackBackTrace(1, 16, frames, nullptr);
+    for (USHORT i = 0; i < count; ++i) {
+        HMODULE module{};
+        wchar_t path[MAX_PATH]{};
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                  GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                              reinterpret_cast<LPCWSTR>(frames[i]), &module) &&
+            GetModuleFileNameW(module, path, MAX_PATH)) {
+            path[MAX_PATH - 1] = L'\0';
+            LOG_DEBUG(Render_Vulkan, "Validation caller {} #{}: {}+{:#x}", message_id, i,
+                      std::filesystem::path{path}.filename().string(),
+                      reinterpret_cast<uintptr_t>(frames[i]) -
+                          reinterpret_cast<uintptr_t>(module));
+        }
+    }
+}
+#endif
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugUtilsCallback(
     vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type,
@@ -56,6 +95,11 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugUtilsCallback(
                 callback_data->pMessageIdName ? callback_data->pMessageIdName : "<null>",
                 callback_data->pMessage ? callback_data->pMessage : "<null>");
 
+#ifdef _WIN32
+    if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
+        LogValidationCaller(callback_data->pMessageIdName);
+    }
+#endif
     return VK_FALSE;
 }
 
@@ -257,6 +301,7 @@ std::vector<const char*> GetInstanceLayers(bool enable_validation, bool enable_c
 vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool enable_validation,
                                   bool enable_crash_diagnostic) {
     LOG_INFO(Render_Vulkan, "Creating vulkan instance");
+    Core::Benchmark::PrepareGpuDiagnostics();
 
 #if defined(__APPLE__)
     // Initialize the environment with the path to the included ICD, so that the loader will
@@ -310,7 +355,6 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
     static const auto crash_diagnostic_path =
         Common::FS::GetUserPathString(Common::FS::PathType::LogDir);
     const char* log_path = crash_diagnostic_path.c_str();
-    vk::Bool32 enable_force_barriers = vk::True;
 
     const std::array layer_setings = {
         vk::LayerSettingEXT{
@@ -329,7 +373,14 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
         },
         vk::LayerSettingEXT{
             .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "syncval_submit_time_validation",
+            .pSettingName = "syncval_full_validation",
+            .type = vk::LayerSettingTypeEXT::eBool32,
+            .valueCount = 1,
+            .pValues = &enable_sync,
+        },
+        vk::LayerSettingEXT{
+            .pLayerName = VALIDATION_LAYER_NAME,
+            .pSettingName = "syncval_message_extra_properties",
             .type = vk::LayerSettingTypeEXT::eBool32,
             .valueCount = 1,
             .pValues = &enable_sync,
@@ -384,18 +435,11 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
             .pValues = &enable_gpuav,
         },
         vk::LayerSettingEXT{
-            .pLayerName = "lunarg_crash_diagnostic",
+            .pLayerName = CRASH_DIAGNOSTIC_LAYER_NAME,
             .pSettingName = "output_path",
             .type = vk::LayerSettingTypeEXT::eString,
             .valueCount = 1,
             .pValues = &log_path,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = "lunarg_crash_diagnostic",
-            .pSettingName = "sync_after_commands",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_force_barriers,
         },
     };
 

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<!-- File-mode recording; 128 MiB kernel + 64 MiB GPU staging buffers, no file-size quota. -->
+<WindowsPerformanceRecorder Version="1.0" Author="inFamous_2nd_son_pc">
+  <Profiles>
+    <SystemCollector Id="IFSSSystem" Name="IFSS kernel collector">
+      <BufferSize Value="1024"/><Buffers Value="128"/>
+    </SystemCollector>
+    <EventCollector Id="IFSSEvents" Name="IFSS GPU collector">
+      <BufferSize Value="1024"/><Buffers Value="64"/>
+    </EventCollector>
+    <SystemProvider Id="CPU">
+      <Keywords><Keyword Value="ProcessThread"/><Keyword Value="Loader"/><Keyword Value="SampledProfile"/><Keyword Value="CSwitch"/><Keyword Value="ReadyThread"/><Keyword Value="MemoryInfo"/></Keywords>
+      <Stacks><Stack Value="SampledProfile"/><Stack Value="CSwitch"/><Stack Value="ReadyThread"/></Stacks>
+    </SystemProvider>
+    <SystemProvider Id="GPU">
+      <Keywords><Keyword Value="ProcessThread"/><Keyword Value="Loader"/><Keyword Value="CSwitch"/><Keyword Value="ReadyThread"/><Keyword Value="MemoryInfo"/></Keywords>
+      <Stacks><Stack Value="CSwitch"/><Stack Value="ReadyThread"/></Stacks>
+    </SystemProvider>
+    <SystemProvider Id="Memory">
+      <Keywords><Keyword Value="ProcessThread"/><Keyword Value="Loader"/><Keyword Value="MemoryInfo"/><Keyword Value="VirtualAllocation"/></Keywords>
+      <Stacks><Stack Value="VirtualAllocation"/></Stacks>
+    </SystemProvider>
+    <SystemProvider Id="All">
+      <Keywords><Keyword Value="ProcessThread"/><Keyword Value="Loader"/><Keyword Value="SampledProfile"/><Keyword Value="CSwitch"/><Keyword Value="ReadyThread"/><Keyword Value="MemoryInfo"/><Keyword Value="VirtualAllocation"/><Keyword Value="DiskIO"/><Keyword Value="DiskIOInit"/><Keyword Value="FileIO"/><Keyword Value="FileIOInit"/></Keywords>
+      <Stacks><Stack Value="SampledProfile"/><Stack Value="CSwitch"/><Stack Value="ReadyThread"/><Stack Value="VirtualAllocation"/></Stacks>
+    </SystemProvider>
+    <SystemProvider Id="Concurrent">
+      <Keywords><Keyword Value="ProcessThread"/><Keyword Value="Loader"/><Keyword Value="CSwitch"/><Keyword Value="ReadyThread"/><Keyword Value="MemoryInfo"/><Keyword Value="VirtualAllocation"/><Keyword Value="DiskIO"/><Keyword Value="DiskIOInit"/><Keyword Value="FileIO"/><Keyword Value="FileIOInit"/></Keywords>
+      <Stacks><Stack Value="CSwitch"/><Stack Value="ReadyThread"/><Stack Value="VirtualAllocation"/></Stacks>
+    </SystemProvider>
+    <EventProvider Id="DxgKrnl" Name="802EC45A-1E99-4B83-9920-87C98277BA9D" Level="5" NonPagedMemory="true">
+      <Keywords><Keyword Value="0x400000000C1182F7"/></Keywords>
+      <CaptureStateOnStart><Keyword Value="0x400000000C1182F7"/></CaptureStateOnStart>
+      <CaptureStateOnSave><Keyword Value="0x400000000C1182F7"/></CaptureStateOnSave>
+    </EventProvider>
+    <EventProvider Id="DXGI" Name="Microsoft-Windows-DXGI" Level="5">
+      <Keywords><Keyword Value="0xf"/></Keywords>
+      <CaptureStateOnSave><Keyword Value="0xf"/></CaptureStateOnSave>
+    </EventProvider>
+    <Profile Id="IFSSCPU.Verbose.File" Name="IFSSCPU" Description="IFSSCPU file diagnostics" LoggingMode="File" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="IFSSSystem"><SystemProviderId Value="CPU"/></SystemCollectorId>
+      </Collectors>
+    </Profile>
+    <Profile Id="IFSSGPU.Verbose.File" Name="IFSSGPU" Description="IFSSGPU file diagnostics" LoggingMode="File" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="IFSSSystem"><SystemProviderId Value="GPU"/></SystemCollectorId>
+        <EventCollectorId Value="IFSSEvents"><EventProviders><EventProviderId Value="DxgKrnl"/><EventProviderId Value="DXGI"/></EventProviders></EventCollectorId>
+      </Collectors>
+    </Profile>
+    <Profile Id="IFSSMemory.Verbose.File" Name="IFSSMemory" Description="IFSSMemory file diagnostics" LoggingMode="File" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="IFSSSystem"><SystemProviderId Value="Memory"/></SystemCollectorId>
+      </Collectors>
+    </Profile>
+    <Profile Id="IFSSAll.Verbose.File" Name="IFSSAll" Description="IFSSAll file diagnostics" LoggingMode="File" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="IFSSSystem"><SystemProviderId Value="All"/></SystemCollectorId>
+        <EventCollectorId Value="IFSSEvents"><EventProviders><EventProviderId Value="DxgKrnl"/><EventProviderId Value="DXGI"/></EventProviders></EventCollectorId>
+      </Collectors>
+    </Profile>
+    <Profile Id="IFSSConcurrent.Verbose.File" Name="IFSSConcurrent" Description="IFSSConcurrent file diagnostics" LoggingMode="File" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="IFSSSystem"><SystemProviderId Value="Concurrent"/></SystemCollectorId>
+        <EventCollectorId Value="IFSSEvents"><EventProviders><EventProviderId Value="DxgKrnl"/><EventProviderId Value="DXGI"/></EventProviders></EventCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

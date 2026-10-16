@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 function Resolve-InstalledPython {
     $candidates = [Collections.Generic.List[string]]::new()
     $command = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -26,6 +26,39 @@ function Write-JsonUtf8 {
     }finally{
         if(Test-Path -LiteralPath $pending){Remove-Item -LiteralPath $pending -Force}
     }
+}
+function Read-JsonUtf8([string]$Path) {
+    # A reader keeps one complete snapshot open while allowing atomic replacement.
+    $stream=[IO.File]::Open($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    $reader=$null
+    try{
+        $reader=[IO.StreamReader]::new($stream,[Text.UTF8Encoding]::new($false,$true),$true)
+        $text=$reader.ReadToEnd()
+    }finally{
+        if($reader){$reader.Dispose()}else{$stream.Dispose()}
+    }
+    try{return (ConvertFrom-Json -InputObject $text -ErrorAction Stop)}
+    catch{throw [IO.InvalidDataException]::new(('Invalid JSON in '+$Path+'.'),$_.Exception)}
+}
+function Get-ProjectProcessIdentity($Process) {
+    if(-not ('Ifss.ProcessIdentity' -as [type])){
+        $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+        $temporary=Resolve-ProjectChild $projectRoot 'state/runtime/native-helper-temp'
+        $null=[IO.Directory]::CreateDirectory($temporary)
+        $previousTemp=$env:TEMP;$previousTmp=$env:TMP
+        try{
+            $env:TEMP=$temporary;$env:TMP=$temporary
+            Add-Type -Path (Join-Path $PSScriptRoot 'process_identity.cs') -ErrorAction Stop
+        }finally{$env:TEMP=$previousTemp;$env:TMP=$previousTmp}
+    }
+    # Query path and creation time through one minimal-rights kernel handle.
+    # Matching the creation time rejects PID reuse without full-access/module enumeration.
+    return [Ifss.ProcessIdentity]::ReadLimited($Process.Id)
+}
+function Test-ProjectProcessIdentity($Process,[string]$ExpectedPath,[string]$Started) {
+    $identity=Get-ProjectProcessIdentity $Process
+    $created=[DateTime]::Parse($Started,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind).ToFileTimeUtc()
+    return ($identity.Path -eq $ExpectedPath -and $identity.CreationFileTime -eq $created)
 }
 function Quote-WindowsArgument([string]$Value) {
     return '"' + (($Value -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
@@ -58,7 +91,9 @@ function Get-RelativePath([string]$Base,[string]$Path) {
     return [Uri]::UnescapeDataString($baseUri.MakeRelativeUri([Uri]::new($fullPath)).ToString())
 }
 function Convert-ProjectConfigPaths([string]$ConfigPath,[string]$FromBase,[string]$ToBase) {
-    $config=Get-Content -LiteralPath $ConfigPath -Raw|ConvertFrom-Json
+    $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+    Assert-ProjectPath $projectRoot $ConfigPath
+    $config=Read-JsonUtf8 $ConfigPath
     $general=$config.General
     $properties=@(@('addon_install_dir','font_dir','home_dir','sys_modules_dir')|
         ForEach-Object{$general.PSObject.Properties[$_]}|Where-Object{$_})
@@ -68,6 +103,7 @@ function Convert-ProjectConfigPaths([string]$ConfigPath,[string]$FromBase,[strin
     foreach($property in $properties){
         if(-not $property.Value){continue}
         $full=if([IO.Path]::IsPathRooted([string]$property.Value)){[IO.Path]::GetFullPath([string]$property.Value)}else{Resolve-ProjectPath $FromBase ([string]$property.Value)}
+        Assert-ProjectPath $projectRoot $full
         $property.Value=Get-RelativePath $ToBase $full
     }
     Write-JsonUtf8 $ConfigPath $config
@@ -83,8 +119,20 @@ function Assert-ProjectPath([string]$Root,[string]$Path) {
     }
 }
 function Publish-ProjectFile([string]$Pending,[string]$Destination) {
-    if(Test-Path -LiteralPath $Destination){[IO.File]::Replace($Pending,$Destination,[System.Management.Automation.Language.NullString]::Value)}
-    else{[IO.File]::Move($Pending,$Destination)}
+    # Existing engine/file readers may briefly deny deletion. Never remove the old file.
+    for($attempt=0;;$attempt++){
+        try{
+            if(Test-Path -LiteralPath $Destination){[IO.File]::Replace($Pending,$Destination,[System.Management.Automation.Language.NullString]::Value)}
+            else{[IO.File]::Move($Pending,$Destination)}
+            return
+        }catch{
+            $cause=$_.Exception
+            while($cause.InnerException){$cause=$cause.InnerException}
+            $code=$cause.HResult -band 0xffff
+            if($cause -isnot [IO.IOException] -or $code -notin @(32,33,1175) -or $attempt -ge 6){throw}
+            Start-Sleep -Milliseconds ([int][Math]::Min(50*[Math]::Pow(2,$attempt),400))
+        }
+    }
 }
 function Copy-ProjectTree([string]$Root,[string]$Source,[string]$Destination) {
     Assert-ProjectPath $Root $Source
@@ -109,17 +157,17 @@ function Read-ProjectSession([string]$Root,[string]$Session) {
     if(-not $Session){
         $activePath=Resolve-ProjectChild $Root 'state/active.json'
         if(-not (Test-Path -LiteralPath $activePath)){throw 'No project session is recorded.'}
-        $Session=(Get-Content -LiteralPath $activePath -Raw|ConvertFrom-Json).session
+        $Session=(Read-JsonUtf8 $activePath).session
     }
     $path=Resolve-ProjectChild $Root $Session
     $allowed=Resolve-ProjectChild $Root 'state/sessions'
     if(-not $path.StartsWith($allowed+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Untrusted session path.'}
     $launchPath=Resolve-ProjectChild $Root ($Session+'/launch.json')
-    $launch=Get-Content -LiteralPath $launchPath -Raw|ConvertFrom-Json
-    $manifest=Get-Content -LiteralPath (Join-Path $Root 'project.json') -Raw|ConvertFrom-Json
+    $launch=Read-JsonUtf8 $launchPath
+    $manifest=Read-JsonUtf8 (Join-Path $Root 'project.json')
     if($launch.schema -ne 3 -or $launch.path_base -ne 'project' -or
        (Resolve-ProjectPath $Root $launch.session) -ne $path -or
-       (Resolve-ProjectPath $Root $launch.runtime) -ne (Resolve-ProjectPath $Root $manifest.runtime_path) -or
+       (Resolve-ProjectChild $Root $launch.runtime) -ne (Resolve-ProjectChild $Root $manifest.runtime_path) -or
        $launch.runtime_sha256 -ne $manifest.runtime_sha256){throw 'Session does not match the pinned project runtime.'}
     return [pscustomobject]@{Path=$path;Launch=$launch}
 }

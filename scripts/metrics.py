@@ -28,6 +28,8 @@ def summarize(path, start, end, mode, confirmations):
             if previous_elapsed is not None and previous_elapsed >= start * 1e9 and elapsed <= end * 1e9:
                 frames.append(interval / 1e6)
             previous_index, previous_elapsed = index, elapsed
+    if previous_elapsed is None or previous_elapsed < end * 1e9:
+        raise ValueError("The recording does not cover the requested measurement window")
     if len(frames) < 2:
         raise ValueError("Measurement contains fewer than two complete frame intervals")
     ordered = sorted(frames)

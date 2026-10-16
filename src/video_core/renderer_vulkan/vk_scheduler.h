@@ -17,6 +17,7 @@
 #include "common/unique_function.h"
 #include "video_core/amdgpu/regs_color.h"
 #include "video_core/amdgpu/regs_primitive.h"
+#include "video_core/renderer_vulkan/vk_buffer_bind_cache.h"
 #include "video_core/renderer_vulkan/vk_command_stream.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
@@ -176,7 +177,7 @@ struct DynamicState {
     std::array<float, 4> blend_constants{};
     ColorWriteMasks color_write_masks{};
     float line_width{};
-    bool feedback_loop_enabled{};
+    vk::ImageAspectFlags feedback_loop_enabled{};
 
     /// Commits the dynamic state to the provided command buffer.
     void Commit(const Instance& instance, const CommandRecorder& cmdbuf);
@@ -223,6 +224,7 @@ struct DynamicState {
         std::array<vk::Pipeline, 2> pipelines{}; ///< graphics, compute
         std::array<Push, 2> pushes{};             ///< graphics stages, compute stage
         std::array<Descriptors, 2> descriptors{}; ///< graphics, compute
+        BufferBindCache buffers{};
         bool vertex_input_known{};
         u32 num_vertex_bindings{};
         u32 num_vertex_attributes{};
@@ -236,12 +238,19 @@ struct DynamicState {
             descriptors[0].num_writes = ~0U;
             descriptors[1].num_writes = ~0U;
             vertex_input_known = false;
+            buffers.Forget();
         }
 
         /// Descriptor sets bound otherwise than by a push: the pushed ones are no longer known.
         void ForgetDescriptors(vk::PipelineBindPoint bind_point) noexcept {
             descriptors[bind_point == vk::PipelineBindPoint::eCompute ? 1 : 0].num_writes = ~0U;
         }
+
+        bool SkipIndexBuffer(vk::Buffer buffer, vk::DeviceSize offset, vk::IndexType type) noexcept;
+        bool SkipVertexBuffers(u32 first, u32 count, const vk::Buffer* buffers,
+                               const vk::DeviceSize* offsets, bool sized_api = false,
+                               const vk::DeviceSize* sizes = nullptr,
+                               const vk::DeviceSize* strides = nullptr) noexcept;
 
         /// Notes a pipeline bind; true when it can be left out (already bound, skipping on).
         bool SkipPipeline(vk::PipelineBindPoint bind_point, vk::Pipeline pipeline) noexcept;
@@ -435,7 +444,7 @@ struct DynamicState {
         }
     }
 
-    void SetAttachmentFeedbackLoopEnabled(const bool enabled) {
+    void SetAttachmentFeedbackLoopEnabled(vk::ImageAspectFlags enabled) {
         if (feedback_loop_enabled != enabled) {
             feedback_loop_enabled = enabled;
             dirty_state.feedback_loop_enabled = true;
@@ -780,15 +789,25 @@ public:
         if (scheduler && scheduler->GetDynamicState().binds.SkipPipeline(bind_point, pipeline)) {
             return;
         }
+        if (scheduler && bind_point == vk::PipelineBindPoint::eGraphics) {
+            scheduler->GetDynamicState().binds.buffers.ForgetStrides();
+        }
         Record([=](vk::CommandBuffer c) { c.bindPipeline(bind_point, pipeline); });
     }
 
     void bindIndexBuffer(vk::Buffer buffer, vk::DeviceSize offset, vk::IndexType type) const {
+        if (scheduler && scheduler->GetDynamicState().binds.SkipIndexBuffer(buffer, offset, type)) {
+            return;
+        }
         Record([=](vk::CommandBuffer c) { c.bindIndexBuffer(buffer, offset, type); });
     }
 
     void bindVertexBuffers(u32 first, u32 count, const vk::Buffer* buffers,
                            const vk::DeviceSize* offsets) const {
+        if (scheduler && scheduler->GetDynamicState().binds.SkipVertexBuffers(
+                             first, count, buffers, offsets)) {
+            return;
+        }
         if (const vk::CommandBuffer c = Direct()) {
             c.bindVertexBuffers(first, count, buffers, offsets);
             return;
@@ -802,6 +821,10 @@ public:
     void bindVertexBuffers2(u32 first, u32 count, const vk::Buffer* buffers,
                             const vk::DeviceSize* offsets, const vk::DeviceSize* sizes,
                             const vk::DeviceSize* strides) const {
+        if (scheduler && scheduler->GetDynamicState().binds.SkipVertexBuffers(
+                             first, count, buffers, offsets, true, sizes, strides)) {
+            return;
+        }
         if (const vk::CommandBuffer c = Direct()) {
             c.bindVertexBuffers2(first, count, buffers, offsets, sizes, strides);
             return;
@@ -821,6 +844,9 @@ public:
                              {bindings.data(), bindings.size()},
                              {attributes.data(), attributes.size()})) {
             return;
+        }
+        if (scheduler) {
+            scheduler->GetDynamicState().binds.buffers.ForgetStrides();
         }
         if (const vk::CommandBuffer c = Direct()) {
             c.setVertexInputEXT(bindings, attributes);

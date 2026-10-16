@@ -144,11 +144,6 @@ struct HttpState {
     int next_obj_id = 0;
     bool default_accept_encoding_gzip = false;
     std::unordered_set<int> active_contexts;
-    // Contexts where sceHttpsLoadCert was called. We can't actually parse the
-    // PS4 cert blobs, but we use this as a signal that
-    // the game expects custom CA validation. Connections under these contexts
-    // bypass cpp-httplib's default verification so endpoints aren't blocked
-    std::unordered_set<int> contexts_with_loaded_certs;
     std::unordered_map<int, HttpTemplate> templates;
     std::unordered_map<int, HttpConnection> connections;
     std::unordered_map<int, std::shared_ptr<HttpRequest>> requests;
@@ -430,9 +425,6 @@ struct SendRequestPlan {
     std::vector<u8> body;
     std::vector<std::pair<std::string, std::string>> headers; // Merged tmpl + conn + req
     HttpSettings settings;
-    // True if the request's owning ctx had sceHttpsLoadCert called. In that
-    // case we bypass TLS verification because we can't load the game's CAs.
-    bool ctx_has_loaded_certs = false;
     int ctx_id = 0;
 };
 
@@ -861,15 +853,7 @@ static s32 RunRealHttpRequest(const SendRequestPlan& plan_in, HttpResponse& out_
         if (plan.scheme == "https") {
             const bool game_disabled_verify =
                 (plan.settings.ssl_flags & ORBIS_HTTPS_FLAG_SERVER_VERIFY) == 0;
-            bool verify_server = !game_disabled_verify;
-            if (verify_server && plan.ctx_has_loaded_certs) {
-                verify_server = false;
-                LOG_INFO(Lib_Http,
-                         "{}://{}: ctx loaded custom CAs (libSceSsl integration absent) -> "
-                         "bypassing cert verification",
-                         plan.scheme, plan.host);
-            }
-            cli.enable_server_certificate_verification(verify_server);
+            cli.enable_server_certificate_verification(!game_disabled_verify);
             if (game_disabled_verify) {
                 LOG_INFO(Lib_Http, "{}://{}: server cert verification disabled (ssl_flags={:#x})",
                          plan.scheme, plan.host, plan.settings.ssl_flags);
@@ -1712,10 +1696,6 @@ int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size) {
                 tmpl_it != g_state.templates.end()) {
                 plan.headers = tmpl_it->second.headers;
                 tmpl_user_agent = tmpl_it->second.user_agent;
-                // Check if the owning context loaded custom CAs - if so the
-                // worker will bypass TLS verification.
-                plan.ctx_has_loaded_certs =
-                    g_state.contexts_with_loaded_certs.contains(tmpl_it->second.ctx_id);
                 plan.ctx_id = tmpl_it->second.ctx_id;
             }
             for (const auto& h : conn_it->second.headers) {
@@ -1972,17 +1952,16 @@ int PS4_SYSV_ABI sceHttpsLoadCert(int libhttpCtxId, int caCertNum, const void** 
         LOG_ERROR(Lib_Http, "Invalid libhttpCtxId={}", libhttpCtxId);
         return ORBIS_HTTP_ERROR_INVALID_ID;
     }
-    // Firmware would hand caList/cert/privKey to libSceSsl, which would parse
-    // them into an X509_STORE used by the TLS layer. We don't implement that
-    // pipeline. Instead, we record that this context expects custom CA-based
-    // verification, and at TLS-handshake time we bypass cpp-httplib's default
-    // CA verification so the game's private-CA-signed endpoints aren't blocked
-    // by our system CA store not knowing about them.
-    g_state.contexts_with_loaded_certs.insert(libhttpCtxId);
-    LOG_ERROR(Lib_Http,
-              "ctxId={} marked as using custom CAs; subsequent HTTPS requests on this "
-              "context will bypass cert verification (libSceSsl integration not implemented)",
-              libhttpCtxId);
+    if (caCertNum < 0 || (caCertNum > 0 && !caList) || (!cert != !privKey)) {
+        return ORBIS_HTTP_ERROR_INVALID_VALUE;
+    }
+    if (caCertNum != 0 || cert) {
+        // Never report unparsed certificates as loaded, or change verification as a fallback.
+        LOG_ERROR(Lib_Http, "ctxId={}: custom certificate import is unsupported; "
+                            "certificate verification settings preserved",
+                  libhttpCtxId);
+        return ORBIS_HTTPS_ERROR_CERT;
+    }
     return ORBIS_OK;
 }
 
@@ -2013,8 +1992,7 @@ int PS4_SYSV_ABI sceHttpsUnloadCert(int libhttpCtxId) {
         LOG_ERROR(Lib_Http, "Invalid libhttpCtxId={}", libhttpCtxId);
         return ORBIS_HTTP_ERROR_INVALID_ID;
     }
-    g_state.contexts_with_loaded_certs.erase(libhttpCtxId);
-    LOG_INFO(Lib_Http, "ctxId={} cleared custom-CA marker", libhttpCtxId);
+    LOG_DEBUG(Lib_Http, "ctxId={} has no custom certificates to unload", libhttpCtxId);
     return ORBIS_OK;
 }
 
@@ -2118,7 +2096,6 @@ int PS4_SYSV_ABI sceHttpTerm(int libhttpCtxId) {
         LOG_ERROR(Lib_Http, "Invalid or already-terminated ctxId={}", libhttpCtxId);
         return ORBIS_HTTP_ERROR_INVALID_ID;
     }
-    g_state.contexts_with_loaded_certs.erase(libhttpCtxId);
     g_state.redirect_cache_301.erase(libhttpCtxId);
     if (g_state.active_contexts.empty()) {
         // Last context torn down - wipe all dependent objects.
@@ -2147,7 +2124,6 @@ int PS4_SYSV_ABI sceHttpTerm(int libhttpCtxId) {
         g_state.connections.clear();
         g_state.templates.clear();
         g_state.epolls.clear();
-        g_state.contexts_with_loaded_certs.clear();
         g_state.redirect_cache_301.clear();
         g_state.inited = false;
     } else {

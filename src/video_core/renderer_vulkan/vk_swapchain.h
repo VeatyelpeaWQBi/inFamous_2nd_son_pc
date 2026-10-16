@@ -42,6 +42,11 @@ public:
         return images[image_index];
     }
 
+    vk::ImageLayout GetImageLayout() const {
+        return image_presented[image_index] ? vk::ImageLayout::ePresentSrcKHR
+                                            : vk::ImageLayout::eUndefined;
+    }
+
     vk::ImageView ImageView() const {
         return images_view[image_index];
     }
@@ -123,9 +128,11 @@ private:
     vk::SurfaceTransformFlagBitsKHR transform;
     vk::CompositeAlphaFlagBitsKHR composite_alpha;
     std::vector<vk::Image> images;
+    std::vector<bool> image_presented;
     std::vector<vk::ImageView> images_view;
     std::vector<vk::Semaphore> image_acquired;
     std::vector<vk::Semaphore> present_ready;
+    vk::Fence acquire_available{};
     u32 width = 0;
     u32 height = 0;
     u32 image_count = 0;

@@ -406,12 +406,14 @@ UploadTextureData UploadTexture(const void* data, vk::Format format, u32 width, 
 
     // Upload to Buffer
     {
-        char* map = (char*)CheckVkResult(v.device.mapMemory(info.upload_buffer_memory, 0, size));
+        // Map the allocation through its end before flushing VK_WHOLE_SIZE.
+        char* map = (char*)CheckVkResult(
+            v.device.mapMemory(info.upload_buffer_memory, 0, VK_WHOLE_SIZE));
         memcpy(map, data, size);
         vk::MappedMemoryRange range[1]{
             {
                 .memory = info.upload_buffer_memory,
-                .size = size,
+                .size = VK_WHOLE_SIZE,
             },
         };
         CheckVkErr(v.device.flushMappedMemoryRanges(range));
@@ -604,9 +606,9 @@ void RenderDrawData(ImDrawData& draw_data, vk::CommandBuffer command_buffer,
         ImDrawVert* vtx_dst = nullptr;
         ImDrawIdx* idx_dst = nullptr;
         vtx_dst = (ImDrawVert*)CheckVkResult(
-            v.device.mapMemory(frb.vertex.buffer_memory, 0, vertex_size, vk::MemoryMapFlags{}));
+            v.device.mapMemory(frb.vertex.buffer_memory, 0, VK_WHOLE_SIZE, vk::MemoryMapFlags{}));
         idx_dst = (ImDrawIdx*)CheckVkResult(
-            v.device.mapMemory(frb.index.buffer_memory, 0, index_size, vk::MemoryMapFlags{}));
+            v.device.mapMemory(frb.index.buffer_memory, 0, VK_WHOLE_SIZE, vk::MemoryMapFlags{}));
         for (int n = 0; n < draw_data.CmdListsCount; n++) {
             const ImDrawList* cmd_list = draw_data.CmdLists[n];
             memcpy(vtx_dst, cmd_list->VtxBuffer.Data,
@@ -816,7 +818,8 @@ static void UpdateTexture(ImTextureData* tex, vk::CommandBuffer cmdbuf) {
         staging.memory = CheckVkResult(v.device.allocateMemory(alloc_info, v.allocator));
         CheckVkErr(v.device.bindBufferMemory(staging.buffer, staging.memory, 0));
 
-        char* map = (char*)CheckVkResult(v.device.mapMemory(staging.memory, 0, upload_size));
+        char* map =
+            (char*)CheckVkResult(v.device.mapMemory(staging.memory, 0, VK_WHOLE_SIZE));
         for (int y = 0; y < upload_h; y++) {
             memcpy(map + upload_pitch * y, tex->GetPixelsAt(upload_x, upload_y + y), upload_pitch);
         }

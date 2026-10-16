@@ -701,6 +701,15 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         window->WaitEvent();
     }
 
+    Core::Benchmark::ArmShutdownTrace();
+    // Do not suspend/sample host threads while quick-exit callbacks and injected
+    // profiler DLLs are shutting down. The sampler is also stopped on relaunch.
+    Core::PerfSampler::Stop();
+    if (Core::Benchmark::ProfilerFastExitReady()) {
+        Shutdown();
+        Common::Log::Flush();
+        Core::Benchmark::ExitAfterProfilerShutdown();
+    }
     std::quick_exit(0);
 }
 

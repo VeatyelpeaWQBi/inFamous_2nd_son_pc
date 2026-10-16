@@ -159,6 +159,8 @@ void PollTuning() {
             tuning.scout.store(value != "0", std::memory_order_relaxed);
         } else if (key == "skip_redundant_binds") {
             tuning.skip_redundant_binds.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "buffer_bind_memo") {
+            tuning.buffer_bind_memo.store(value != "0", std::memory_order_relaxed);
         } else if (key == "shader_params_memo") {
             tuning.shader_params_memo.store(value != "0", std::memory_order_relaxed);
         } else if (key == "runtime_lookup_memo") {
@@ -250,6 +252,8 @@ void PollTuning() {
             tuning.async_readbacks.store(value != "0", std::memory_order_relaxed);
         } else if (key == "readback_prefetch") {
             tuning.readback_prefetch.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "readback_range_dependencies") {
+            tuning.readback_range_dependencies.store(value != "0", std::memory_order_relaxed);
         } else if (key == "async_pipelines") {
             tuning.async_pipelines.store(std::min<u32>(std::strtoul(value.c_str(), nullptr, 10), 2),
                                          std::memory_order_relaxed);
@@ -430,7 +434,7 @@ void PollTuning() {
              "gpu_threads_affinity={:#x} other_threads_affinity={:#x} rt_memo={} "
              "late_protect={} parallel_protect={} gpu_threads_priority={} gpu_profile={} "
              "readback_relaxed_sites={} asc_queue={} runtime_lookup_memo={} "
-             "compute_compile_parallel={}",
+             "compute_compile_parallel={} buffer_bind_memo={} readback_range_dependencies={}",
              tuning.readback_window_bytes.load(std::memory_order_relaxed) / 1024,
              tuning.readback_write_discard.load(std::memory_order_relaxed),
              tuning.readback_write_merge.load(std::memory_order_relaxed),
@@ -496,7 +500,9 @@ void PollTuning() {
              }(),
              tuning.asc_queue.load(std::memory_order_relaxed),
              tuning.runtime_lookup_memo.load(std::memory_order_relaxed),
-             tuning.compute_compile_parallel.load(std::memory_order_relaxed));
+             tuning.compute_compile_parallel.load(std::memory_order_relaxed),
+             tuning.buffer_bind_memo.load(std::memory_order_relaxed),
+             tuning.readback_range_dependencies.load(std::memory_order_relaxed));
 }
 
 namespace {

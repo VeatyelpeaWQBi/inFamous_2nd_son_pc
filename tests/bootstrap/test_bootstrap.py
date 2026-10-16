@@ -13,6 +13,12 @@ import project_paths
 import launcher_settings
 from unittest.mock import Mock, patch
 
+def temporary_directory():
+    parent = ROOT / 'state/offline-tests'
+    parent.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(dir=parent)
+
+
 class FakeImage:
     def read(self, offset, size):
         return bytes(size)
@@ -38,11 +44,11 @@ class PatchSafety(unittest.TestCase):
             preflight.audit_xml(FakeImage(),root,{"TITLE_ID":"CUSA00309","APP_VER":"01.00"},"1080p")
 
 class MeasurementSafety(unittest.TestCase):
-    def report(self, text, confirmations=None, mode="1080p"):
-        with tempfile.TemporaryDirectory() as directory:
+    def report(self, text, confirmations=None, mode="1080p", end=0.02):
+        with temporary_directory() as directory:
             path=Path(directory)/"frames.csv"
             path.write_text(text)
-            return metrics.summarize(path,0,1,mode,confirmations or {"scene":False})
+            return metrics.summarize(path,0,end,mode,confirmations or {"scene":False})
     def test_high_fps_without_scene_confirmation_not_accepted(self):
         result=self.report("frame,elapsed_ns,interval_ns\n0,0,0\n1,10000000,10000000\n2,20000000,10000000\n")
         self.assertEqual(result["fps"],100)
@@ -51,6 +57,10 @@ class MeasurementSafety(unittest.TestCase):
     def test_partial_visual_confirmation_not_accepted(self):
         result=self.report("frame,elapsed_ns,interval_ns\n0,0,0\n1,10000000,10000000\n2,20000000,10000000\n", {"scene":True})
         self.assertEqual(result["baseline_acceptance"],"not-verified")
+    def test_incomplete_requested_window_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "does not cover"):
+            self.report("frame,elapsed_ns,interval_ns\n0,0,0\n1,10000000,10000000\n2,20000000,10000000\n",
+                        {key: True for key in ('scene', 'brightness', 'particles', 'resolution')}, end=1)
     def test_missing_frames_rejected(self):
         with self.assertRaisesRegex(ValueError,"contiguous"):
             self.report("frame,elapsed_ns,interval_ns\n0,0,0\n2,20000000,20000000\n")
@@ -97,7 +107,7 @@ class InputSafety(unittest.TestCase):
             project_paths.project_child("../outside")
 
     def test_failed_atomic_write_preserves_previous_config(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             with patch.object(project_paths, "ROOT", Path(directory).resolve()):
                 target = Path(directory) / "state/config.json"
                 project_paths.write_json(target, {"schema": 1})

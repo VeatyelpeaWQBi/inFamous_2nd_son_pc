@@ -6,6 +6,7 @@
 #include <memory>
 #include <string_view>
 #include <spdlog/common.h>
+#include <spdlog/details/file_helper.h>
 #include <spdlog/details/log_msg.h>
 #include <spdlog/formatter.h>
 #include <spdlog/sinks/base_sink.h>
@@ -37,7 +38,8 @@ protected:
         if (session_file_helper_.filename().empty()) {
             // always log in the main file, it shouldnt be too big
             main_file_helper_.write(formatted);
-        } else if (_current_size < _size_limit || msg.log_level == spdlog::level::critical) {
+        } else if (_size_limit == UNLIMITED_SIZE || _current_size < _size_limit ||
+                   msg.log_level == spdlog::level::critical) {
             session_file_helper_.write(formatted);
             _current_size += formatted.size();
         }

@@ -293,6 +293,17 @@ enum Counter : u32 {
     ComputeBindWaits,
     ComputeBindWaitNs,
     ComputeCompileQueueWaitNs,
+    // Recorder backlog waits are not compute compiler queue waits.
+    RecorderQueueWaitNs,
+    // V1 candidates: actual buffer bindings skipped and copied-range dependency selection.
+    VertexBufferBinds,
+    VertexBufferBindsSkipped,
+    IndexBufferBinds,
+    IndexBufferBindsSkipped,
+    ReadbackDependencyChecks,
+    ReadbackDependenciesReduced,
+    ReadbackDependencyFallbacks,
+    ReadbackQueuePromotions,
     CounterCount,
 };
 
@@ -374,6 +385,9 @@ struct Tuning {
     /// Memory the guest read back recently is downloaded again at fence points, so later reads
     /// find it ready (requires async_readbacks).
     std::atomic<bool> readback_prefetch{true};
+    /// V1 candidate: wait for writers of actual copied ranges, with whole-window fallback.
+    /// Precise readbacks only; does not change copied data, fault handling or guest visibility.
+    std::atomic<bool> readback_range_dependencies{false};
     /// 0: pipelines are compiled on the command processor thread, which stalls meanwhile.
     /// 1: graphics pipelines are compiled by worker threads and draws using a pipeline that is
     /// not ready yet are skipped. 2: same for compute pipelines and dispatches.
@@ -510,6 +524,9 @@ struct Tuning {
     /// Pipelines, push constants and vertex inputs the command buffer already has (same as the
     /// last ones recorded in it) are not recorded again.
     std::atomic<bool> skip_redundant_binds{false};
+    /// V1 candidate, independent of layout/pipeline memoization: skip identical actual vertex
+    /// and index buffer binds in one command buffer. Uploads and barriers remain unchanged.
+    std::atomic<bool> buffer_bind_memo{false};
     /// The code size and hash of a shader address are reused until the next submission or guest
     /// wait, instead of being read in guest memory for every stage of every draw.
     std::atomic<bool> shader_params_memo{false};
@@ -878,6 +895,18 @@ inline void OnFlip(float draws_per_frame, float dispatches_per_frame) {
              t[FlatbufMemoHits], t[FlatbufMemoMisses], mb(t[FlatbufMemoSavedBytes]),
              t[ComputeCompilesQueued], t[ComputeBindsDeferred], t[ComputeBindWaits],
              ms(t[ComputeBindWaitNs]), ms(t[ComputeCompileQueueWaitNs]));
+
+    if (t[VertexBufferBinds] || t[IndexBufferBinds] || t[ReadbackDependencyChecks] ||
+        t[RecorderQueueWaitNs]) {
+        LOG_INFO(Debug,
+                 "Perf V1: vertex binds skipped {}/{} index binds skipped {}/{} "
+                 "readback dependencies: checked {} reduced {} fallback {} queue promotions {} "
+                 "recorder backlog wait {:.1f} ms",
+                 t[VertexBufferBindsSkipped], t[VertexBufferBinds], t[IndexBufferBindsSkipped],
+                 t[IndexBufferBinds], t[ReadbackDependencyChecks], t[ReadbackDependenciesReduced],
+                 t[ReadbackDependencyFallbacks], t[ReadbackQueuePromotions],
+                 ms(t[RecorderQueueWaitNs]));
+    }
 
     const u64 last_flip = r.last_flip;
     const u64 flip_index = r.flip_index;

@@ -19,6 +19,10 @@ endif()
 
 project(inFamousRuntime CXX C ASM ${ADDITIONAL_LANGUAGES})
 
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "This project requires a Windows x86-64 compiler target.")
+endif()
+
 include(FetchContent)
 
 # Forcing PIE makes sure that the base address is high enough so that it doesn't clash with the PS4 memory.
@@ -1310,6 +1314,8 @@ target_link_libraries(shadps4 PRIVATE spdlog::spdlog)
 target_link_libraries(shadps4 PRIVATE magic_enum::magic_enum fmt::fmt toml11::toml11 tsl::robin_map xbyak::xbyak Tracy::TracyClient RenderDoc::API FFmpeg::ffmpeg Dear_ImGui ImGuiFileDialog gcn half::half ZLIB::ZLIB PNG::PNG minimp3)
 target_link_libraries(shadps4 PRIVATE Boost::headers GPUOpen::VulkanMemoryAllocator LibAtrac9 sirit Vulkan::Headers xxHash::xxhash Zydis::Zydis SDL3::SDL3 pugixml::pugixml)
 target_link_libraries(shadps4 PRIVATE stb::headers lfreist-hwinfo::hwinfo nlohmann_json::nlohmann_json miniz::miniz fdk-aac CLI11::CLI11 OpenAL::OpenAL Cpp_Httplib miniupnpc::miniupnpc)
+# The AAC wrapper uses an internal FDK header; resolve it from the configured dependency tree.
+target_include_directories(shadps4 PRIVATE "${IFSS_EXTERNALS_ROOT}/aacdec/fdk-aac/libAACdec/src")
 target_link_libraries(shadps4 PRIVATE Freetype::Freetype)
 target_link_libraries(shadps4 PRIVATE libprotobuf)
 target_link_libraries(shadps4 PRIVATE ZArchive::zarchive)

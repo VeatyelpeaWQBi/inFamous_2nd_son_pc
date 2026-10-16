@@ -6,6 +6,7 @@
 #include "core/emulator_settings.h"
 #include "video_core/renderdoc.h"
 
+#include <array>
 #include <atomic>
 #include <renderdoc_app.h>
 
@@ -16,6 +17,7 @@
 #endif
 
 #include <filesystem>
+#include <string>
 
 namespace VideoCore {
 
@@ -24,44 +26,69 @@ enum class CaptureState {
     Triggered,
     InProgress,
 };
-static CaptureState capture_state{CaptureState::Idle};
+static std::atomic<CaptureState> capture_state{CaptureState::Idle};
 static std::atomic<u32> screenshot_game_only_count{0};
 static std::atomic<u32> screenshot_with_overlays_count{0};
 
 RENDERDOC_API_1_6_0* rdoc_api{};
 
 void LoadRenderDoc() {
-#ifdef WIN32
-
-    // Check if we are running by RDoc GUI
-    HMODULE mod = GetModuleHandleA("renderdoc.dll");
+#ifdef _WIN32
+    if (EmulatorSettings.IsRenderdocEnabled() && GetModuleHandleW(L"WarpVizTarget.dll")) {
+        LOG_ERROR(Render, "RenderDoc cannot initialize in this Nsight-injected process; "
+                          "select one GPU capture backend");
+        return;
+    }
+    HMODULE mod = GetModuleHandleW(L"renderdoc.dll");
     if (!mod && EmulatorSettings.IsRenderdocEnabled()) {
-        // If enabled in config, try to load RDoc runtime in offline mode
-        HKEY h_reg_key;
-        LONG result = RegOpenKeyExW(HKEY_LOCAL_MACHINE,
-                                    L"SOFTWARE\\Classes\\RenderDoc.RDCCapture.1\\DefaultIcon\\", 0,
-                                    KEY_READ, &h_reg_key);
+        // RegGetValue uses bytes, terminates strings, expands REG_EXPAND_SZ and closes its key.
+        std::array<wchar_t, 32768> key_str{};
+        DWORD bytes = static_cast<DWORD>(sizeof(key_str));
+        const LSTATUS result = RegGetValueW(
+            HKEY_LOCAL_MACHINE, L"SOFTWARE\\Classes\\RenderDoc.RDCCapture.1\\DefaultIcon",
+            nullptr, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, key_str.data(), &bytes);
         if (result != ERROR_SUCCESS) {
+            LOG_ERROR(Render, "Cannot locate installed RenderDoc (registry error {})", result);
             return;
         }
-        std::array<wchar_t, MAX_PATH> key_str{};
-        DWORD str_sz_out{key_str.size()};
-        result = RegQueryValueExW(h_reg_key, L"", 0, NULL, (LPBYTE)key_str.data(), &str_sz_out);
-        if (result != ERROR_SUCCESS) {
+        std::wstring icon_path{key_str.data()};
+        if (!icon_path.empty() && icon_path.front() == L'"') {
+            const auto end = icon_path.find(L'"', 1);
+            if (end == std::wstring::npos) {
+                LOG_ERROR(Render, "Invalid quoted RenderDoc registry path");
+                return;
+            }
+            icon_path = icon_path.substr(1, end - 1);
+        } else if (const auto comma = icon_path.rfind(L',');
+                   comma != std::wstring::npos &&
+                   icon_path.find_first_not_of(L" -0123456789", comma + 1) == std::wstring::npos) {
+            icon_path.resize(comma);
+        }
+        const std::filesystem::path executable{icon_path};
+        if (!executable.is_absolute() || !executable.has_filename()) {
+            LOG_ERROR(Render, "Installed RenderDoc registry path is not an absolute file path");
             return;
         }
-
-        std::filesystem::path path{key_str.cbegin(), key_str.cend()};
-        path = path.parent_path().append("renderdoc.dll");
-        const auto path_to_lib = path.generic_string();
-        mod = LoadLibraryA(path_to_lib.c_str());
+        const auto library = executable.parent_path() / L"renderdoc.dll";
+        mod = LoadLibraryExW(library.c_str(), nullptr,
+                             LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+        if (!mod) {
+            LOG_ERROR(Render, "Cannot load installed RenderDoc DLL (Windows error {})",
+                      GetLastError());
+            return;
+        }
     }
 
     if (mod) {
-        const auto RENDERDOC_GetAPI =
+        const auto get_api =
             reinterpret_cast<pRENDERDOC_GetAPI>(GetProcAddress(mod, "RENDERDOC_GetAPI"));
-        const s32 ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_6_0, (void**)&rdoc_api);
-        ASSERT(ret == 1);
+        if (!get_api || get_api(eRENDERDOC_API_Version_1_6_0,
+                               reinterpret_cast<void**>(&rdoc_api)) != 1 || !rdoc_api) {
+            rdoc_api = nullptr;
+            LOG_ERROR(Render, "Installed RenderDoc does not provide the requested capture API");
+            return;
+        }
+        LOG_INFO(Render, "RenderDoc API ready (1.6.0)");
     }
 #else
 #ifdef ANDROID
@@ -98,9 +125,9 @@ void StartCapture() {
         return;
     }
 
-    if (capture_state == CaptureState::Triggered) {
+    auto expected = CaptureState::Triggered;
+    if (capture_state.compare_exchange_strong(expected, CaptureState::InProgress)) {
         rdoc_api->StartFrameCapture(nullptr, nullptr);
-        capture_state = CaptureState::InProgress;
     }
 }
 
@@ -109,16 +136,18 @@ void EndCapture() {
         return;
     }
 
-    if (capture_state == CaptureState::InProgress) {
-        rdoc_api->EndFrameCapture(nullptr, nullptr);
-        capture_state = CaptureState::Idle;
+    if (capture_state.load() == CaptureState::InProgress) {
+        const auto saved = rdoc_api->EndFrameCapture(nullptr, nullptr);
+        LOG_INFO(Render, "RenderDoc capture finished: saved={}, count={}",
+                 saved, rdoc_api->GetNumCaptures());
+        capture_state.store(CaptureState::Idle);
     }
 }
 
 void TriggerCapture() {
-    if (capture_state == CaptureState::Idle) {
-        capture_state = CaptureState::Triggered;
-    }
+    if (!rdoc_api) return;
+    auto expected = CaptureState::Idle;
+    capture_state.compare_exchange_strong(expected, CaptureState::Triggered);
 }
 
 void SetOutputDir(const std::filesystem::path& path, const std::string& prefix) {

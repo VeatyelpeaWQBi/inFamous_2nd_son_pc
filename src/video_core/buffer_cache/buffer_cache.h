@@ -301,6 +301,7 @@ private:
         bool done{true};      ///< Every writer is done on the GPU.
         bool current{};       ///< A writer is in a session being recorded.
     };
+    WindowWriters ClassifyWriters(std::array<u64, 2> ticks);
     WindowWriters WindowWritersOf(VAddr start, u64 size);
     /// The waits of a readback queue copy of a window.
     boost::container::static_vector<ReadbackQueue::Wait, 2> ReadbackWaits(const WindowWriters&);
@@ -313,6 +314,11 @@ private:
     /// download buffer, without recording them. Returns false when there is nothing to download
     /// (the window stays registered).
     bool CollectReadback(const Buffer* arena, PendingReadback& readback);
+
+    /// Collects copies, optionally narrows producer dependencies, then selects the copy queue.
+    /// With the candidate off, keeps the original whole-window waits and queue selection.
+    bool PrepareReadback(const Buffer* arena, PendingReadback& readback, WindowWriters& writers,
+                         bool queue_enabled, bool& on_queue);
 
     /// Collects the window and records its copies in the graphics command buffer.
     bool RecordReadback(const Buffer* arena, PendingReadback& readback);

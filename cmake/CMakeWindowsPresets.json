@@ -14,7 +14,11 @@
       "cacheVariables": {
         "CMAKE_C_COMPILER": "clang-cl",
         "CMAKE_CXX_COMPILER": "clang-cl",
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/Build/${presetName}"
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/Install/${presetName}",
+        "IFSS_BUILD_ENGINE": "ON",
+        "ENABLE_TESTS": "OFF",
+        "TRACY_ENABLE": "OFF",
+        "SHADPS4_DIAGNOSTIC_MAP": "ON"
       },
       "vendor": {
         "microsoft.com/VisualStudioSettings/CMake/1.0": {

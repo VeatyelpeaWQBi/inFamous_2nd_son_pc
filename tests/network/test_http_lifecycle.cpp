@@ -1482,10 +1482,24 @@ int PS4_SYSV_ABI sceHttpsUnloadCert(int);
 
 namespace {
 
-TEST_F(HttpLifecycle, LoadCertHappyPath) {
+TEST_F(HttpLifecycle, LoadCertRejectsUnsupportedImport) {
     int ctx = sceHttpInit(0, 0, 4096);
     const void* dummy_cas[2] = {nullptr, nullptr};
-    EXPECT_EQ(sceHttpsLoadCert(ctx, 2, dummy_cas, nullptr, nullptr), ORBIS_OK);
+    EXPECT_EQ(sceHttpsLoadCert(ctx, 2, dummy_cas, nullptr, nullptr),
+              static_cast<int>(ORBIS_HTTPS_ERROR_CERT));
+    EXPECT_EQ(sceHttpsLoadCert(ctx, 0, nullptr, nullptr, nullptr), ORBIS_OK);
+    sceHttpTerm(ctx);
+}
+
+TEST_F(HttpLifecycle, LoadCertValidatesArguments) {
+    int ctx = sceHttpInit(0, 0, 4096);
+    EXPECT_EQ(sceHttpsLoadCert(ctx, -1, nullptr, nullptr, nullptr),
+              static_cast<int>(ORBIS_HTTP_ERROR_INVALID_VALUE));
+    EXPECT_EQ(sceHttpsLoadCert(ctx, 1, nullptr, nullptr, nullptr),
+              static_cast<int>(ORBIS_HTTP_ERROR_INVALID_VALUE));
+    const char certificate = 0;
+    EXPECT_EQ(sceHttpsLoadCert(ctx, 0, nullptr, &certificate, nullptr),
+              static_cast<int>(ORBIS_HTTP_ERROR_INVALID_VALUE));
     sceHttpTerm(ctx);
 }
 
@@ -1511,8 +1525,7 @@ TEST_F(HttpLifecycle, UnloadCertHappyPath) {
 
 TEST_F(HttpLifecycle, UnloadCertWithoutLoadIsOk) {
     int ctx = sceHttpInit(0, 0, 4096);
-    // Idempotent: erasing from the set returns 0 but we don't surface it as
-    // an error since context exists.
+    // No custom certificates are installed; unloading remains idempotent.
     EXPECT_EQ(sceHttpsUnloadCert(ctx), ORBIS_OK);
     sceHttpTerm(ctx);
 }
@@ -1530,7 +1543,8 @@ TEST_F(HttpLifecycle, UnloadCertInvalidCtxId) {
 TEST_F(HttpLifecycle, LoadCertSurvivesTermCleanly) {
     int ctx = sceHttpInit(0, 0, 4096);
     const void* dummy[1] = {nullptr};
-    EXPECT_EQ(sceHttpsLoadCert(ctx, 1, dummy, nullptr, nullptr), ORBIS_OK);
+    EXPECT_EQ(sceHttpsLoadCert(ctx, 1, dummy, nullptr, nullptr),
+              static_cast<int>(ORBIS_HTTPS_ERROR_CERT));
     sceHttpTerm(ctx);
     // After Term, the ctxId is invalid - LoadCert on it must fail.
     EXPECT_EQ(sceHttpsLoadCert(ctx, 1, dummy, nullptr, nullptr),

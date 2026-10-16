@@ -408,8 +408,7 @@ void Scheduler::WaitForRecorderRoom(std::unique_lock<std::mutex>& lock) {
         recorder_jobs.size() >= MaxQueuedBatches) {
         const u64 start = Common::Perf::NowNs();
         recorder_space_cv.wait(lock, [this] { return recorder_jobs.size() < MaxQueuedBatches; });
-        Common::Perf::Add(Common::Perf::ComputeCompileQueueWaitNs,
-                          Common::Perf::NowNs() - start);
+        Common::Perf::Add(Common::Perf::RecorderQueueWaitNs, Common::Perf::NowNs() - start);
     }
 }
 
@@ -1151,6 +1150,36 @@ bool SkipRedundantBinds() noexcept {
 }
 } // Anonymous namespace
 
+bool DynamicState::BindCache::SkipIndexBuffer(vk::Buffer buffer, vk::DeviceSize offset,
+                                             vk::IndexType type) noexcept {
+    if (!Common::Perf::GetTuning().buffer_bind_memo.load(std::memory_order_relaxed)) {
+        buffers.ForgetIndex();
+        return false;
+    }
+    Common::Perf::Add(Common::Perf::IndexBufferBinds);
+    if (!buffers.NoteIndex(buffer, offset, type)) {
+        return false;
+    }
+    Common::Perf::Add(Common::Perf::IndexBufferBindsSkipped);
+    return true;
+}
+
+bool DynamicState::BindCache::SkipVertexBuffers(u32 first, u32 count, const vk::Buffer* values,
+                                               const vk::DeviceSize* offsets, bool sized_api,
+                                               const vk::DeviceSize* sizes,
+                                               const vk::DeviceSize* strides) noexcept {
+    if (!Common::Perf::GetTuning().buffer_bind_memo.load(std::memory_order_relaxed)) {
+        buffers.ForgetVertices();
+        return false;
+    }
+    Common::Perf::Add(Common::Perf::VertexBufferBinds);
+    if (!buffers.NoteVertices(first, count, values, offsets, sized_api, sizes, strides)) {
+        return false;
+    }
+    Common::Perf::Add(Common::Perf::VertexBufferBindsSkipped);
+    return true;
+}
+
 bool DynamicState::BindCache::SkipPipeline(vk::PipelineBindPoint bind_point,
                                            vk::Pipeline pipeline) noexcept {
     u32 index;
@@ -1477,9 +1506,7 @@ void DynamicState::Commit(const Instance& instance, const CommandRecorder& cmdbu
     }
     if (dirty_state.feedback_loop_enabled && instance.IsAttachmentFeedbackLoopLayoutSupported()) {
         dirty_state.feedback_loop_enabled = false;
-        cmdbuf.setAttachmentFeedbackLoopEnableEXT(feedback_loop_enabled
-                                                      ? vk::ImageAspectFlagBits::eColor
-                                                      : vk::ImageAspectFlagBits::eNone);
+        cmdbuf.setAttachmentFeedbackLoopEnableEXT(feedback_loop_enabled);
     }
 }
 

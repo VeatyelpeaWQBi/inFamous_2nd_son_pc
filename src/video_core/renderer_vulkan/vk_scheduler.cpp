@@ -18,6 +18,7 @@
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/perf_stats.h"
+#include "common/path_trace.h"
 #include "common/scope_exit.h"
 #include "common/thread.h"
 #include "imgui/renderer/texture_manager.h"
@@ -944,6 +945,9 @@ void Scheduler::ProfileDispatchBegin(u64 shader_hash) {
         Common::Perf::GetTuning().gpu_profile.load(std::memory_order_relaxed) != 2) {
         return;
     }
+    const u64 filter = Common::Perf::GetTuning().gpu_profile_compute_hash.load(
+        std::memory_order_relaxed);
+    if (filter != 0 && shader_hash != filter) return;
     GpuProfile& prof = *profile;
     u64 number;
     if (!prof.Allocate(number)) {
@@ -1063,6 +1067,11 @@ void Scheduler::CollectProfile() {
                 auto& [shader_ns, shader_count] = prof.shader_ns[dispatch.hash];
                 shader_ns += ns;
                 ++shader_count;
+                // CPU event time is query retirement, NOT GPU execution time. Duration comes
+                // from GPU timestamps; keep the two clock domains distinct in the analysis.
+                Common::PathTrace::Emit(Common::PathTrace::Kind::GpuDispatchResult,
+                                        Common::PathTrace::NextId(), dispatch.hash,
+                                        session.tick, ns, std::strcmp(name, "compute") == 0);
                 Common::Perf::Add(Common::Perf::GpuProfileComputeNs, ns);
                 Common::Perf::Add(Common::Perf::GpuProfileDispatches);
             }
@@ -1152,10 +1161,6 @@ bool SkipRedundantBinds() noexcept {
 
 bool DynamicState::BindCache::SkipIndexBuffer(vk::Buffer buffer, vk::DeviceSize offset,
                                              vk::IndexType type) noexcept {
-    if (!Common::Perf::GetTuning().buffer_bind_memo.load(std::memory_order_relaxed)) {
-        buffers.ForgetIndex();
-        return false;
-    }
     Common::Perf::Add(Common::Perf::IndexBufferBinds);
     if (!buffers.NoteIndex(buffer, offset, type)) {
         return false;
@@ -1168,10 +1173,6 @@ bool DynamicState::BindCache::SkipVertexBuffers(u32 first, u32 count, const vk::
                                                const vk::DeviceSize* offsets, bool sized_api,
                                                const vk::DeviceSize* sizes,
                                                const vk::DeviceSize* strides) noexcept {
-    if (!Common::Perf::GetTuning().buffer_bind_memo.load(std::memory_order_relaxed)) {
-        buffers.ForgetVertices();
-        return false;
-    }
     Common::Perf::Add(Common::Perf::VertexBufferBinds);
     if (!buffers.NoteVertices(first, count, values, offsets, sized_api, sizes, strides)) {
         return false;

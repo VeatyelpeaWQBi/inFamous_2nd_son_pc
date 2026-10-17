@@ -23,6 +23,7 @@
 
 #include "common/logging/log.h"
 #include "common/path_util.h"
+#include "common/path_trace.h"
 #include "common/perf_stats.h"
 #include "common/types.h"
 
@@ -141,8 +142,6 @@ void PollTuning() {
             tuning.readback_keep_ranges.store(value != "0", std::memory_order_relaxed);
         } else if (key == "threaded_recording") {
             tuning.threaded_recording.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "compute_compile_priority") {
-            tuning.compute_compile_priority.store(value != "0", std::memory_order_relaxed);
         } else if (key == "compute_compile_parallel") {
             tuning.compute_compile_parallel.store(value != "0", std::memory_order_relaxed);
         } else if (key == "async_uploads") {
@@ -161,8 +160,6 @@ void PollTuning() {
             tuning.scout.store(value != "0", std::memory_order_relaxed);
         } else if (key == "skip_redundant_binds") {
             tuning.skip_redundant_binds.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "buffer_bind_memo") {
-            tuning.buffer_bind_memo.store(value != "0", std::memory_order_relaxed);
         } else if (key == "shader_params_memo") {
             tuning.shader_params_memo.store(value != "0", std::memory_order_relaxed);
         } else if (key == "runtime_lookup_memo") {
@@ -218,6 +215,11 @@ void PollTuning() {
             tuning.gpu_profile.store(
                 static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 3)),
                 std::memory_order_relaxed);
+        } else if (key == "gpu_profile_compute_hash") {
+            tuning.gpu_profile_compute_hash.store(std::strtoull(value.c_str(), nullptr, 16),
+                                                  std::memory_order_relaxed);
+        } else if (key == "path_trace") {
+            tuning.path_trace.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gpu_threads_priority") {
             tuning.gpu_threads_priority.store(
                 static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 2)),
@@ -254,10 +256,6 @@ void PollTuning() {
             tuning.async_readbacks.store(value != "0", std::memory_order_relaxed);
         } else if (key == "readback_prefetch") {
             tuning.readback_prefetch.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "readback_page_prefetch") {
-            tuning.readback_page_prefetch.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "readback_range_dependencies") {
-            tuning.readback_range_dependencies.store(value != "0", std::memory_order_relaxed);
         } else if (key == "async_pipelines") {
             tuning.async_pipelines.store(std::min<u32>(std::strtoul(value.c_str(), nullptr, 10), 2),
                                          std::memory_order_relaxed);
@@ -422,6 +420,9 @@ void PollTuning() {
                                                 std::memory_order_relaxed);
         }
     }
+    Common::PathTrace::Emit(Common::PathTrace::Kind::TuningReload,
+                            Common::PathTrace::NextId(), tuning.gpu_profile.load(),
+                            tuning.gpu_profile_compute_hash.load(), tuning.path_trace.load());
     LOG_INFO(Debug,
              "Perf tuning applied: readback_window_kb={} readback_write_discard={} "
              "readback_write_merge={} readback_keep_ranges={} async_readbacks={} readback_prefetch={} async_pipelines={} "
@@ -438,8 +439,7 @@ void PollTuning() {
              "gpu_threads_affinity={:#x} other_threads_affinity={:#x} rt_memo={} "
              "late_protect={} parallel_protect={} gpu_threads_priority={} gpu_profile={} "
              "readback_relaxed_sites={} asc_queue={} runtime_lookup_memo={} "
-             "compute_compile_parallel={} buffer_bind_memo={} readback_range_dependencies={} "
-             "compute_compile_priority={} readback_page_prefetch={}",
+             "compute_compile_parallel={} (V1/V2 core policies integrated)",
              tuning.readback_window_bytes.load(std::memory_order_relaxed) / 1024,
              tuning.readback_write_discard.load(std::memory_order_relaxed),
              tuning.readback_write_merge.load(std::memory_order_relaxed),
@@ -505,11 +505,7 @@ void PollTuning() {
              }(),
              tuning.asc_queue.load(std::memory_order_relaxed),
              tuning.runtime_lookup_memo.load(std::memory_order_relaxed),
-             tuning.compute_compile_parallel.load(std::memory_order_relaxed),
-             tuning.buffer_bind_memo.load(std::memory_order_relaxed),
-             tuning.readback_range_dependencies.load(std::memory_order_relaxed),
-             tuning.compute_compile_priority.load(std::memory_order_relaxed),
-             tuning.readback_page_prefetch.load(std::memory_order_relaxed));
+             tuning.compute_compile_parallel.load(std::memory_order_relaxed));
 }
 
 namespace {

@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param([ValidateSet('auto','720p','900p','1080p','1440p','1800p','pro4k')][string]$Mode='auto',
-      [switch]$WaitForDebugger,[switch]$Benchmark,[switch]$CheckOnly,[switch]$PrepareOnly,[switch]$NoMenu,[switch]$OptimizationV1,
-      [ValidateSet('none','control','compile','readback','both')][string]$OptimizationV2='none',
+      [switch]$WaitForDebugger,[switch]$Benchmark,[switch]$CheckOnly,[switch]$PrepareOnly,[switch]$NoMenu,
+      [ValidateSet('none','baseline','critical','lighting')][string]$TimingProfile='none',
       [ValidateSet('none','cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full')][string]$Diagnostic='none',
       [ValidateRange(-1,3600)][int]$DiagnosticDelaySeconds=90,[ValidateRange(10,600)][int]$DiagnosticSeconds=60)
 Set-StrictMode -Version Latest
@@ -11,11 +11,13 @@ $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $python=Resolve-InstalledPython
 $preflight=Join-Path $PSScriptRoot 'preflight.py'
 $isDiagnostic=$Diagnostic -ne 'none'
-$isV2=$OptimizationV2 -ne 'none'
-if($OptimizationV1 -and $isV2){throw 'Select one optimization test profile.'}
-$isOptimizationTest=$OptimizationV1 -or $isV2
-if($isOptimizationTest -and $Benchmark){throw 'Optimization candidates are not frozen benchmarks.'}
-if($isDiagnostic -or $WaitForDebugger -or $isOptimizationTest){. (Join-Path $PSScriptRoot 'diagnostic_tools.ps1')}
+$isTiming=$TimingProfile -ne 'none'
+if($isTiming){
+    if($isDiagnostic -or $Benchmark -or $WaitForDebugger){throw 'Timing profiles require ordinary play without full/profiler/debugger instrumentation.'}
+    if($Mode -eq 'auto'){$Mode='pro4k'}
+    if($Mode -notin @('1080p','pro4k')){throw 'Timing comparisons support 1080p and pro4k.'}
+}
+if($isDiagnostic -or $WaitForDebugger -or $isTiming){. (Join-Path $PSScriptRoot 'diagnostic_tools.ps1')}
 if($isDiagnostic){
     if($Benchmark){throw 'Diagnostic captures cannot be submitted as frozen benchmarks.'}
     if($Mode -eq 'auto'){$Mode='pro4k'}
@@ -48,15 +50,14 @@ try{
         $volume=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($projectRoot))
         if($volume.AvailableFreeSpace -lt (Get-DiagnosticStoragePolicy).minimum_free_bytes){throw 'At least 2 GiB of free disk space is required for diagnostic shutdown and flushing.'}
     }
-    if(-not $isDiagnostic -and -not $Benchmark -and -not $isOptimizationTest -and -not $PrepareOnly -and -not $NoMenu){
+    if(-not $isDiagnostic -and -not $Benchmark -and -not $isTiming -and -not $PrepareOnly -and -not $NoMenu){
         $selection=@(& $python -B (Join-Path $PSScriptRoot 'launch_menu.py') --mode $Mode)
         if($LASTEXITCODE -eq 1){exit 0}
         if($LASTEXITCODE -ne 0){throw 'Launch settings could not be opened; game was not started.'}
         $Mode=($selection -join '').Trim()
     }
     $sessionName=(Get-Date).ToString('yyyyMMdd-HHmmss-fff')+'-'+$Mode+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8)
-    if($OptimizationV1){$sessionName+='-optimization-v1'}
-    if($isV2){$sessionName+='-optimization-v2-'+$OptimizationV2}
+    if($isTiming){$sessionName+='-timing-'+$TimingProfile}
     if($isDiagnostic){$sessionName+='-diagnostic-'+$Diagnostic}
     $parent='state/sessions'
     $session=Resolve-ProjectChild $projectRoot ($parent+'/'+$sessionName)
@@ -122,23 +123,45 @@ try{
     if($isDiagnostic){
         $diagnosticPlan=Initialize-DiagnosticSession $projectRoot $session $Diagnostic $DiagnosticDelaySeconds $DiagnosticSeconds
     }
-    $optimizationOverrides=[ordered]@{}
-    if($OptimizationV1){
-        $optimizationOverrides=[ordered]@{buffer_bind_memo=1;readback_range_dependencies=1;perf_log=1}
-        Set-DiagnosticTuning $projectRoot $session $optimizationOverrides
-        Write-Host 'V1 candidates ON: buffer_bind_memo=1; readback_range_dependencies=1.'
-        Write-Host 'Test save/configuration changes remain in this session; normal launch defaults are preserved.'
-    }
-    if($isV2){
-        $optimizationOverrides=[ordered]@{
-            buffer_bind_memo=1;readback_range_dependencies=1;perf_log=1
-            compute_compile_parallel=1;async_readbacks=1;readback_prefetch=1
-            readback_relaxed_sites='0'
-            compute_compile_priority=[int]($OptimizationV2 -in @('compile','both'))
-            readback_page_prefetch=[int]($OptimizationV2 -in @('readback','both'))
+    $timingOverrides=[ordered]@{}
+    $timingConfigOverrides=[ordered]@{}
+    if($isTiming){
+        $timingOverrides=[ordered]@{
+            # perf_log also enables the legacy 1 ms SuspendThread sampler. PathTrace and
+            # targeted GPU query records do not depend on those periodic counters.
+            perf_log=0
+            compute_compile_parallel=1;async_readbacks=1;readback_prefetch=1;readback_relaxed_sites='0'
+            path_trace=[int]($TimingProfile -ne 'baseline')
+            gpu_profile=if($TimingProfile -eq 'lighting'){2}else{0}
+            gpu_profile_compute_hash=if($TimingProfile -eq 'lighting'){'ce1675e0'}else{'0'}
+            profile_stacks=0;dump_frames=0;trace_reads='0';trace_shader='';trace_draw=0
+            dump_images='';dump_after='';gpu_checkpoints=0
         }
-        Set-DiagnosticTuning $projectRoot $session $optimizationOverrides
-        Write-Host ('V2 profile: '+$OptimizationV2+'; exact readbacks; saves/settings stay in this session.')
+        Set-DiagnosticTuning $projectRoot $session $timingOverrides
+        $timingConfigOverrides=[ordered]@{
+            Debug=@{debug_dump=$false;shader_collect=$false}
+            GPU=@{dump_shaders=$false}
+            Vulkan=@{
+                renderdoc_enabled=$false;vkvalidation_enabled=$false;vkvalidation_core_enabled=$false
+                vkvalidation_sync_enabled=$false;vkvalidation_gpu_enabled=$false;vkcrash_diagnostic_enabled=$false
+                vkhost_markers=$false;vkguest_markers=$false
+            }
+            Log=@{enable=$true;filter='*:Info'}
+        }
+        foreach($relativeConfig in @('user/config.json','user/custom_configs/CUSA00309.json')){
+            $timingConfigPath=Join-Path $session $relativeConfig
+            $timingConfig=Read-JsonUtf8 $timingConfigPath
+            foreach($section in $timingConfigOverrides.Keys){
+                if(-not $timingConfig.PSObject.Properties[$section]){$timingConfig|Add-Member NoteProperty $section ([pscustomobject]@{})}
+                foreach($key in $timingConfigOverrides[$section].Keys){$timingConfig.$section|Add-Member NoteProperty $key $timingConfigOverrides[$section][$key] -Force}
+            }
+            Write-JsonUtf8 $timingConfigPath $timingConfig
+        }
+        Copy-ProjectTree $projectRoot (Join-Path $session 'user/custom_configs/CUSA00309.json') (Join-Path $session 'custom_configs/CUSA00309.json')
+        Write-Host ('Timing profile: '+$TimingProfile+'; integrated core policies; no external collectors or automatic input.')
+        Write-Host 'Manual comparison: use the same save, scene, camera, warmup and input. F1: exit confirmation.'
+        Write-Host 'CPU trace uses about 2.3 MiB bounded queues and a background CSV file; losses are reported, never blocked.'
+        if($TimingProfile -eq 'lighting'){Write-Host 'GPU timestamps measure only cs_ce1675e0. Instrumented intervals are not ordinary frame times.'}
     }
     $arguments=@('-g',(Get-RelativePath $session (Join-Path $projectRoot 'game\CUSA00309\eboot.bin')),
                  '-p','patches/CUSA00309.xml','--benchmark-dir','.')
@@ -154,7 +177,8 @@ try{
         counter_kind='guest_flip';native_benchmark_cli=$verified.runtime_capabilities.benchmark_dir
         shared_cache=if($isDiagnostic){$null}else{Get-RelativePath $projectRoot $runtimeState};launcher_settings=$verified.launcher_settings;quit_menu_key='F1'
         diagnostic=if($isDiagnostic){$Diagnostic}else{$null};progress_published=$false
-        optimization_profile=if($OptimizationV1){'v1'}elseif($isV2){'v2-'+$OptimizationV2}else{$null};tuning_overrides=$optimizationOverrides
+        engine_policy='core-v1-v2'
+        timing_profile=if($isTiming){$TimingProfile}else{$null};timing_overrides=$timingOverrides;timing_config_overrides=$timingConfigOverrides
     }
     Write-JsonUtf8 (Join-Path $session 'launch.json') $launch
     if($PrepareOnly){Write-Host ('Prepared session: '+$session);exit 0}
@@ -237,11 +261,15 @@ try{
         }else{$diagnosticExitCode=1;Write-Warning 'Collector did not finish; double-click diagnostics/control/status.bat or recover.bat.'}
     }
     if($diagnosticWrapper -and -not $diagnosticWrapper.HasExited -and -not $diagnosticWrapper.WaitForExit(30000)){throw 'Nsight launcher did not finish.'}
+    if($isTiming){
+        & $python -X utf8 -B (Join-Path $PSScriptRoot 'analyze_timing.py') --session $session
+        if($LASTEXITCODE -ne 0){Write-Warning 'Timing evidence is incomplete or invalid. Review timing-summary.json; do not treat this run as accepted performance evidence.'}
+    }
     $launch.exit_code=$process.ExitCode
     $launch.finished_at=(Get-Date).ToString('o')
     $finalGameHash=(Get-FileHash -LiteralPath (Join-Path $projectRoot 'game\CUSA00309\eboot.bin') -Algorithm SHA256).Hash.ToLowerInvariant()
     if($finalGameHash -ne $manifest.game_sha256){throw 'Game executable changed; session progress was not published.'}
-    $publishProgress=(-not $isDiagnostic -and -not $Benchmark -and -not $isOptimizationTest -and $process.ExitCode -eq 0)
+    $publishProgress=(-not $isDiagnostic -and -not $Benchmark -and -not $isTiming -and $process.ExitCode -eq 0)
     if($publishProgress){
         $null=[IO.Directory]::CreateDirectory((Split-Path -Parent $liveHome))
         Copy-ProjectTree $projectRoot (Join-Path $session 'home') $liveHome

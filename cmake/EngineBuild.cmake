@@ -810,6 +810,9 @@ set(COMMON src/common/logging/classes.cpp
            src/common/native_clock.cpp
            src/common/native_clock.h
            src/common/path_util.cpp
+           src/common/path_trace.cpp
+           src/common/path_trace.h
+           src/common/path_trace_queue.h
            src/common/path_util.h
            src/common/object_pool.h
            src/common/polyfill_thread.h

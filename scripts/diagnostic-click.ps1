@@ -2,9 +2,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('menu','check','cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full','capture','stop','mark','xray','status','recover')]
-    [string]$Action='full',
-    [switch]$OptimizationV1,
-    [ValidateSet('none','control','compile','readback','both')][string]$OptimizationV2='none'
+    [string]$Action='full'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -21,16 +19,12 @@ try{
     if($Action -notin @('check','status') -and -not $administrator){
         # Elevate the same interactive entry, so failures remain visible in its window.
         $arguments=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$PSCommandPath+'"'),'-Action',$Action)
-        if($OptimizationV1){$arguments+='-OptimizationV1'}
-        if($OptimizationV2 -ne 'none'){$arguments+=@('-OptimizationV2',$OptimizationV2)}
         $child=Start-Process -FilePath $powerShell -ArgumentList $arguments -WorkingDirectory $root -Verb RunAs -Wait -PassThru
         $exitCode=$child.ExitCode
         $child.Dispose()
         $pauseOnExit=$false
     }else{
         Write-Host ('inFAMOUS Second Son - '+$Action)
-        if($OptimizationV1){Write-Host 'V1 optimization test: both new candidates enabled for this session only.'}
-        if($OptimizationV2 -ne 'none'){Write-Host ('V2 optimization test: '+$OptimizationV2+'; session only.')}
         if($Action -in @('menu','cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full')){
             Write-Host '无人值守采集：自动进入存档、预热、执行输入、抓帧和退出，无需按键。'
             Write-Host '预设 PRO 4K；最早启动 90 秒后采集，且须先取得场景证据并预热 20 秒；采集 60 秒。'
@@ -41,8 +35,6 @@ try{
         try{
             # Run in a child console process: diagnose.ps1 may exit without skipping this entry's final prompt.
             $driverArguments=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'diagnose.ps1'),'-Action',$Action,'-Mode','pro4k','-DelaySeconds','90','-Seconds','60','-Frames','2')
-            if($OptimizationV1){$driverArguments+='-OptimizationV1'}
-            if($OptimizationV2 -ne 'none'){$driverArguments+=@('-OptimizationV2',$OptimizationV2)}
             & $powerShell @driverArguments
             $exitCode=$LASTEXITCODE
         }finally{Pop-Location}
@@ -76,7 +68,7 @@ try{
                 }
             }catch{}
             $result=@{
-                schema=2;action=$Action;optimization_v1=[bool]$OptimizationV1;optimization_v2=$OptimizationV2;started_utc=$startedUtc.ToString('o');finished_utc=[DateTime]::UtcNow.ToString('o')
+                schema=2;action=$Action;engine_policy='core-v1-v2';started_utc=$startedUtc.ToString('o');finished_utc=[DateTime]::UtcNow.ToString('o')
                 exit_code=$exitCode;error=$failure;errors=$currentErrors;session=$session;status=$captureStatus
                 failure_kind=$failureKind;runtime_errors_file=$runtimeIssues;storage_usage=$storageUsage;performance_acceptance=$false
             }

@@ -75,8 +75,9 @@ public:
                                   Common::Perf::NowNs() - start);
             }
             const auto& tuning = Common::Perf::GetTuning();
-            const bool foreground =
-                bounded && tuning.compute_compile_priority.load(std::memory_order_relaxed);
+            // Required runtime compute work always precedes background compilation. The
+            // queue still bounds the foreground burst so background work cannot starve.
+            const bool foreground = bounded;
             const bool timed = bounded && tuning.perf_log.load(std::memory_order_relaxed);
             queue.Push(Job{pipeline, timed ? Common::Perf::NowNs() : 0, bounded}, foreground);
             ++pending;

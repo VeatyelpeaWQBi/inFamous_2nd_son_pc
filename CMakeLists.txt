@@ -107,3 +107,8 @@ target_include_directories(ifss_readback_dependencies_test PRIVATE src)
 add_executable(ifss_optimization_v2_test EXCLUDE_FROM_ALL tests/test_optimization_v2.cpp)
 target_compile_features(ifss_optimization_v2_test PRIVATE cxx_std_23)
 target_include_directories(ifss_optimization_v2_test PRIVATE src)
+
+# Diagnostic transport ordering/full/drop tests. Not part of the default engine build.
+add_executable(ifss_path_trace_queue_test EXCLUDE_FROM_ALL tests/test_path_trace_queue.cpp)
+target_compile_features(ifss_path_trace_queue_test PRIVATE cxx_std_23)
+target_include_directories(ifss_path_trace_queue_test PRIVATE src)

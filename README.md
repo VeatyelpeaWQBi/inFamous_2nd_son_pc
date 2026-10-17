@@ -44,20 +44,22 @@ Visual Studio／CMake 预设也统一输出到 Build/Debug、Build/Release 或 B
 
 窗口标题、任务栏图标及启动／退出菜单使用游戏名称和图标。隐藏的窗口辅助进程只修改经路径、PID 和创建时间核对的 SDL 窗口属性，不读写游戏内存。本项目构建产物的 EXE 文件名、文件描述与图标使用游戏名称和游戏图标。
 
-## 第一版优化候选
+## 已并入内核的 V1／V2 优化
 
-已接入两项独立候选，均默认关闭：`buffer_bind_memo` 去掉实际顶点／索引缓冲的重复绑定；`readback_range_dependencies` 依据实际复制范围选择回读生产者依赖，证据不足时保留整窗口等待。这是 C++ 引擎变更，先运行 `build.bat`，再在 `state/play/user/perf_tuning.ini` 中将对应键设为 1；设为 0 回退。建议先分别测试，再组合开启，继续使用现有 `run.bat`。
+V1、V2 已经用户游玩验证收益，现将以下四项作为引擎固定行为，不再通过配置开关开启：
 
-本轮没有代为编译、运行原生测试或启动游戏，尚无实测性能收益。精确回读、SDR、粒子及已有补丁保持原配置。`perf_log = 1` 时新增 `Perf V1` 命中／回退计数，并将录制队列积压等待从计算编译队列等待中分离。任务级粒子预取及写范围特化尚待后续实施；完整范围、限制和验收命令见 `doc/15-optimization-v1-implementation.md`。普通游玩配置不会应用到 `--benchmark` 的冻结基线。
-
-新增测试入口均预设 Pro 4K，同时开启 `buffer_bind_memo = 1`、`readback_range_dependencies = 1` 和日志统计，无需手改配置：
-
-| 启动脚本 | 用途 |
+| 固定策略 | 行为与正确性边界 |
 | --- | --- |
-| `diagnostics/optimization-v1.bat` | 人工游玩，按 F1 退出；不执行自动输入、不定时退出、不启动 full 采集器 |
-| `diagnostics/full-optimization-v1.bat` | 同一优化组合的 full 自动采集；保留现有管理员授权与自动流程 |
+| 顶点／索引缓冲绑定去重（V1） | 仅省略同一命令缓冲中完全相同的绑定，保留上传、屏障及状态失效处理 |
+| 精确回读范围依赖（V1） | 按实际复制范围选择生产者；未知写入、版本变化等情况继续等待完整窗口 |
+| 必需计算管线优先编译（V2） | 必需计算任务优先于后台编译，保留有界队列与公平调度，不跳过 dispatch |
+| 实际 CPU 读页预取（V2） | 精确回读的预取使用实际发生过 CPU 读取的页，保留数量、大小、有效期、版本和完成检查 |
 
-测试从当前正式游玩存档／配置复制出发，开关仅写入本次 session。两种入口都不将测试中的存档和配置回写到正式游玩目录；会话中的 `launch.json` 记录 `optimization_profile` 和 `tuning_overrides`。原有 `run.bat`、`full.bat` 不会自动打开新候选。普通与 full 的 FPS 不能互相比作优化收益，应在相同场景的普通运行中比较开／关。
+先运行 `build.bat` 重新编译，再使用 `run.bat` 游玩；`diagnostics/full.bat`、专项诊断和关键路径计时入口自动共用上述内核行为。C++ 修改必须构建后才生效，旧 EXE 不能通过源码指纹检查。初始配置、存档副本和画面设置仍有各自用途，`--benchmark` 也使用当前构建，不能恢复历史内核。
+
+已移除四个候选开关的解析和旧 V1／V2 组合测试 BAT。历史 `perf_tuning.ini` 中的同名键会被忽略，不能再关闭这些策略；历史会话及实测记录保留。新会话的 `launch.json` 记录 `engine_policy = core-v1-v2`。诊断开关、原有异步回读／预取模式及其他运行设置继续独立生效，精确回读、SDR、粒子和既有补丁的正确性条件保留。普通 FPS 收益仍需在相同场景的普通运行中比较，full 的插桩 FPS 不能代替游玩验收。
+
+集成范围及验证命令见 `doc/23-core-optimization-integration.md`（doc/ 按约定忽略 Git）。
 
 ## 路径和用户数据
 
@@ -145,20 +147,10 @@ Nsight 自动导出的跨帧事件指标矩阵会随事件和帧数同时膨胀�
 
 传感器的 UTC 使用查询进程真实退出时间，QPC 结束列是读取结果时的观察上界；验收优先使用保留下来的 NVML 原始时间及启动记录的 UTC 偏移对齐，防止结束阶段延迟读取被误认为晚发生的采样。验收也检查操作窗口内部是否存在超过 5 秒的遥测缺口。
 
-## 第二轮性能候选（V2）
+## 关键路径计时
 
-本轮增加必需计算管线的优先编译，以及按已观测CPU读页进行的精确预取。既有缓存预热继续执行；未知shader仍需首次编译。两项默认关闭，尚无新一轮性能实测结论。
+diagnostics/timing-baseline.bat、timing-critical.bat、timing-lighting.bat 使用同一优化内核和 Pro 4K 条件，分别关闭额外计时、开启 CPU 关联计时、增加指定光照着色器 GPU 计时。baseline 指采集对照，不代表关闭 V1／V2。三种入口均为手动游玩，F1 退出，配置／存档变更留在会话；没有外部采集器或 UAC。三者均设置 perf_log = 0，避免原有 1 ms 挂起线程采样混入比较；CPU 关联事件及指定 GPU 查询不依赖该旧采样器。
 
-先在项目根目录执行build.bat；旧EXE不含本轮C++修改，启动凭据继续检查源码一致性。然后直接双击：
+本轮涉及 C++，先运行 build.bat。建议同场景 baseline → critical → baseline，再录一轮 lighting；当前无需重录 full。退出后自动生成会话内的 timing-summary.json，默认分析最后 60 秒，并全量检查原始事件完整性。它区分 CPU 等待/写回/呈现队列和 GPU 查询区间，不能还原无采集时的每帧 GPU 成本，也不自动证明优化收益。
 
-| diagnostics中的入口 | 计算编译优先 | 读页预取 |
-| --- | --- | --- |
-| optimization-v2-control.bat | 关 | 关 |
-| optimization-v2-compile.bat | 开 | 关 |
-| optimization-v2-readback.bat | 关 | 开 |
-| optimization-v2.bat | 开 | 开 |
-| full-optimization-v2.bat | 开 | 开，原有同进程full自动采集 |
-
-所有V2入口预设Pro 4K，统一保留上一轮V1两项作为共同基线，仅在session明确覆盖V2开关并关闭relaxed-sites。普通入口人工操作、F1退出，不定时关闭；存档和配置只留session，普通入口复用共享缓存，full使用私有缓存。run.bat不强制新候选。
-
-增加ifss_optimization_v2_test原生策略目标（EXCLUDE_FROM_ALL，无设备/新依赖），覆盖FIFO、公平性、工作保留和页边界/溢出。构建与执行命令、实现边界及验收方法见doc/17-optimization-v2-implementation.md。代理本轮只做静态审查、Git空白检查与Windows PowerShell 5.1语法解析，未构建或运行测试/游戏；收益由普通同场景对照确认，full不用于普通FPS验收。
+实现、字段、测量边界和用户验证命令见 doc/21-v2-critical-path-timing.md（doc/ 按约定忽略 Git）。新增纯内存回归：python -B tests/test_timing_analysis.py；可选原生队列回归目标 ifss_path_trace_queue_test。测试/构建/游戏均由用户执行。

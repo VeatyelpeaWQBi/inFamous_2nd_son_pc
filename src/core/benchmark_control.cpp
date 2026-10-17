@@ -23,6 +23,7 @@
 #include "common/logging/log.h"
 #include "common/elf_info.h"
 #include "common/perf_stats.h"
+#include "common/path_trace.h"
 #include "common/path_util.h"
 #include "core/emulator_settings.h"
 #include "input/controller.h"
@@ -322,6 +323,11 @@ void OnFlip() {
         return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
     };
     const auto stamp = SampleClock();
+    // Exact join to frames.csv: both use this index and the same steady-clock sample.
+    Common::PathTrace::Emit(Common::PathTrace::Kind::FrameSample,
+                            Common::PathTrace::NextId(), frames.index,
+                            ns(now.time_since_epoch()), ns(now - frames.previous),
+                            ns(now - frames.start));
     frames.file << frames.index++ << ',' << ns(now - frames.start) << ','
                 << ns(now - frames.previous) << ',' << stamp.unix_ns << ','
                 << stamp.qpc_before << ',' << stamp.qpc_after << '\n';

@@ -403,12 +403,6 @@ struct Tuning {
     /// Memory the guest read back recently is downloaded again at fence points, so later reads
     /// find it ready (requires async_readbacks).
     std::atomic<bool> readback_prefetch{true};
-    /// V1 candidate: wait for writers of actual copied ranges, with whole-window fallback.
-    /// Precise readbacks only; does not change copied data, fault handling or guest visibility.
-    std::atomic<bool> readback_range_dependencies{false};
-    /// V2 candidate: fence prefetch learns actual CPU fault pages instead of wide windows.
-    /// Demand downloads and all version/protection/completion checks stay precise.
-    std::atomic<bool> readback_page_prefetch{false};
     /// 0: pipelines are compiled on the command processor thread, which stalls meanwhile.
     /// 1: graphics pipelines are compiled by worker threads and draws using a pipeline that is
     /// not ready yet are skipped. 2: same for compute pipelines and dispatches.
@@ -418,9 +412,6 @@ struct Tuning {
     /// Prepare actual compute pipelines in parallel, retaining their work. Commands wait
     /// before binding a handle; no dispatch is skipped. Independent of async_pipelines.
     std::atomic<bool> compute_compile_parallel{false};
-    /// V2 candidate: required retained compute compilations precede background work and
-    /// run at normal worker priority. No dispatch is skipped; queue remains bounded/fair.
-    std::atomic<bool> compute_compile_priority{false};
     /// Records a GPU checkpoint before each draw and dispatch, reported with the device fault
     /// information when the GPU crashes (device lost).
     std::atomic<bool> gpu_checkpoints{false};
@@ -548,9 +539,6 @@ struct Tuning {
     /// Pipelines, push constants and vertex inputs the command buffer already has (same as the
     /// last ones recorded in it) are not recorded again.
     std::atomic<bool> skip_redundant_binds{false};
-    /// V1 candidate, independent of layout/pipeline memoization: skip identical actual vertex
-    /// and index buffer binds in one command buffer. Uploads and barriers remain unchanged.
-    std::atomic<bool> buffer_bind_memo{false};
     /// The code size and hash of a shader address are reused until the next submission or guest
     /// wait, instead of being read in guest memory for every stage of every draw.
     std::atomic<bool> shader_params_memo{false};
@@ -597,6 +585,10 @@ struct Tuning {
     /// dispatch. 3 samples one in 32 graphics draw commands per shader; estimates are
     /// diagnostic rankings, not uninstrumented frame timings.
     std::atomic<u32> gpu_profile{0};
+    /// Measuring-only compute filter; zero preserves full diagnostic coverage. Hex shader hash.
+    std::atomic<u64> gpu_profile_compute_hash{0};
+    /// Startup-only bounded asynchronous CPU path trace, enabled explicitly by the launcher.
+    std::atomic<bool> path_trace{false};
     /// readback_relaxed_sites: code of the game (offsets of 256 byte blocks of its executable, as
     /// the readback site report shows them) whose reads of GPU written memory do not wait for
     /// the GPU. The read gets guest memory as it is (data of the previous download, a frame or

@@ -180,7 +180,7 @@ function Initialize-DiagnosticSession([string]$Root,[string]$Session,[string]$Pr
     }
     Copy-ProjectTree $Root (Join-Path $Session 'user/custom_configs/CUSA00309.json') (Join-Path $Session 'custom_configs/CUSA00309.json')
     Set-DiagnosticTuning $Root $Session ([ordered]@{
-        perf_log=1;profile_stacks=1;gpu_profile=$spec.GpuProfile;gpu_checkpoints=[int]$spec.Crash;dump_frames=0
+        perf_log=1;profile_stacks=1;gpu_profile=$spec.GpuProfile;gpu_profile_compute_hash=0;path_trace=0;gpu_checkpoints=[int]$spec.Crash;dump_frames=0
         trace_shader='';trace_reads='';trace_draw=0;dump_images='';dump_after=''
     })
     if($spec.RenderDoc){

@@ -25,6 +25,8 @@
 #include "common/memory_patcher.h"
 #include "common/ntapi.h"
 #include "common/path_util.h"
+#include "common/path_trace.h"
+#include "common/perf_stats.h"
 #include "common/polyfill_thread.h"
 #include "common/scm_rev.h"
 #include "common/singleton.h"
@@ -93,6 +95,7 @@ void Emulator::Shutdown() {
     if (exit_done) {
         return;
     }
+    Common::PathTrace::Stop();
     Common::Log::Flush();
     Libraries::SaveData::Backup::StopThread();
     if (presenter)
@@ -527,9 +530,15 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     LOG_INFO(Config, "Total RAM: {} GB", std::round(ram.total_Bytes() / pow(1024, 3)));
     LOG_INFO(Config, "Operating System: {}", os.name());
     Core::PerfSampler::ApplyGameProfile(id);
+    LOG_INFO(Debug, "Core rendering policies: buffer bind deduplication, precise range dependencies, "
+                    "required compute priority, demand-page prefetch");
     Core::PerfSampler::Start();
     // Tuning read once before the renderer starts (some settings only apply at startup).
     Core::PerfSampler::PollTuning();
+    if (Core::Benchmark::Enabled() &&
+        Common::Perf::GetTuning().path_trace.load(std::memory_order_relaxed)) {
+        Common::PathTrace::Start(Core::Benchmark::TuningPath().parent_path());
+    }
 
     if (param_sfo_exists) {
         LOG_INFO(Loader, "Game id: {} Title: {}", id, title);
@@ -705,6 +714,7 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     // Do not suspend/sample host threads while quick-exit callbacks and injected
     // profiler DLLs are shutting down. The sampler is also stopped on relaunch.
     Core::PerfSampler::Stop();
+    Common::PathTrace::Stop();
     if (Core::Benchmark::ProfilerFastExitReady()) {
         Shutdown();
         Common::Log::Flush();
@@ -781,6 +791,7 @@ void Emulator::Restart(std::filesystem::path eboot_path,
 
     LOG_INFO(Common, "Relaunching the emulator with args: {}", fmt::join(args, " "));
     Core::PerfSampler::Stop();
+    Common::PathTrace::Stop();
     Common::Log::Shutdown();
 
     auto& ipc = IPC::Instance();

@@ -28,7 +28,8 @@ void ApplyGameProfile(std::string_view serial);
 
 /**
  * Applies perf_tuning.ini from the user folder when it changes (checked at most once per second),
- * so strategies can be compared while the game runs. Lines are "key = value":
+ * for diagnostics and the remaining runtime settings. Validated V1/V2 core policies are
+ * unconditional and are not controlled by this file. Lines are "key = value":
  *   readback_window_kb = 512      window downloaded around a precise readback (power of two)
  *   readback_write_discard = 0    see GPUSettings::readbacks_write_discard
  *   readback_write_merge = 0      with write discard, the bytes the GPU wrote in a page whose
@@ -40,8 +41,6 @@ void ApplyGameProfile(std::string_view serial);
  *                                 the GPU copy, and write merge keeps it
  *   async_readbacks = 1           the faulting thread waits for the GPU, not the command processor
  *   readback_prefetch = 1         download memory read back recently again at fence points
- *   readback_range_dependencies = 0  V1: narrow waits to the actual copied ranges; unknown
- *                                 writers or changed versions keep whole-window dependencies
  *   async_pipelines = 2           0 off, 1 graphics pipelines compiled by worker threads (draws
  *                                 skipped until ready), 2 graphics and compute
  *   async_pipeline_wait_ms = 3    wait for a new pipeline at most this long before skipping
@@ -134,8 +133,6 @@ void ApplyGameProfile(std::string_view serial);
  *   skip_redundant_binds = 0      1: pipelines, push constants, vertex inputs and descriptor
  *                                 pushes equal to the last ones of the command buffer are not
  *                                 recorded again
- *   buffer_bind_memo = 0          V1: identical actual vertex/index buffer binds are skipped;
- *                                 independent of pipeline/layout memoization, default off
  *   shader_params_memo = 0        1: the code size and hash of a shader address are reused until
  *                                 the next submission or guest wait
  *   skip_empty_draws = 0          1: draws without vertices and dispatches without workgroups

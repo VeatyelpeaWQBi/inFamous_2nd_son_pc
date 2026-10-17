@@ -144,3 +144,21 @@ GPU 连续调度时间线由 WPR 覆盖完整操作窗口；当前 Nsight Graphi
 Nsight 自动导出的跨帧事件指标矩阵会随事件和帧数同时膨胀，完整模式保留连续 3 帧详细快照，GPU 的全窗口时间线仍由 WPR 采集。内容验收逐行读取大型表格，避免把 GB 级表一次性装入内存。
 
 传感器的 UTC 使用查询进程真实退出时间，QPC 结束列是读取结果时的观察上界；验收优先使用保留下来的 NVML 原始时间及启动记录的 UTC 偏移对齐，防止结束阶段延迟读取被误认为晚发生的采样。验收也检查操作窗口内部是否存在超过 5 秒的遥测缺口。
+
+## 第二轮性能候选（V2）
+
+本轮增加必需计算管线的优先编译，以及按已观测CPU读页进行的精确预取。既有缓存预热继续执行；未知shader仍需首次编译。两项默认关闭，尚无新一轮性能实测结论。
+
+先在项目根目录执行build.bat；旧EXE不含本轮C++修改，启动凭据继续检查源码一致性。然后直接双击：
+
+| diagnostics中的入口 | 计算编译优先 | 读页预取 |
+| --- | --- | --- |
+| optimization-v2-control.bat | 关 | 关 |
+| optimization-v2-compile.bat | 开 | 关 |
+| optimization-v2-readback.bat | 关 | 开 |
+| optimization-v2.bat | 开 | 开 |
+| full-optimization-v2.bat | 开 | 开，原有同进程full自动采集 |
+
+所有V2入口预设Pro 4K，统一保留上一轮V1两项作为共同基线，仅在session明确覆盖V2开关并关闭relaxed-sites。普通入口人工操作、F1退出，不定时关闭；存档和配置只留session，普通入口复用共享缓存，full使用私有缓存。run.bat不强制新候选。
+
+增加ifss_optimization_v2_test原生策略目标（EXCLUDE_FROM_ALL，无设备/新依赖），覆盖FIFO、公平性、工作保留和页边界/溢出。构建与执行命令、实现边界及验收方法见doc/17-optimization-v2-implementation.md。代理本轮只做静态审查、Git空白检查与Windows PowerShell 5.1语法解析，未构建或运行测试/游戏；收益由普通同场景对照确认，full不用于普通FPS验收。

@@ -37,7 +37,13 @@ void Pipeline::BindCompute(Scheduler& on) const {
             const u64 start = Common::Perf::NowNs();
             readiness.Wait();
             Common::Perf::Add(Common::Perf::ComputeBindWaits);
-            Common::Perf::Add(Common::Perf::ComputeBindWaitNs, Common::Perf::NowNs() - start);
+            const u64 elapsed = Common::Perf::NowNs() - start;
+            Common::Perf::Add(Common::Perf::ComputeBindWaitNs, elapsed);
+            if (elapsed >= 25'000'000 &&
+                Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed)) {
+                LOG_INFO(Debug, "Perf compute readiness wait: {} {:.2f} ms", GetDebugString(),
+                         static_cast<double>(elapsed) / 1'000'000);
+            }
         }
         // Acquire also on the no-wait path before accessing the driver's handle.
         ASSERT(IsReady());

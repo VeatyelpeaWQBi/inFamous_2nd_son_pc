@@ -5,7 +5,6 @@
 #include <bit>
 #include <chrono>
 #include <condition_variable>
-#include <deque>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -32,6 +31,7 @@
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/buffer_cache/region_definitions.h"
 #include "video_core/cache_storage.h"
+#include "video_core/priority_compile_queue.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_driver_cache.h"
@@ -74,7 +74,11 @@ public:
                 Common::Perf::Add(Common::Perf::ComputeCompileQueueWaitNs,
                                   Common::Perf::NowNs() - start);
             }
-            queue.push_back(pipeline);
+            const auto& tuning = Common::Perf::GetTuning();
+            const bool foreground =
+                bounded && tuning.compute_compile_priority.load(std::memory_order_relaxed);
+            const bool timed = bounded && tuning.perf_log.load(std::memory_order_relaxed);
+            queue.Push(Job{pipeline, timed ? Common::Perf::NowNs() : 0, bounded}, foreground);
             ++pending;
         }
         work_cv.notify_one();
@@ -106,17 +110,30 @@ private:
         Common::SetCurrentThreadName(name.c_str());
         Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
         while (!stoken.stop_requested()) {
-            Pipeline* pipeline{};
+            VideoCore::PriorityCompileQueue<Job>::Entry job{};
             {
                 std::unique_lock lk{mutex};
-                Common::CondvarWait(work_cv, lk, stoken, [this] { return !queue.empty(); });
+                Common::CondvarWait(work_cv, lk, stoken, [this] { return !queue.Empty(); });
                 if (stoken.stop_requested()) {
                     return;
                 }
-                pipeline = queue.front();
-                queue.pop_front();
+                job = std::move(*queue.Pop());
             }
-            pipeline->Compile();
+            if (job.value.required_compute) {
+                Common::Perf::Add(Common::Perf::ComputeRuntimeCompileJobs);
+                if (job.value.enqueued_ns != 0) {
+                    Common::Perf::Add(Common::Perf::ComputeRuntimeQueueNs,
+                                      Common::Perf::NowNs() - job.value.enqueued_ns);
+                }
+            }
+            if (job.foreground) {
+                Common::Perf::Add(Common::Perf::ComputePriorityJobs);
+                Common::SetCurrentThreadPriority(Common::ThreadPriority::Normal);
+            }
+            job.value.pipeline->Compile();
+            if (job.foreground) {
+                Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
+            }
             {
                 std::scoped_lock lk{mutex};
                 --pending;
@@ -128,7 +145,12 @@ private:
     std::mutex mutex;
     std::condition_variable_any work_cv;
     std::condition_variable done_cv;
-    std::deque<Pipeline*> queue;
+    struct Job {
+        Pipeline* pipeline{};
+        u64 enqueued_ns{};
+        bool required_compute{};
+    };
+    VideoCore::PriorityCompileQueue<Job> queue;
     u32 pending{};
     std::vector<std::jthread> workers;
 };
@@ -875,8 +897,10 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
             pipeline->Compile();
         }
         Common::Perf::Add(Common::Perf::PipelineStallNs, Common::Perf::NowNs() - start_ns);
+        pipeline->NoteFirstUse();
         return pipeline;
     }
+    it->second->NoteFirstUse();
     return it->second.get();
 }
 
@@ -1299,6 +1323,9 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
                                               Shader::Backend::Bindings& binding) {
     Common::Perf::ScopedTimer compile_timer{Common::Perf::ShaderCompiles,
                                             Common::Perf::ShaderCompileNs};
+    const bool time_compute = info.hw_stage == HwStage::Compute &&
+                              Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed);
+    const u64 compute_start = time_compute ? Common::Perf::NowNs() : 0;
     LOG_INFO(Render_Vulkan, "Compiling {} shader {:#x} {}", info.hw_stage, info.pgm_hash,
              perm_idx != 0 ? "(permutation)" : "");
     DumpShader(code, info.pgm_hash, info.hw_stage, perm_idx, "bin");
@@ -1318,6 +1345,11 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
         module = CompileSPV(spv, instance.GetDevice());
     }
 
+    if (time_compute) {
+        Common::Perf::Add(Common::Perf::ComputeShaderCompiles);
+        Common::Perf::Add(Common::Perf::ComputeShaderCompileNs,
+                          Common::Perf::NowNs() - compute_start);
+    }
     RegisterShaderBinary(std::move(spv), info.pgm_hash, perm_idx);
 
     const auto name = GetShaderName(info.hw_stage, info.pgm_hash, perm_idx);
@@ -1467,6 +1499,9 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
     auto it_pgm = program_cache.find(params.hash);
     const bool new_program = it_pgm == program_cache.end();
     if (new_program) {
+        if (hw_stage == HwStage::Compute) {
+            Common::Perf::Add(Common::Perf::ComputeNewPrograms);
+        }
         auto new_program_ptr = std::make_unique<Program>(hw_stage, sw_stage, params);
         Program* const program = new_program_ptr.get();
         auto start = binding;
@@ -1587,6 +1622,9 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         return permutation.module && permutation.spec == spec;
     });
     if (it == program->modules.end()) {
+        if (hw_stage == HwStage::Compute) {
+            Common::Perf::Add(Common::Perf::ComputeNewPermutations);
+        }
         auto new_info = Shader::Info(hw_stage, sw_stage, params);
         module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding);
 

@@ -1,6 +1,7 @@
 ﻿[CmdletBinding()]
 param([ValidateSet('auto','720p','900p','1080p','1440p','1800p','pro4k')][string]$Mode='auto',
       [switch]$WaitForDebugger,[switch]$Benchmark,[switch]$CheckOnly,[switch]$PrepareOnly,[switch]$NoMenu,[switch]$OptimizationV1,
+      [ValidateSet('none','control','compile','readback','both')][string]$OptimizationV2='none',
       [ValidateSet('none','cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full')][string]$Diagnostic='none',
       [ValidateRange(-1,3600)][int]$DiagnosticDelaySeconds=90,[ValidateRange(10,600)][int]$DiagnosticSeconds=60)
 Set-StrictMode -Version Latest
@@ -10,7 +11,11 @@ $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $python=Resolve-InstalledPython
 $preflight=Join-Path $PSScriptRoot 'preflight.py'
 $isDiagnostic=$Diagnostic -ne 'none'
-if($isDiagnostic -or $WaitForDebugger -or $OptimizationV1){. (Join-Path $PSScriptRoot 'diagnostic_tools.ps1')}
+$isV2=$OptimizationV2 -ne 'none'
+if($OptimizationV1 -and $isV2){throw 'Select one optimization test profile.'}
+$isOptimizationTest=$OptimizationV1 -or $isV2
+if($isOptimizationTest -and $Benchmark){throw 'Optimization candidates are not frozen benchmarks.'}
+if($isDiagnostic -or $WaitForDebugger -or $isOptimizationTest){. (Join-Path $PSScriptRoot 'diagnostic_tools.ps1')}
 if($isDiagnostic){
     if($Benchmark){throw 'Diagnostic captures cannot be submitted as frozen benchmarks.'}
     if($Mode -eq 'auto'){$Mode='pro4k'}
@@ -43,7 +48,7 @@ try{
         $volume=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($projectRoot))
         if($volume.AvailableFreeSpace -lt (Get-DiagnosticStoragePolicy).minimum_free_bytes){throw 'At least 2 GiB of free disk space is required for diagnostic shutdown and flushing.'}
     }
-    if(-not $isDiagnostic -and -not $Benchmark -and -not $OptimizationV1 -and -not $PrepareOnly -and -not $NoMenu){
+    if(-not $isDiagnostic -and -not $Benchmark -and -not $isOptimizationTest -and -not $PrepareOnly -and -not $NoMenu){
         $selection=@(& $python -B (Join-Path $PSScriptRoot 'launch_menu.py') --mode $Mode)
         if($LASTEXITCODE -eq 1){exit 0}
         if($LASTEXITCODE -ne 0){throw 'Launch settings could not be opened; game was not started.'}
@@ -51,6 +56,7 @@ try{
     }
     $sessionName=(Get-Date).ToString('yyyyMMdd-HHmmss-fff')+'-'+$Mode+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8)
     if($OptimizationV1){$sessionName+='-optimization-v1'}
+    if($isV2){$sessionName+='-optimization-v2-'+$OptimizationV2}
     if($isDiagnostic){$sessionName+='-diagnostic-'+$Diagnostic}
     $parent='state/sessions'
     $session=Resolve-ProjectChild $projectRoot ($parent+'/'+$sessionName)
@@ -123,6 +129,17 @@ try{
         Write-Host 'V1 candidates ON: buffer_bind_memo=1; readback_range_dependencies=1.'
         Write-Host 'Test save/configuration changes remain in this session; normal launch defaults are preserved.'
     }
+    if($isV2){
+        $optimizationOverrides=[ordered]@{
+            buffer_bind_memo=1;readback_range_dependencies=1;perf_log=1
+            compute_compile_parallel=1;async_readbacks=1;readback_prefetch=1
+            readback_relaxed_sites='0'
+            compute_compile_priority=[int]($OptimizationV2 -in @('compile','both'))
+            readback_page_prefetch=[int]($OptimizationV2 -in @('readback','both'))
+        }
+        Set-DiagnosticTuning $projectRoot $session $optimizationOverrides
+        Write-Host ('V2 profile: '+$OptimizationV2+'; exact readbacks; saves/settings stay in this session.')
+    }
     $arguments=@('-g',(Get-RelativePath $session (Join-Path $projectRoot 'game\CUSA00309\eboot.bin')),
                  '-p','patches/CUSA00309.xml','--benchmark-dir','.')
     if($null -ne $verified.launcher_settings -and $verified.launcher_settings.show_fps){$arguments+='--show-fps'}
@@ -137,7 +154,7 @@ try{
         counter_kind='guest_flip';native_benchmark_cli=$verified.runtime_capabilities.benchmark_dir
         shared_cache=if($isDiagnostic){$null}else{Get-RelativePath $projectRoot $runtimeState};launcher_settings=$verified.launcher_settings;quit_menu_key='F1'
         diagnostic=if($isDiagnostic){$Diagnostic}else{$null};progress_published=$false
-        optimization_profile=if($OptimizationV1){'v1'}else{$null};tuning_overrides=$optimizationOverrides
+        optimization_profile=if($OptimizationV1){'v1'}elseif($isV2){'v2-'+$OptimizationV2}else{$null};tuning_overrides=$optimizationOverrides
     }
     Write-JsonUtf8 (Join-Path $session 'launch.json') $launch
     if($PrepareOnly){Write-Host ('Prepared session: '+$session);exit 0}
@@ -224,7 +241,7 @@ try{
     $launch.finished_at=(Get-Date).ToString('o')
     $finalGameHash=(Get-FileHash -LiteralPath (Join-Path $projectRoot 'game\CUSA00309\eboot.bin') -Algorithm SHA256).Hash.ToLowerInvariant()
     if($finalGameHash -ne $manifest.game_sha256){throw 'Game executable changed; session progress was not published.'}
-    $publishProgress=(-not $isDiagnostic -and -not $Benchmark -and -not $OptimizationV1 -and $process.ExitCode -eq 0)
+    $publishProgress=(-not $isDiagnostic -and -not $Benchmark -and -not $isOptimizationTest -and $process.ExitCode -eq 0)
     if($publishProgress){
         $null=[IO.Directory]::CreateDirectory((Split-Path -Parent $liveHome))
         Copy-ProjectTree $projectRoot (Join-Path $session 'home') $liveHome

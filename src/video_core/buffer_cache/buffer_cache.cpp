@@ -23,6 +23,7 @@
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/buffer_cache/memory_tracker.h"
 #include "video_core/buffer_cache/readback_dependencies.h"
+#include "video_core/buffer_cache/readback_prefetch_policy.h"
 #include "video_core/buffer_cache/region_definitions.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
@@ -724,7 +725,15 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
             Vulkan::Semaphore* next_semaphore = nullptr;
             u64 next_tick = 0;
             const bool may_wait = round < 4;
+            const bool time_completion =
+                Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed);
+            const u64 completion_request_ns = time_completion ? Common::Perf::NowNs() : 0;
             liverpool->SendCommand<true>([&] {
+                Common::Perf::Add(Common::Perf::ReadbackCompletionRequests);
+                if (completion_request_ns != 0) {
+                    Common::Perf::Add(Common::Perf::ReadbackCompletionQueueNs,
+                                      Common::Perf::NowNs() - completion_request_ns);
+                }
                 CompleteReadbacks(false);
                 if (!memory_tracker->IsRegionGpuModified(device_addr, size)) {
                     if (is_write) {
@@ -891,8 +900,11 @@ bool BufferCache::CollectReadback(const Buffer* arena, PendingReadback& readback
 bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback,
                                    WindowWriters& writers, bool queue_enabled, bool& on_queue) {
     on_queue = queue_enabled && writers.submitted;
-    const bool refine = Common::Perf::GetTuning().readback_range_dependencies.load(
-                            std::memory_order_relaxed) &&
+    // Page prefetch starts with the conservative wide-window dependency snapshot below.
+    // Narrow it only with the existing per-word/version proof, even if V1 is disabled.
+    const bool refine = (readback.demand_page_prefetch ||
+                         Common::Perf::GetTuning().readback_range_dependencies.load(
+                             std::memory_order_relaxed)) &&
                         EmulatorSettings.GetReadbacksMode() == GpuReadbacksMode::Precise;
     const u64 sequence = memory_tracker->CurrentWriteSeq();
     if (!CollectReadback(arena, readback)) {
@@ -934,10 +946,10 @@ bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback
     return true;
 }
 
-void BufferCache::NoteHotWindow(VAddr start, VAddr end) {
+void BufferCache::NoteHotWindow(VAddr start, VAddr end, bool demand_pages) {
     const u64 now = Common::Perf::NowNs();
     for (auto& window : hot_windows) {
-        if (window.start == start && window.end == end) {
+        if (window.start == start && window.end == end && window.demand_pages == demand_pages) {
             window.last_read_ns = now;
             return;
         }
@@ -952,6 +964,7 @@ void BufferCache::NoteHotWindow(VAddr start, VAddr end) {
         .prefetch_tick = 0,
         .prefetch_seq = 0,
         .prefetch_on_queue = false,
+        .demand_pages = demand_pages,
     });
 }
 
@@ -965,8 +978,16 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     const auto* arena = GetArena(first_block, last_block);
     const auto [window_start, window_end] = GetReadbackWindow(arena, device_addr, size);
     if (!is_write && size <= BYTES_PER_PAGE) {
-        // Guest reads (faults), not writes nor large invalidations such as unmaps.
+        // Remember the baseline hint too: toggling the candidate never reuses a page hint
+        // as evidence of a whole-window prefetch. Neither hint changes this demand download.
         NoteHotWindow(window_start, window_end);
+        if (Common::Perf::GetTuning().readback_page_prefetch.load(std::memory_order_relaxed) &&
+            EmulatorSettings.GetReadbacksMode() == GpuReadbacksMode::Precise) {
+            if (const auto pages = DemandReadbackPages(device_addr, size, arena->cpu_addr,
+                                                       arena->size_bytes, BYTES_PER_PAGE)) {
+                NoteHotWindow(pages->first, pages->second, true);
+            }
+        }
     }
 
     PendingReadback readback{
@@ -1026,6 +1047,10 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
         }
         if (overlapping->prefetch) {
             Common::Perf::Add(Common::Perf::ReadbackPrefetchHits);
+            if (overlapping->demand_page_prefetch && overlapping->window_start <= device_addr &&
+                device_addr + size <= overlapping->window_end) {
+                Common::Perf::Add(Common::Perf::ReadbackPagePrefetchHits);
+            }
         }
         wait_semaphore = overlapping->on_readback_queue ? &readback_queue->Semaphore()
                                                         : scheduler.GetWorkSemaphore();
@@ -1102,13 +1127,14 @@ void BufferCache::PrefetchReadbacks() {
     }
     RetireReadbacks();
 
-    // Windows the guest read back recently are likely read again after this fence: download what
-    // the GPU wrote there now, in one submission. When the copies complete before the guest
-    // reads, the pages are written and unprotected without any fault.
+    // Recent CPU-read ranges are downloaded after this fence. V2 changes only these hints
+    // to observed fault pages; future unlearned reads still use BeginReadback's full window.
+    // Completed copies are published by the existing version-checked retirement path.
     constexpr u64 HotWindowLifetimeNs = 1'000'000'000ULL;
     constexpr u64 MaxPrefetchBytes = 8_MB;
     const u64 now = Common::Perf::NowNs();
     const u64 tick = scheduler.CurrentTick();
+    const bool demand_pages = tuning.readback_page_prefetch.load(std::memory_order_relaxed);
     // With the readback queue, a window whose writer is already submitted to the driver is
     // copied there, waiting only for that writer. The others (written by commands not submitted
     // yet) are copied by the command buffer being recorded, which is then submitted.
@@ -1128,6 +1154,9 @@ void BufferCache::PrefetchReadbacks() {
         }
         HotWindow& window = *it;
         ++it;
+        if (window.demand_pages != demand_pages) {
+            continue;
+        }
         const VAddr start = window.start;
         const VAddr end = window.end;
         // One prefetch in flight per window, and only when the GPU wrote something there since.
@@ -1145,15 +1174,18 @@ void BufferCache::PrefetchReadbacks() {
             // the last prefetch tell whether there is anything new to download.
             continue;
         }
-        WindowWriters writers = WindowWritersOf(start, end - start);
-        bool on_queue = queue_enabled && writers.submitted;
         const auto* arena = GetArena(start >> block_shift, (end - 1) >> block_shift);
+        const auto [dependency_start, dependency_end] =
+            demand_pages ? GetReadbackWindow(arena, start, end - start) : std::pair{start, end};
+        WindowWriters writers = WindowWritersOf(dependency_start, dependency_end - dependency_start);
+        bool on_queue = queue_enabled && writers.submitted;
         PendingReadback readback{
             .tick = tick,
             .arena_base = arena->cpu_addr,
             .window_start = start,
             .window_end = end,
             .prefetch = true,
+            .demand_page_prefetch = demand_pages,
         };
         if (!PrepareReadback(arena, readback, writers, queue_enabled, on_queue)) {
             memory_tracker->RemovePendingReadback(start, end);
@@ -1174,6 +1206,12 @@ void BufferCache::PrefetchReadbacks() {
         }
         pending_readbacks.push_back(std::move(readback));
         Common::Perf::Add(Common::Perf::ReadbackPrefetches);
+        if (demand_pages) {
+            Common::Perf::Add(Common::Perf::ReadbackPagePrefetches);
+            for (const auto& copy : pending_readbacks.back().copies) {
+                Common::Perf::Add(Common::Perf::ReadbackPagePrefetchBytes, copy.size);
+            }
+        }
     }
     if (recorded_on_graphics) {
         scheduler.MarkReadbackSession();
@@ -1207,7 +1245,8 @@ void BufferCache::PrefetchReadbacks() {
         }
         readback.tick = queue_tick;
         for (auto& window : hot_windows) {
-            if (window.start == readback.window_start && window.end == readback.window_end) {
+            if (window.start == readback.window_start && window.end == readback.window_end &&
+                window.demand_pages == readback.demand_page_prefetch) {
                 window.prefetch_tick = queue_tick;
             }
         }
@@ -1272,6 +1311,9 @@ void BufferCache::CompleteReadbacks(bool wait) {
 void BufferCache::FinishReadback(size_t index) {
     PendingReadback& readback = pending_readbacks[index];
     const u64 finish_start = Common::Perf::NowNs();
+    if (readback.demand_page_prefetch) {
+        Common::Perf::Add(Common::Perf::ReadbackPagePrefetchFinished);
+    }
     if (KeepRanges()) {
         for (const auto& copy : readback.copies) {
             pending_download_ranges.Subtract(readback.arena_base + copy.srcOffset, copy.size);

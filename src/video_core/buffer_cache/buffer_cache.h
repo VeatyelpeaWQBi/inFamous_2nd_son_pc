@@ -242,6 +242,7 @@ private:
         VAddr window_end{};
         vk::Buffer arena_handle{};
         bool prefetch{};
+        bool demand_page_prefetch{};
         bool on_readback_queue{}; ///< tick is on the readback queue, else the graphics queue.
         /// readback_relaxed_sites: pages a guest read was let through while the download was in
         /// flight (no longer GPU modified): they get the new data too if unchanged since.
@@ -324,7 +325,7 @@ private:
     bool RecordReadback(const Buffer* arena, PendingReadback& readback);
 
     /// Remembers a window the guest read back, candidate for prefetching.
-    void NoteHotWindow(VAddr start, VAddr end);
+    void NoteHotWindow(VAddr start, VAddr end, bool demand_pages = false);
 
     struct HotWindow {
         VAddr start;
@@ -333,6 +334,7 @@ private:
         u64 prefetch_tick; ///< Tick of the last prefetch of the window, at most one in flight.
         u64 prefetch_seq;  ///< Write sequence the last prefetch covered (readback_keep_ranges).
         bool prefetch_on_queue; ///< prefetch_tick is on the readback queue.
+        bool demand_pages; ///< Observed CPU pages, not the wider normal download window.
     };
 
     /// Downloads the GPU modified memory around a request and waits for it (command processor).

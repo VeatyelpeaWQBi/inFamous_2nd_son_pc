@@ -304,6 +304,24 @@ enum Counter : u32 {
     ReadbackDependenciesReduced,
     ReadbackDependencyFallbacks,
     ReadbackQueuePromotions,
+    // V2: first-use warmup coverage, compiler scheduling and precise demand-page prefetch.
+    ComputeWarmFirstUses,
+    ComputeColdFirstUses,
+    ComputeNewPrograms,
+    ComputeNewPermutations,
+    ComputePriorityJobs,
+    ComputeRuntimeCompileJobs,
+    ComputeRuntimeQueueNs,
+    ComputeDriverCompiles,
+    ComputeDriverCompileNs,
+    ComputeShaderCompiles,
+    ComputeShaderCompileNs,
+    ReadbackPagePrefetches,
+    ReadbackPagePrefetchBytes,
+    ReadbackPagePrefetchHits,
+    ReadbackPagePrefetchFinished,
+    ReadbackCompletionRequests,
+    ReadbackCompletionQueueNs,
     CounterCount,
 };
 
@@ -388,6 +406,9 @@ struct Tuning {
     /// V1 candidate: wait for writers of actual copied ranges, with whole-window fallback.
     /// Precise readbacks only; does not change copied data, fault handling or guest visibility.
     std::atomic<bool> readback_range_dependencies{false};
+    /// V2 candidate: fence prefetch learns actual CPU fault pages instead of wide windows.
+    /// Demand downloads and all version/protection/completion checks stay precise.
+    std::atomic<bool> readback_page_prefetch{false};
     /// 0: pipelines are compiled on the command processor thread, which stalls meanwhile.
     /// 1: graphics pipelines are compiled by worker threads and draws using a pipeline that is
     /// not ready yet are skipped. 2: same for compute pipelines and dispatches.
@@ -397,6 +418,9 @@ struct Tuning {
     /// Prepare actual compute pipelines in parallel, retaining their work. Commands wait
     /// before binding a handle; no dispatch is skipped. Independent of async_pipelines.
     std::atomic<bool> compute_compile_parallel{false};
+    /// V2 candidate: required retained compute compilations precede background work and
+    /// run at normal worker priority. No dispatch is skipped; queue remains bounded/fair.
+    std::atomic<bool> compute_compile_priority{false};
     /// Records a GPU checkpoint before each draw and dispatch, reported with the device fault
     /// information when the GPU crashes (device lost).
     std::atomic<bool> gpu_checkpoints{false};
@@ -906,6 +930,24 @@ inline void OnFlip(float draws_per_frame, float dispatches_per_frame) {
                  t[IndexBufferBinds], t[ReadbackDependencyChecks], t[ReadbackDependenciesReduced],
                  t[ReadbackDependencyFallbacks], t[ReadbackQueuePromotions],
                  ms(t[RecorderQueueWaitNs]));
+    }
+
+    if (t[ComputeWarmFirstUses] || t[ComputeColdFirstUses] || t[ComputeDriverCompiles] ||
+        t[ComputePriorityJobs] || t[ReadbackPagePrefetches] || t[ReadbackPagePrefetchFinished] ||
+        t[ReadbackCompletionRequests]) {
+        LOG_INFO(Debug,
+                 "Perf V2: compute first lookups warm {} cold {} new programs {} variants {} "
+                 "priority jobs {} runtime jobs {} queue {:.1f} ms driver {} / {:.1f} ms "
+                 "translate {} / {:.1f} ms; page prefetches {} copied {:.3f} MiB "
+                 "fault joins {} finished {}; completion requests {} queue {:.1f} ms",
+                 t[ComputeWarmFirstUses], t[ComputeColdFirstUses], t[ComputeNewPrograms],
+                 t[ComputeNewPermutations], t[ComputePriorityJobs], t[ComputeRuntimeCompileJobs],
+                 ms(t[ComputeRuntimeQueueNs]), t[ComputeDriverCompiles],
+                 ms(t[ComputeDriverCompileNs]),
+                 t[ComputeShaderCompiles], ms(t[ComputeShaderCompileNs]),
+                 t[ReadbackPagePrefetches], mb(t[ReadbackPagePrefetchBytes]),
+                 t[ReadbackPagePrefetchHits], t[ReadbackPagePrefetchFinished],
+                 t[ReadbackCompletionRequests], ms(t[ReadbackCompletionQueueNs]));
     }
 
     const u64 last_flip = r.last_flip;

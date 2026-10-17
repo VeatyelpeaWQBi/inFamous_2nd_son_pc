@@ -20,7 +20,8 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
                                  bool defer_compile /*=false*/,
                                  std::span<const u32> cached_image_bindings /*={}*/)
     : Pipeline{instance, scheduler, desc_heap, profile, pipeline_cache, true},
-      compute_key{compute_key_}, module{module_}, vk_pipeline_cache{pipeline_cache} {
+      restored{preloading}, compute_key{compute_key_}, module{module_},
+      vk_pipeline_cache{pipeline_cache} {
     auto& info = stages[int(Shader::SwStage::Compute)];
     info = &info_;
     const auto debug_str = GetDebugString();
@@ -111,6 +112,14 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
 
 ComputePipeline::~ComputePipeline() = default;
 
+void ComputePipeline::NoteFirstUse() {
+    if (!first_use_recorded) {
+        first_use_recorded = true;
+        Common::Perf::Add(restored ? Common::Perf::ComputeWarmFirstUses
+                                  : Common::Perf::ComputeColdFirstUses);
+    }
+}
+
 void ComputePipeline::Compile() {
     const u64 start_ns = Common::Perf::NowNs();
     const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_size_ci = {
@@ -136,7 +145,10 @@ void ComputePipeline::Compile() {
     pipeline = std::move(pipe);
     SetObjectName(device, *pipeline, "Compute Pipeline {}", GetDebugString());
     Common::Perf::Add(Common::Perf::PipelineCreates);
-    Common::Perf::Add(Common::Perf::PipelineCreateNs, Common::Perf::NowNs() - start_ns);
+    const u64 elapsed = Common::Perf::NowNs() - start_ns;
+    Common::Perf::Add(Common::Perf::PipelineCreateNs, elapsed);
+    Common::Perf::Add(Common::Perf::ComputeDriverCompiles);
+    Common::Perf::Add(Common::Perf::ComputeDriverCompileNs, elapsed);
     if (driver_cache)
         driver_cache->Compiled();
     MarkReady();

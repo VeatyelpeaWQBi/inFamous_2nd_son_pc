@@ -9,7 +9,9 @@ param(
 
     [ValidateRange(2,30)][int]$Frames=2,
     [string]$Session,
-    [switch]$PrepareOnly,[switch]$WaitForDebugger
+    [switch]$PrepareOnly,[switch]$WaitForDebugger,
+    [ValidateSet('none','control','all')][string]$OptimizationV3='none',
+    [string]$SaveSession
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -79,7 +81,7 @@ try{
     $arguments=@{
         Mode=$Mode;Diagnostic=$Action;DiagnosticDelaySeconds=$DelaySeconds;DiagnosticSeconds=$Seconds
 
-        NoMenu=$true;PrepareOnly=$PrepareOnly;WaitForDebugger=$WaitForDebugger
+        NoMenu=$true;PrepareOnly=$PrepareOnly;WaitForDebugger=$WaitForDebugger;OptimizationV3=$OptimizationV3;SaveSession=$SaveSession
     }
     if($Action -eq 'full'){Write-Host 'Full: one game process, one session, concurrent diagnostics; no restart or batch phases.'}
     & (Join-Path $PSScriptRoot 'launch.ps1') @arguments

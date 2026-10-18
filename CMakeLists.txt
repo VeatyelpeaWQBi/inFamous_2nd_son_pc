@@ -112,3 +112,37 @@ target_include_directories(ifss_optimization_v2_test PRIVATE src)
 add_executable(ifss_path_trace_queue_test EXCLUDE_FROM_ALL tests/test_path_trace_queue.cpp)
 target_compile_features(ifss_path_trace_queue_test PRIVATE cxx_std_23)
 target_include_directories(ifss_path_trace_queue_test PRIVATE src)
+
+# V3 range provenance and batch coverage properties; no device/framework/dependency download.
+add_executable(ifss_optimization_v3_test EXCLUDE_FROM_ALL tests/test_optimization_v3.cpp)
+target_compile_features(ifss_optimization_v3_test PRIVATE cxx_std_23)
+target_include_directories(ifss_optimization_v3_test PRIVATE src)
+
+# Exact layout identity / conservative fallback, no Vulkan device or loader.
+add_executable(ifss_pipeline_layout_key_test EXCLUDE_FROM_ALL tests/test_pipeline_layout_key.cpp)
+target_compile_features(ifss_pipeline_layout_key_test PRIVATE cxx_std_23)
+target_include_directories(ifss_pipeline_layout_key_test PRIVATE src)
+target_link_libraries(ifss_pipeline_layout_key_test PRIVATE Vulkan::Headers)
+
+# R4 evidence semantics only; these do not execute during the normal engine build.
+add_executable(ifss_feedback_write_history_test EXCLUDE_FROM_ALL tests/test_feedback_write_history.cpp)
+target_compile_features(ifss_feedback_write_history_test PRIVATE cxx_std_23)
+target_include_directories(ifss_feedback_write_history_test PRIVATE src)
+
+add_executable(ifss_descriptor_evidence_test EXCLUDE_FROM_ALL tests/test_descriptor_evidence.cpp)
+target_compile_features(ifss_descriptor_evidence_test PRIVATE cxx_std_23)
+target_include_directories(ifss_descriptor_evidence_test PRIVATE src)
+target_link_libraries(ifss_descriptor_evidence_test PRIVATE Vulkan::Headers)
+
+# A1 state/differential equivalence regression; no Vulkan device/loader or game.
+add_executable(ifss_descriptor_state_test EXCLUDE_FROM_ALL tests/test_descriptor_state.cpp)
+target_compile_features(ifss_descriptor_state_test PRIVATE cxx_std_23)
+target_include_directories(ifss_descriptor_state_test PRIVATE src)
+target_link_libraries(ifss_descriptor_state_test PRIVATE Vulkan::Headers)
+
+# C1 SPIR-V/data equivalence only; uses existing SPIR-V headers, no device or game.
+add_executable(ifss_depth_reduction_test EXCLUDE_FROM_ALL
+    tests/test_ifss_depth_reduction.cpp src/shader_recompiler/ifss_depth_reduction.cpp)
+target_compile_features(ifss_depth_reduction_test PRIVATE cxx_std_23)
+target_include_directories(ifss_depth_reduction_test PRIVATE src
+    "${IFSS_EXTERNALS_ROOT}/sirit/externals/SPIRV-Headers/include")

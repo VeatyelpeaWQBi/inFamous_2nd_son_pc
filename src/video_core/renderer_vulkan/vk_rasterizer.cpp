@@ -6,6 +6,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include "common/debug.h"
 #include "common/elf_info.h"
 #include "common/io_file.h"
@@ -548,9 +549,9 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     // copy on that thread too): its commands may be recorded by a thread of their own.
     scheduler.AllowThreadedRecording();
 
-    scheduler.SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
+    scheduler.SetSubmitCallback([this](Vulkan::SubmitInfo& info, bool queue_locked) {
         runtime.FlushBarriers();
-        buffer_cache.SubmitPendingArenaBinds(info);
+        buffer_cache.SubmitPendingArenaBinds(info, queue_locked);
     });
     pipeline_cache.SetPipelineDrainCallback([this] {
         if (compute_scheduler) {
@@ -572,8 +573,14 @@ Rasterizer::~Rasterizer() {
 }
 
 bool Rasterizer::UseComputeQueue(const ComputePipeline* pipeline) {
+    const auto& tuning = Common::Perf::GetTuning();
+    const auto& stage = pipeline->GetStage(Shader::SwStage::Compute);
+    // One confirmed buffer-only particle producer, never the full-screen lighting shader.
+    // All existing resource-hazard, GDS/BDA and queue submission checks still apply.
+    const bool particle = tuning.v3_particle_async.load(std::memory_order_relaxed) &&
+                          stage.pgm_hash == 0x3ea96db0ULL;
     if (!async_compute_translation || !instance.HasComputeQueue() ||
-        !Common::Perf::GetTuning().asc_queue.load(std::memory_order_relaxed)) {
+        (!tuning.asc_queue.load(std::memory_order_relaxed) && !particle)) {
         return false;
     }
     // Buffers only: the images (layouts, barriers) are tracked for the graphics queue; the
@@ -581,6 +588,12 @@ bool Rasterizer::UseComputeQueue(const ComputePipeline* pipeline) {
     const auto& cs = pipeline->GetStage(Shader::SwStage::Compute);
     if (!cs.images.empty() || !cs.samplers.empty() || cs.uses_dma ||
         !pipeline->UsesPushDescriptors()) {
+        Common::Perf::Add(Common::Perf::AscQueueFallbacks);
+        return false;
+    }
+    if (particle && std::ranges::any_of(cs.buffers, [](const auto& buffer) {
+            return buffer.IsSpecial() && buffer.buffer_type != Shader::BufferType::Flatbuf;
+        })) {
         Common::Perf::Add(Common::Perf::AscQueueFallbacks);
         return false;
     }
@@ -597,9 +610,9 @@ bool Rasterizer::UseComputeQueue(const ComputePipeline* pipeline) {
             .stream_buffer = compute_stream.get(),
             .index = 1,
         };
-        compute_scheduler->SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
+        compute_scheduler->SetSubmitCallback([this](Vulkan::SubmitInfo& info, bool queue_locked) {
             compute_runtime->FlushBarriers();
-            buffer_cache.SubmitPendingArenaBinds(info);
+            buffer_cache.SubmitPendingArenaBinds(info, queue_locked);
             buffer_cache.WaitArenaBinds(info);
         });
         buffer_cache.SetCrossQueueTracking(&compute_context);
@@ -872,6 +885,9 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
     last_draw_pipeline = pipeline;
 
     PrepareRenderState(pipeline);
+    const auto* trace_vertex = pipeline->GetStages()[u32(Shader::SwStage::Vertex)];
+    auto trace_producer = buffer_cache.BeginProducerTrace(
+        trace_vertex ? trace_vertex->pgm_hash : 0, 1);
     if (!BindResources(pipeline)) {
         return;
     }
@@ -923,6 +939,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
         cmdbuf.draw(regs.num_indices, regs.num_instances.NumInstances(), vertex_offset,
                     instance_offset);
     }
+    trace_producer.Commit();
     if (profile_draw) scheduler.ProfileDrawEnd();
     DebugState.IncDrawCall();
 
@@ -996,6 +1013,9 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
     }
 
     PrepareRenderState(pipeline);
+    const auto* trace_vertex = pipeline->GetStages()[u32(Shader::SwStage::Vertex)];
+    auto trace_producer = buffer_cache.BeginProducerTrace(
+        trace_vertex ? trace_vertex->pgm_hash : 0, 2);
     if (!BindResources(pipeline)) {
         return;
     }
@@ -1075,6 +1095,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
         DebugState.IncDrawCall();
     }
 
+    trace_producer.Commit();
     if (profile_draw) scheduler.ProfileDrawEnd();
     if (g_dump.frames_left != 0) [[unlikely]] {
         DumpAfter(pipeline);
@@ -1110,6 +1131,8 @@ void Rasterizer::DispatchDirect() {
 
     // asc_queue: the dispatch, its bindings and uploads go to the compute queue.
     const ComputeQueueScope queue_scope{*this, UseComputeQueue(pipeline)};
+    auto trace_producer = buffer_cache.BeginProducerTrace(
+        pipeline->GetStage(Shader::SwStage::Compute).pgm_hash, 3);
     if (!BindResources(pipeline)) {
         return;
     }
@@ -1137,6 +1160,11 @@ void Rasterizer::DispatchDirect() {
     }
     Sched().ProfileDispatchBegin(cs.pgm_hash);
     cmdbuf.dispatch(cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
+    trace_producer.Commit();
+    if (on_compute_queue && cs.pgm_hash == 0x3ea96db0ULL &&
+        Common::Perf::GetTuning().v3_particle_async.load(std::memory_order_relaxed)) {
+        Common::Perf::Add(Common::Perf::V3ParticleAsync);
+    }
     if (on_compute_queue) Core::Benchmark::NoteNativeCompute(!async_compute_translation);
     Sched().ProfileDispatchEnd();
     DebugState.IncDispatch();
@@ -1168,6 +1196,8 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
 
     // asc_queue: the dispatch, its bindings and uploads go to the compute queue.
     const ComputeQueueScope queue_scope{*this, UseComputeQueue(pipeline)};
+    auto trace_producer = buffer_cache.BeginProducerTrace(
+        pipeline->GetStage(Shader::SwStage::Compute).pgm_hash, 4);
     if (!BindResources(pipeline)) {
         return;
     }
@@ -1197,6 +1227,11 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
     }
     Sched().ProfileDispatchBegin(pipeline->GetStage(Shader::SwStage::Compute).pgm_hash);
     cmdbuf.dispatchIndirect(buffer->Handle(), base);
+    trace_producer.Commit();
+    if (on_compute_queue && pipeline->GetStage(Shader::SwStage::Compute).pgm_hash == 0x3ea96db0ULL &&
+        Common::Perf::GetTuning().v3_particle_async.load(std::memory_order_relaxed)) {
+        Common::Perf::Add(Common::Perf::V3ParticleAsync);
+    }
     Sched().ProfileDispatchEnd();
     DebugState.IncDispatch();
 
@@ -1269,6 +1304,7 @@ void Rasterizer::OnSubmit() {
 }
 
 void Rasterizer::OnFence() {
+    buffer_cache.TraceFeedbackFence();
     texture_cache.ProcessDownloadImages();
     buffer_cache.PrefetchReadbacks();
 }
@@ -1338,6 +1374,10 @@ void Rasterizer::PrefetchTexMemo(u64 key) const noexcept {
 }
 
 bool Rasterizer::BindResources(const Pipeline* pipeline) {
+    const bool evidence =
+        Common::Perf::GetTuning().v3_descriptor_evidence.load(std::memory_order_relaxed);
+    std::optional<Common::Perf::ScopedTimer> prepare_timer;
+    if (evidence) prepare_timer.emplace(Common::Perf::R4PrepareCalls, Common::Perf::R4PrepareNs);
     if (IsComputeImageCopy(pipeline) || IsComputeMetaClear(pipeline) ||
         IsComputeImageClear(pipeline)) {
         return false;
@@ -1367,8 +1407,16 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
         }
         set_writes.resize(set_writes.size() + stage->buffers.size() + stage->images.size() +
                           stage->samplers.size());
-        BindBuffers(*stage, binding, push_data);
-        BindTextures(*stage, binding);
+        {
+            std::optional<Common::Perf::ScopedTimer> timer;
+            if (evidence) timer.emplace(Common::Perf::R4BufferCalls, Common::Perf::R4BufferNs);
+            BindBuffers(*stage, binding, push_data);
+        }
+        {
+            std::optional<Common::Perf::ScopedTimer> timer;
+            if (evidence) timer.emplace(Common::Perf::R4TextureCalls, Common::Perf::R4TextureNs);
+            BindTextures(*stage, binding);
+        }
         uses_dma |= stage->uses_dma;
     }
 

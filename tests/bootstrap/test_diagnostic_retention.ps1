@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+﻿# SPDX-License-Identifier: GPL-2.0-or-later
 # Real small-directory cleanup tests; the production capture area is never addressed.
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../../scripts/tools.ps1')
@@ -85,7 +85,26 @@ try{
        $audit.preserved_session -ne (Get-RelativePath $fixture $newest)){
         throw 'Cleanup audit does not describe the actual preserved and deleted sessions.'
     }
-    Write-Host 'Retention threshold, latest-session preservation, live-worker protection and junction-safe deletion checks passed.'
+    # An explicitly selected older save must survive alongside the latest session.
+    Write-JsonUtf8 (Join-Path $fixture 'project.json') @{runtime_path='Build/fixture.exe';runtime_sha256='fixture';game_sha256='fixture-game';title='CUSA00309'}
+    $protectedSave=New-RetentionFixture '20260101-000000-002-pro4k-11111111-diagnostic-full'
+    $victim=New-RetentionFixture '20260101-000000-003-pro4k-22222222-diagnostic-full'
+    $protectedRelative=Get-RelativePath $fixture $protectedSave
+    Write-JsonUtf8 (Join-Path $protectedSave 'launch.json') @{
+        schema=3;path_base='project';session=$protectedRelative;runtime='Build/fixture.exe'
+        runtime_sha256='old-build';game_sha256='fixture-game';game_launched=$true;complete=$true;exit_code=0
+        pid=2147483647;process_started='2026-01-01T00:00:00Z'
+    }
+    $saveDirectory=Join-Path $protectedSave 'home/1000/savedata/CUSA00309/infamousssAuto0'
+    $null=[IO.Directory]::CreateDirectory($saveDirectory)
+    [IO.File]::WriteAllText((Join-Path $saveDirectory 'dis.dat'),'fixture save')
+    $result=Invoke-DiagnosticSessionRetention $fixture $protectedRelative 6>$null
+    if($result.removed_sessions.Count -ne 1 -or [IO.Directory]::Exists($victim) -or
+       -not [IO.Directory]::Exists($protectedSave) -or -not [IO.Directory]::Exists($newest) -or
+       $result.protected_save_session -ne $protectedRelative){
+        throw 'Explicit save source was not protected alongside the latest session.'
+    }
+    Write-Host 'Retention threshold, latest-session/save-source preservation, live-worker protection and junction-safe deletion checks passed.'
 }finally{
     if(Test-Path -LiteralPath $junction){[IO.Directory]::Delete($junction)}
     $allowed=Resolve-ProjectChild $projectRoot 'state/offline-tests'

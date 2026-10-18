@@ -14,6 +14,7 @@ void InjectClipDistanceAttributes(IR::Program& program, RuntimeInfo& runtime_inf
 
 namespace Shader::Optimization {
 
+void IfssAddressSchedulePass(IR::Program& program, u32 mask);
 void SsaRewritePass(IR::Program& program);
 void SsaRepairPass(IR::Program& program);
 void PhiSimplificationPass(IR::Program& program);

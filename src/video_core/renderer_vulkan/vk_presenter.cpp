@@ -6,6 +6,7 @@
 #include "common/io_file.h"
 #include "common/path_util.h"
 #include "common/perf_stats.h"
+#include "common/path_trace.h"
 #include "common/singleton.h"
 #include "core/debug_state.h"
 #include "core/benchmark_control.h"
@@ -867,9 +868,14 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
     }
 
-    if (!swapchain.AcquireNextImage()) {
+    const auto acquire = [&] {
+        Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::Acquire,
+                                          Common::Perf::V3PresentAcquireNs};
+        return swapchain.AcquireNextImage();
+    };
+    if (!acquire()) {
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
-        if (!swapchain.AcquireNextImage()) {
+        if (!acquire()) {
             // User resizes the window too fast and GPU can't keep up. Skip this frame.
             LOG_WARNING(Render_Vulkan, "Skipping frame!");
             free_frame();
@@ -1089,12 +1095,26 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     info.AddWait(frame->ready_semaphore, frame->ready_tick);
     info.AddSignal(swapchain.GetPresentReadySemaphore());
     info.AddSignal(frame->present_done);
-    scheduler.Flush(info);
+    {
+        Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::PresentFlush,
+                                          Common::Perf::V3PresentFlushNs};
+        scheduler.Flush(info);
+    }
 
     // Present to swapchain.
     {
-        std::scoped_lock submit_lock{Scheduler::submit_mutex};
-        if (!swapchain.Present()) {
+        std::unique_lock submit_lock{Scheduler::submit_mutex, std::defer_lock};
+        {
+            Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::PresentLock,
+                                              Common::Perf::V3PresentLockNs};
+            submit_lock.lock();
+        }
+        const bool presented = [&] {
+            Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::PresentCall,
+                                              Common::Perf::V3PresentCallNs};
+            return swapchain.Present();
+        }();
+        if (!presented) {
             swapchain.Recreate(window.GetWidth(), window.GetHeight());
         }
     }

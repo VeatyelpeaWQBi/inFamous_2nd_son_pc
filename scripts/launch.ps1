@@ -2,6 +2,8 @@
 param([ValidateSet('auto','720p','900p','1080p','1440p','1800p','pro4k')][string]$Mode='auto',
       [switch]$WaitForDebugger,[switch]$Benchmark,[switch]$CheckOnly,[switch]$PrepareOnly,[switch]$NoMenu,
       [ValidateSet('none','baseline','critical','lighting')][string]$TimingProfile='none',
+      [ValidateSet('none','control','all')][string]$OptimizationV3='none',
+      [string]$SaveSession,
       [ValidateSet('none','cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full')][string]$Diagnostic='none',
       [ValidateRange(-1,3600)][int]$DiagnosticDelaySeconds=90,[ValidateRange(10,600)][int]$DiagnosticSeconds=60)
 Set-StrictMode -Version Latest
@@ -12,12 +14,19 @@ $python=Resolve-InstalledPython
 $preflight=Join-Path $PSScriptRoot 'preflight.py'
 $isDiagnostic=$Diagnostic -ne 'none'
 $isTiming=$TimingProfile -ne 'none'
+$isV3=$OptimizationV3 -ne 'none'
+if($isV3){
+    if($Benchmark -or $isTiming -or $WaitForDebugger){throw 'V3 uses isolated ordinary/full comparisons without frozen benchmarks or debugger/timing profiles.'}
+    if($Diagnostic -notin @('none','full')){throw 'V3 diagnostic entry is the existing same-process full profile.'}
+    if($Mode -eq 'auto'){$Mode='pro4k'}
+    if($Mode -notin @('1080p','pro4k')){throw 'V3 comparisons support 1080p and pro4k.'}
+}
 if($isTiming){
     if($isDiagnostic -or $Benchmark -or $WaitForDebugger){throw 'Timing profiles require ordinary play without full/profiler/debugger instrumentation.'}
     if($Mode -eq 'auto'){$Mode='pro4k'}
     if($Mode -notin @('1080p','pro4k')){throw 'Timing comparisons support 1080p and pro4k.'}
 }
-if($isDiagnostic -or $WaitForDebugger -or $isTiming){. (Join-Path $PSScriptRoot 'diagnostic_tools.ps1')}
+if($isDiagnostic -or $WaitForDebugger -or $isTiming -or $isV3 -or $SaveSession){. (Join-Path $PSScriptRoot 'diagnostic_tools.ps1')}
 if($isDiagnostic){
     if($Benchmark){throw 'Diagnostic captures cannot be submitted as frozen benchmarks.'}
     if($Mode -eq 'auto'){$Mode='pro4k'}
@@ -42,15 +51,30 @@ try{
         throw 'Project engine has not been built or is missing. Run build.bat first; no external engine will be used.'
     }
     if(Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($runtime)) -ErrorAction SilentlyContinue){throw 'The pinned engine is already running.'}
+    $saveRecord=$null
+    $saveSourcePolicy=if($SaveSession){'explicit-session'}else{'fixed-project-home'}
+    if($SaveSession){
+        if($Benchmark){throw 'Frozen benchmarks cannot override their save source.'}
+        $saveRecord=Read-ProjectSaveSession $projectRoot $SaveSession
+        $SaveSession=Get-RelativePath $projectRoot $saveRecord.Path
+    }
+    $baseline=Resolve-ProjectChild $projectRoot 'state/baseline/user'
+    $liveHome=Resolve-ProjectChild $projectRoot 'state/play/home'
+    $homeSource=if($Benchmark){Join-Path $baseline 'home'}else{$liveHome}
+    if($saveRecord){$homeSource=Resolve-ProjectChild $projectRoot ($SaveSession+'/home')}
+    elseif($homeSource -ne $liveHome){$saveSourcePolicy='baseline-home'}
+    if(($isDiagnostic -or $isV3 -or $isTiming) -and -not(Test-ProjectGameSaveHome $projectRoot $homeSource $manifest.title)){
+        throw 'Fixed project save is missing: state/play/home. Restore the gameplay save there; no automatic session selection or new-game fallback is allowed.'
+    }
     if(($isDiagnostic -or $WaitForDebugger) -and -not $PrepareOnly){
         # Keep the previous latest session before creating the new one. run.lock is held.
-        $null=Invoke-DiagnosticSessionRetention $projectRoot
+        $null=Invoke-DiagnosticSessionRetention $projectRoot $SaveSession
     }
     if($isDiagnostic){
         $volume=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($projectRoot))
         if($volume.AvailableFreeSpace -lt (Get-DiagnosticStoragePolicy).minimum_free_bytes){throw 'At least 2 GiB of free disk space is required for diagnostic shutdown and flushing.'}
     }
-    if(-not $isDiagnostic -and -not $Benchmark -and -not $isTiming -and -not $PrepareOnly -and -not $NoMenu){
+    if(-not $isDiagnostic -and -not $Benchmark -and -not $isTiming -and -not $isV3 -and -not $PrepareOnly -and -not $NoMenu){
         $selection=@(& $python -B (Join-Path $PSScriptRoot 'launch_menu.py') --mode $Mode)
         if($LASTEXITCODE -eq 1){exit 0}
         if($LASTEXITCODE -ne 0){throw 'Launch settings could not be opened; game was not started.'}
@@ -58,6 +82,7 @@ try{
     }
     $sessionName=(Get-Date).ToString('yyyyMMdd-HHmmss-fff')+'-'+$Mode+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8)
     if($isTiming){$sessionName+='-timing-'+$TimingProfile}
+    if($isV3){$sessionName+='-optimization-v3-r6-'+$OptimizationV3}
     if($isDiagnostic){$sessionName+='-diagnostic-'+$Diagnostic}
     $parent='state/sessions'
     $session=Resolve-ProjectChild $projectRoot ($parent+'/'+$sessionName)
@@ -72,7 +97,6 @@ try{
     $runtime=Resolve-ProjectChild $projectRoot $verified.runtime
     Write-Host ('Selected engine: '+$verified.runtime)
     if(-not $verified.runtime_build.source_checked){throw 'A verified project build is required. Run build.bat first.'}
-    $baseline=Resolve-ProjectChild $projectRoot 'state/baseline/user'
     $portableUser=Resolve-ProjectChild $projectRoot ($sessionRelative+'/user')
     $null=[IO.Directory]::CreateDirectory($portableUser)
     $persistent=Resolve-ProjectChild $projectRoot 'state\play\user'
@@ -96,18 +120,24 @@ try{
         }
         Write-JsonUtf8 $globalPath $globalConfig
     }
-    $liveHome=Resolve-ProjectChild $projectRoot 'state\play\home'
-    $homeSource=if($Benchmark -or -not (Test-Path -LiteralPath $liveHome)){Join-Path $baseline 'home'}else{$liveHome}
+    $saveFiles=@(Get-ChildItem -LiteralPath $homeSource -Recurse -File | ForEach-Object {
+        Assert-ProjectPath $projectRoot $_.FullName
+        @{path=(Get-RelativePath $homeSource $_.FullName);bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
+    })
+    if($saveRecord -and -not $saveFiles.Count){throw 'Selected session has no save files.'}
     Copy-ProjectTree $projectRoot $homeSource (Join-Path $session 'home')
+    Write-Host ('Save snapshot source: '+(Get-RelativePath $projectRoot $homeSource)+'; policy='+$saveSourcePolicy+'; original preserved.')
     $null=New-Item -ItemType Junction -Path (Join-Path $portableUser 'home') -Target (Join-Path $session 'home')
     Copy-ProjectTree $projectRoot (Join-Path $configSource 'perf_tuning.ini') (Join-Path $session 'perf_tuning.ini')
+    # R4 and control use the same shader policy and persistent manual-play cache.
+    $cacheBase='state/runtime' # R4 has the same shader policies as the V1/V2 control.
     foreach($name in @('cache','shader')){
         if($isDiagnostic){
             $private=Resolve-ProjectChild $projectRoot ($sessionRelative+'/user/'+$name)
             $null=[IO.Directory]::CreateDirectory($private)
             continue
         }
-        $shared=Resolve-ProjectChild $projectRoot ('state/runtime/'+$name)
+        $shared=Resolve-ProjectChild $projectRoot ($cacheBase+'/'+$name)
         $null=[IO.Directory]::CreateDirectory($shared)
         $link=Join-Path $portableUser $name
         if(Test-Path -LiteralPath $link){throw 'Unexpected pre-existing cache directory in a fresh session.'}
@@ -123,6 +153,44 @@ try{
     if($isDiagnostic){
         $diagnosticPlan=Initialize-DiagnosticSession $projectRoot $session $Diagnostic $DiagnosticDelaySeconds $DiagnosticSeconds
     }
+    $v3Overrides=[ordered]@{}
+    # Force V3-off behavior in explicit control/timing/full baseline sessions, even if an old ini
+    # contains candidate keys. All overrides stay inside the isolated session.
+    $enabled=[int]($OptimizationV3 -eq 'all')
+    $v3Overrides=[ordered]@{
+        # R6 enables only C1 depth reduction. A1 and previous V3 policies remain off.
+        v3_layout_sharing=0
+        v3_descriptor_delta=0
+        v3_lighting_reduction=[int]($OptimizationV3 -eq 'all')
+        v3_descriptor_evidence=[int]($isDiagnostic -and ($OptimizationV3 -eq 'all'))
+        v3_demand_readback=0;v3_prefetch_batches=0;v3_submit_prepare=0
+        v3_lighting_schedule=0;v3_particle_schedule=0;v3_particle_async=0
+    }
+    if($isV3){
+        $v3Overrides.compute_compile_parallel=1;$v3Overrides.async_readbacks=1
+        $v3Overrides.readback_prefetch=1;$v3Overrides.readback_relaxed_sites='0'
+        # Evidence collection does not change queue policy; keep async compute off.
+        $v3Overrides.asc_queue=0
+        if($isDiagnostic){
+            $v3Overrides.path_trace=$enabled;$v3Overrides.gpu_profile=2
+            $v3Overrides.gpu_profile_compute_hash=0
+        }else{
+            $v3Overrides.perf_log=0;$v3Overrides.profile_stacks=0;$v3Overrides.path_trace=0
+            $v3Overrides.gpu_profile=0;$v3Overrides.gpu_profile_compute_hash=0
+            $v3Overrides.dump_frames=0;$v3Overrides.gpu_checkpoints=0
+            $v3Overrides.trace_reads='0';$v3Overrides.trace_shader='';$v3Overrides.trace_draw=0
+            $v3Overrides.dump_images='';$v3Overrides.dump_after=''
+        }
+        Write-Host ('V3 R6 profile: '+$OptimizationV3+'; C1 depth reduction='+$v3Overrides.v3_lighting_reduction+'; saves/settings stay in this session.')
+        Write-Host 'Manual mode has no periodic thread sampler/GPU queries; full reuses the existing same-process collectors.'
+        Write-Host 'Only C1 differs from the V2 control; fixed save source and existing rendering settings are preserved. F1: exit.'
+    }
+    # Every session explicitly pins the candidate policy, including ordinary play. This prevents
+    # persistent/older ini keys from re-enabling a retired experiment in the baseline.
+    if(-not (Get-Command Set-DiagnosticTuning -ErrorAction SilentlyContinue)){
+        . (Join-Path $PSScriptRoot 'diagnostic_tools.ps1')
+    }
+    Set-DiagnosticTuning $projectRoot $session $v3Overrides
     $timingOverrides=[ordered]@{}
     $timingConfigOverrides=[ordered]@{}
     if($isTiming){
@@ -138,6 +206,8 @@ try{
             dump_images='';dump_after='';gpu_checkpoints=0
         }
         Set-DiagnosticTuning $projectRoot $session $timingOverrides
+    }
+    if($isTiming -or ($isV3 -and -not $isDiagnostic)){
         $timingConfigOverrides=[ordered]@{
             Debug=@{debug_dump=$false;shader_collect=$false}
             GPU=@{dump_shaders=$false}
@@ -158,9 +228,11 @@ try{
             Write-JsonUtf8 $timingConfigPath $timingConfig
         }
         Copy-ProjectTree $projectRoot (Join-Path $session 'user/custom_configs/CUSA00309.json') (Join-Path $session 'custom_configs/CUSA00309.json')
+    }
+    if($isTiming){
         Write-Host ('Timing profile: '+$TimingProfile+'; integrated core policies; no external collectors or automatic input.')
         Write-Host 'Manual comparison: use the same save, scene, camera, warmup and input. F1: exit confirmation.'
-        Write-Host 'CPU trace uses about 2.3 MiB bounded queues and a background CSV file; losses are reported, never blocked.'
+        Write-Host 'CPU trace uses about 36 MiB bounded queues and a background CSV file; losses are reported, never blocked.'
         if($TimingProfile -eq 'lighting'){Write-Host 'GPU timestamps measure only cs_ce1675e0. Instrumented intervals are not ordinary frame times.'}
     }
     $arguments=@('-g',(Get-RelativePath $session (Join-Path $projectRoot 'game\CUSA00309\eboot.bin')),
@@ -172,12 +244,17 @@ try{
         runtime=$verified.runtime;runtime_sha256=$verified.runtime_sha256
         game_sha256=$verified.game_sha256;arguments=$arguments;working_directory=$sessionRelative
         user_root=(Get-RelativePath $projectRoot $portableUser);save_source=(Get-RelativePath $projectRoot $homeSource);game_launched=$false;complete=$false
+        save_source_session=if($saveRecord){$SaveSession}else{$null};save_source_files=$saveFiles
+        save_source_policy=$saveSourcePolicy;save_source_runtime_sha256=if($saveRecord){$saveRecord.Launch.runtime_sha256}else{$null}
         source_game_written=$false;prepared_at=(Get-Date).ToString('o')
         source_config_preserved=$true;acceptance_verified=$false
         counter_kind='guest_flip';native_benchmark_cli=$verified.runtime_capabilities.benchmark_dir
-        shared_cache=if($isDiagnostic){$null}else{Get-RelativePath $projectRoot $runtimeState};launcher_settings=$verified.launcher_settings;quit_menu_key='F1'
+        shared_cache=if($isDiagnostic){$null}else{$cacheBase};launcher_settings=$verified.launcher_settings;quit_menu_key='F1'
         diagnostic=if($isDiagnostic){$Diagnostic}else{$null};progress_published=$false
         engine_policy='core-v1-v2'
+        optimization_v3=$OptimizationV3;optimization_revision=if($isV3){'v3-r6-depth-reduction'}else{$null};v3_overrides=$v3Overrides
+        v3_correlation_status=if($OptimizationV3 -eq 'all' -and $isDiagnostic){'pending'}else{'not-requested'}
+        v3_config_overrides=if($isV3 -and -not $isDiagnostic){$timingConfigOverrides}else{@{}}
         timing_profile=if($isTiming){$TimingProfile}else{$null};timing_overrides=$timingOverrides;timing_config_overrides=$timingConfigOverrides
     }
     Write-JsonUtf8 (Join-Path $session 'launch.json') $launch
@@ -261,15 +338,22 @@ try{
         }else{$diagnosticExitCode=1;Write-Warning 'Collector did not finish; double-click diagnostics/control/status.bat or recover.bat.'}
     }
     if($diagnosticWrapper -and -not $diagnosticWrapper.HasExited -and -not $diagnosticWrapper.WaitForExit(30000)){throw 'Nsight launcher did not finish.'}
-    if($isTiming){
+    if($isTiming -or ($OptimizationV3 -eq 'all' -and $isDiagnostic)){
         & $python -X utf8 -B (Join-Path $PSScriptRoot 'analyze_timing.py') --session $session
-        if($LASTEXITCODE -ne 0){Write-Warning 'Timing evidence is incomplete or invalid. Review timing-summary.json; do not treat this run as accepted performance evidence.'}
+        $correlationExit=$LASTEXITCODE
+        if($OptimizationV3 -eq 'all' -and $isDiagnostic){
+            $launch.v3_correlation_status=if($correlationExit -eq 0){'usable'}else{'incomplete-or-invalid'}
+        }
+        if($correlationExit -ne 0){
+            Write-Warning 'Correlation evidence is incomplete or invalid. Review timing-summary.json; do not treat this run as accepted performance evidence.'
+            if($isDiagnostic){$diagnosticExitCode=1}
+        }
     }
     $launch.exit_code=$process.ExitCode
     $launch.finished_at=(Get-Date).ToString('o')
     $finalGameHash=(Get-FileHash -LiteralPath (Join-Path $projectRoot 'game\CUSA00309\eboot.bin') -Algorithm SHA256).Hash.ToLowerInvariant()
     if($finalGameHash -ne $manifest.game_sha256){throw 'Game executable changed; session progress was not published.'}
-    $publishProgress=(-not $isDiagnostic -and -not $Benchmark -and -not $isTiming -and $process.ExitCode -eq 0)
+    $publishProgress=(-not $isDiagnostic -and -not $Benchmark -and -not $isTiming -and -not $isV3 -and $process.ExitCode -eq 0)
     if($publishProgress){
         $null=[IO.Directory]::CreateDirectory((Split-Path -Parent $liveHome))
         Copy-ProjectTree $projectRoot (Join-Path $session 'home') $liveHome

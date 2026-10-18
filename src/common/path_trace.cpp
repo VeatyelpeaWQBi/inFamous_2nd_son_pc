@@ -21,7 +21,7 @@
 namespace Common::PathTrace {
 namespace {
 constexpr u32 MaxThreads = 64;
-constexpr u32 Capacity = 512;
+constexpr u32 Capacity = 8192; // 36 MiB total, allocated only for explicit diagnostic tracing.
 struct Entry {
     u64 sequence, ns, frame, id, a, b, c, d;
     Kind kind;
@@ -51,9 +51,11 @@ constexpr std::array Names{
     "read_copy", "read_wait_begin", "read_wait_end", "read_fallback_begin", "read_fallback_end",
     "read_return", "flip_request", "flip_prepare", "flip_ready", "flip_consume",
     "flip_present_return", "flip_done",
-    "copy_record", "copy_publish_begin", "copy_publish_end", "gpu_dispatch_result", "frame_sample", "tuning_reload",
+    "copy_record", "copy_publish_begin", "copy_publish_end", "gpu_dispatch_result", "frame_sample", "tuning_reload", "host_phase_begin", "host_phase_end",
+    "read_producer", "read_producer_range", "read_producer_time", "read_producer_domain", "read_producer_coverage", "read_producer_window",
+    "submit_queued", "submit_driver_begin", "submit_driver_end", "feedback_fence",
 };
-static_assert(Names.size() == static_cast<u32>(Kind::TuningReload) + 1);
+static_assert(Names.size() == static_cast<u32>(Kind::FeedbackFence) + 1);
 struct State {
     std::array<Slot, MaxThreads> slots;
     std::atomic<u32> next_slot{0};
@@ -120,7 +122,7 @@ struct State {
             SetCurrentThreadPriority(ThreadPriority::Low);
             auto flushed = std::chrono::steady_clock::now();
             while (!stopping.load(std::memory_order_acquire)) {
-                Drain();
+                const bool drained = Drain();
                 const auto now = std::chrono::steady_clock::now();
                 if (now - flushed >= std::chrono::seconds{1}) {
                     file.flush();
@@ -128,7 +130,7 @@ struct State {
                     flushed = now;
                 }
                 if (io_failed) break;
-                std::this_thread::sleep_for(std::chrono::milliseconds{20});
+                if (!drained) std::this_thread::sleep_for(std::chrono::milliseconds{2});
             }
             // Only shutdown waits, never a guest handler. Bound the wait for pre-empted
             // publishers; retain their storage until process exit and mark any cut tail.
@@ -193,6 +195,7 @@ void Stop() noexcept {
                     dropped, retained->cutoff_publishers, retained->io_failed);
     }
 }
+bool Active() noexcept { return active.load(std::memory_order_acquire)!=nullptr; }
 u64 NextId() noexcept {
     State* state = active.load(std::memory_order_acquire);
     return state ? state->next_id.fetch_add(1, std::memory_order_relaxed) : 0;
@@ -234,5 +237,16 @@ void Emit(Kind kind, u64 id, u64 a, u64 b, u64 c, u64 d) noexcept {
     }
     producer.busy = false;
     state->gate.fetch_sub(2, std::memory_order_release);
+}
+HostScope::HostScope(HostPhase phase_, u32 counter_) noexcept
+    : phase{phase_}, counter{counter_}, id{NextId()},
+      timed{Perf::GetTuning().perf_log.load(std::memory_order_relaxed) &&
+            Perf::GetTuning().v3_submit_prepare.load(std::memory_order_relaxed)} {
+    if (timed) start = Perf::NowNs();
+    Emit(Kind::HostPhaseBegin, id, static_cast<u64>(phase));
+}
+HostScope::~HostScope() {
+    Emit(Kind::HostPhaseEnd, id, static_cast<u64>(phase));
+    if (timed) Perf::Add(static_cast<Perf::Counter>(counter), Perf::NowNs() - start);
 }
 } // namespace Common::PathTrace

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+﻿# SPDX-License-Identifier: GPL-2.0-or-later
 # Dot-source after tools.ps1. Importing this file never starts a collector.
 . (Join-Path $PSScriptRoot 'diagnostic_automation.ps1')
 . (Join-Path $PSScriptRoot 'diagnostic_retention.ps1')
@@ -1013,7 +1013,7 @@ function Get-DiagnosticCoverage([string]$Root,[string]$Session,$Plan,$State,$Aut
 }
 
 function Test-DiagnosticBootstrap {
-    foreach($file in @('tools.ps1','diagnose.ps1','diagnostic-click.ps1','diagnostic_tools.ps1','diagnostic_automation.ps1','diagnostic_artifacts.ps1','diagnostic_sensors.ps1','launch.ps1','control.ps1')){
+    foreach($file in @('tools.ps1','diagnose.ps1','diagnostic-click.ps1','diagnostic_tools.ps1','diagnostic_automation.ps1','diagnostic_artifacts.ps1','diagnostic_sensors.ps1','diagnostic_retention.ps1','launch.ps1','control.ps1')){
         $tokens=$null;$errors=$null
         $null=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $file),[ref]$tokens,[ref]$errors)
         if($errors.Count){throw ($file+': '+($errors.Message -join '; '))}
@@ -1023,6 +1023,7 @@ function Test-DiagnosticBootstrap {
     & (Join-Path $PSScriptRoot '../tests/bootstrap/test_diagnostic_screen.ps1')
     & (Join-Path $PSScriptRoot '../tests/bootstrap/test_diagnostic_process.ps1')
     & (Join-Path $PSScriptRoot '../tests/bootstrap/test_diagnostic_full.ps1')
+    & (Join-Path $PSScriptRoot '../tests/bootstrap/test_diagnostic_save_source.ps1')
     & (Join-Path $PSScriptRoot '../tests/bootstrap/test_diagnostic_retention.ps1')
     & (Join-Path $PSScriptRoot '../tests/bootstrap/test_control_protocol.ps1')
 }

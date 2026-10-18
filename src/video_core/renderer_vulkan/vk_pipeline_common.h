@@ -7,6 +7,7 @@
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/compile_readiness.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_pipeline_layout_cache.h"
 
 #include <boost/container/small_vector.hpp>
 
@@ -30,7 +31,8 @@ class DriverPipelineCache;
 class Pipeline {
 public:
     Pipeline(const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,
-             const Shader::Profile& profile, vk::PipelineCache pipeline_cache,
+             const Shader::Profile& profile, PipelineLayoutCache& layout_cache,
+             vk::PipelineCache pipeline_cache,
              bool is_compute = false);
     virtual ~Pipeline();
 
@@ -39,7 +41,7 @@ public:
     }
 
     vk::PipelineLayout GetLayout() const noexcept {
-        return *pipeline_layout;
+        return pipeline_layout;
     }
 
     auto GetStages() const {
@@ -95,6 +97,8 @@ public:
 
 protected:
     [[nodiscard]] std::string GetDebugString() const;
+    void BuildLayouts(const vk::DescriptorSetLayoutCreateInfo& info,
+                      std::span<const vk::PushConstantRange> pushes);
 
     void MarkReady() noexcept {
         readiness.Publish();
@@ -104,9 +108,12 @@ protected:
     Scheduler& scheduler;
     DescriptorHeap& desc_heap;
     const Shader::Profile& profile;
+    PipelineLayoutCache& layout_cache;
+    // Ownership survives deferred compilation and command replay. Destroy pipeline first.
+    std::shared_ptr<const PipelineLayoutObjects> layout_objects;
     vk::UniquePipeline pipeline;
-    vk::UniquePipelineLayout pipeline_layout;
-    vk::UniqueDescriptorSetLayout desc_layout;
+    vk::PipelineLayout pipeline_layout;
+    vk::DescriptorSetLayout desc_layout;
     std::array<const Shader::Info*, Shader::MaxStageTypes> stages{};
     bool uses_push_descriptors{};
     bool is_compute;

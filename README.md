@@ -61,6 +61,28 @@ V1、V2 已经用户游玩验证收益，现将以下四项作为引擎固定行
 
 集成范围及验证命令见 `doc/23-core-optimization-integration.md`（doc/ 按约定忽略 Git）。
 
+## V3 R6：C1 光照深度归约候选
+
+先执行 `build.bat`。本轮候选只开启 C1：将光照 shader `ce1675e0` 开头逐线程争用同一共享地址的深度 min/max 原子操作，改为原生 GPU 子组规约后，由非空子组的一个线程提交相同结果。保留原屏障、有效像素判断、完整灯光列表、粒子及画质，不改变浮点运算顺序。
+
+| diagnostics 中的入口 | 当前用途 |
+| --- | --- |
+| optimization-v3-control.bat | 同一构建的 V2 对照，C1、A1 及旧 V3 候选全部关闭 |
+| optimization-v3.bat | 仅开启 C1 的普通游玩候选 |
+| full-optimization-v3.bat | 既有同进程 full，开启 C1，自动核对编译记录和最终 SPIR-V |
+
+普通 `run.bat` 与 `diagnostics/full.bat` 默认关闭所有候选。A1 已证实减少绑定条目，但没有确认稳定 FPS 收益，本轮也关闭它；R2/R3 地址调度、回读/提交、粒子异步及布局共享继续关闭，V1/V2 固定策略保留。
+
+首先用 control → candidate → control，在同一车祸存档、视角和预热条件下比较 FPS、卡顿、亮度、光照和粒子。默认 Pro 4K；两个人工 BAT 可追加 `-Mode 1080p`。仅目标 shader 使用新的缓存版本；第一次开启或切换后先等待编译预热，不删除共享缓存。普通结果确认后再按需要运行已有 full，不能以 full FPS 代替游玩验收。
+
+候选以完整客体 shader 字节指纹、16×16×1 工作组、硬件 compute 子组能力、共享地址/布局、屏障和无副作用条件共同保护；无法证明匹配时原样保留原 SPIR-V。已有外部 SPIR-V 覆盖文件优先，C1 不覆盖它。项目不修改或复制外部 Sirit，不改 game/ 源文件。
+
+启动记录为 `v3-r6-depth-reduction`，`v3_lighting_reduction=1/0` 是本轮候选差异。full 的 `lighting_optimization` 单独列出启动能力、每个 permutation 的 applied/reason 和最终 shader 操作计数；回退不冒充性能数据损坏。最终 `.spv` 在 C1 之后转储；`.irprogram.txt` 在它之前生成，因此新增规约需检查最终 SPIR-V。
+
+固定存档来源仍为 `state/play/home`，复制到本次 session；V3/full 的保存变更不自动归并、不扫描历史 session。人工入口沿用项目共享缓存，full 继续用私有缓存与同一次运行中的采集工具。
+
+本轮仅完成源码、回归源码、静态 review 和脚本语法检查；未代构建/执行测试/启动游戏。C1 尚未经过运行正确性和性能验收，不预告 FPS 增益。实施与验证命令见 `doc/36-c1-r6-depth-reduction.md`，A1 实测见 doc/35。
+
 ## 路径和用户数据
 
 project.json 保存相对项目根目录的引擎、游戏及既有构建依赖路径。脚本按自身位置解析，从其他工作目录调用 BAT 不改变含义。引擎位置固定在本项目 Build/ 中，清单记录当前选定配置对应的 EXE、构建记录与 SHA-256；构建尚未完成时清单明确标记为未构建。修改清单也不能绕过项目边界和构建记录检查。系统工具通过现有 PATH、用户／系统环境及已安装目录定位，不安装依赖。
@@ -154,3 +176,7 @@ diagnostics/timing-baseline.bat、timing-critical.bat、timing-lighting.bat 使�
 本轮涉及 C++，先运行 build.bat。建议同场景 baseline → critical → baseline，再录一轮 lighting；当前无需重录 full。退出后自动生成会话内的 timing-summary.json，默认分析最后 60 秒，并全量检查原始事件完整性。它区分 CPU 等待/写回/呈现队列和 GPU 查询区间，不能还原无采集时的每帧 GPU 成本，也不自动证明优化收益。
 
 实现、字段、测量边界和用户验证命令见 doc/21-v2-critical-path-timing.md（doc/ 按约定忽略 Git）。新增纯内存回归：python -B tests/test_timing_analysis.py；可选原生队列回归目标 ifss_path_trace_queue_test。测试/构建/游戏均由用户执行。
+
+V3 回读回归修复：CPU 需求回读保留 V2 原有窗口，不因粒子计数访问缩小到单页；显式启用批量预取但未记录任何复制时，自动回退 V2 预取。V3 人工／full 入口均关闭 `v3_demand_readback` 和 `v3_prefetch_batches`；R4 同时关闭其余旧候选及布局共享。引擎修改需要重新执行 `build.bat` 才能生效；本次未代执行构建或游戏测试。
+
+V3 R4：新增证据仅在 `full-optimization-v3.bat` 开启；普通与人工入口保持 V1/V2 内核。R3 布局共享代码保留但默认关闭，其构造复用率不计作正常游戏收益。

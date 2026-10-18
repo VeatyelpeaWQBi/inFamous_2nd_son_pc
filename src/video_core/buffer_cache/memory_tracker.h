@@ -16,6 +16,7 @@
 #include "common/perf_stats.h"
 #include "common/types.h"
 #include "video_core/buffer_cache/region_manager.h"
+#include "video_core/buffer_cache/v3_readback_policy.h"
 
 namespace VideoCore {
 
@@ -338,6 +339,9 @@ public:
     /// processor thread only.
     void SetWriteTick(VAddr cpu_addr, u64 size, u64 tick, u32 queue = 0) noexcept {
         const u64 seq = ++last_write_seq;
+        // Always observe writes to registered pages, even if the candidate was toggled off.
+        // Otherwise a later re-enable could reuse stale provenance.
+        demand_writers.NoteWrite(cpu_addr, size, queue, tick);
         IteratePages(cpu_addr, size,
                      [tick, seq, queue](RegionManager* manager, u64 offset, u64 size) {
                          manager->SetWriteTick(offset, size, tick, seq, queue);
@@ -384,8 +388,44 @@ public:
         return ticks;
     }
 
-    /// The sequence number of the last GPU write recorded (command processor thread only): a
-    /// range whose GetWriteSeq is above the number read earlier was written since.
+    /// Precision is optional: unbounded shader addresses or image-to-buffer aliases have no
+    /// proven per-page producer coverage here, so retain the original strategy for this run.
+    bool CanRefineDemandPages() const noexcept { return demand_precision_valid; }
+    void DisableDemandPrecision() noexcept {
+        if (!demand_precision_valid) return;
+        demand_precision_valid = false;
+        demand_writers.Clear();
+        if (Common::Perf::GetTuning().v3_demand_readback.load(std::memory_order_relaxed)) {
+            Common::Perf::Add(Common::Perf::V3FineDisabled);
+            LOG_INFO(Debug, "V3 fine readback disabled: unbounded BDA or image-buffer alias coverage");
+        }
+    }
+
+    void ObserveDemandPages(VAddr start, VAddr end) noexcept {
+        if (!demand_precision_valid) return;
+        for (VAddr page = start; page < end; page += BYTES_PER_PAGE) {
+            demand_writers.Watch(page, GetWriteTicks(page, BYTES_PER_PAGE));
+        }
+    }
+
+    std::array<u64, 2> GetReadbackWriteTicks(VAddr address, u64 size) noexcept {
+        const auto conservative = GetWriteTicks(address, size);
+        if (!demand_precision_valid ||
+            !Common::Perf::GetTuning().v3_demand_readback.load(std::memory_order_relaxed)) {
+            return conservative;
+        }
+        Common::Perf::Add(Common::Perf::V3FineChecks);
+        const auto exact = demand_writers.Query(address, size);
+        // Cross-queue provenance in the coarse table may have been superseded. In that case
+        // retain its conservative dependency chain rather than mixing incompatible evidence.
+        if (!exact || (*exact)[0] > conservative[0] || (*exact)[1] > conservative[1]) {
+            return conservative;
+        }
+        if (*exact != conservative) Common::Perf::Add(Common::Perf::V3FineHits);
+        return *exact;
+    }
+
+    /// Last GPU write in command-processor order; used by version-stability checks.
     u64 CurrentWriteSeq() const noexcept {
         return last_write_seq;
     }
@@ -611,6 +651,8 @@ private:
     std::mutex pending_readbacks_mutex;
     std::vector<std::pair<VAddr, VAddr>> pending_readbacks;
     std::atomic<u32> num_pending_readbacks{};
+    bool demand_precision_valid{true}; // CP only, conservative lifetime opt-out on unknown aliases.
+    DemandPageWriters demand_writers; // CP thread only; bounded, no guest-memory pointers.
     u64 last_write_seq{}; ///< Command processor thread only.
     std::deque<std::array<RegionManager, MANAGER_POOL_SIZE>> manager_pool;
     std::vector<RegionManager*> free_managers;

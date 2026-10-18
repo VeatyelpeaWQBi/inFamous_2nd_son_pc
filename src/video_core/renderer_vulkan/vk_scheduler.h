@@ -12,12 +12,14 @@
 #include <thread>
 #include <queue>
 #include <span>
+#include <boost/container/static_vector.hpp>
 
 #include "common/interval_set.h"
 #include "common/unique_function.h"
 #include "video_core/amdgpu/regs_color.h"
 #include "video_core/amdgpu/regs_primitive.h"
 #include "video_core/renderer_vulkan/vk_buffer_bind_cache.h"
+#include "video_core/renderer_vulkan/vk_descriptor_evidence.h"
 #include "video_core/renderer_vulkan/vk_command_stream.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
@@ -199,27 +201,7 @@ struct DynamicState {
         };
 
         /// Descriptors pushed for set 0 of a bind point, the contents of their writes copied.
-        struct Descriptors {
-            static constexpr u32 MaxWrites = 64;
-            static constexpr u32 MaxInfos = 128;
-            struct Write {
-                u32 binding;
-                u32 array_element;
-                u32 count;
-                vk::DescriptorType type;
-            };
-            struct Info {
-                u64 a; ///< sampler, buffer or texel buffer view
-                u64 b; ///< image view or offset
-                u64 c; ///< image layout or range
-                bool operator==(const Info&) const = default;
-            };
-            vk::PipelineLayout layout{};
-            u32 num_writes{~0U}; ///< ~0U: unknown
-            u32 num_infos{};
-            std::array<Write, MaxWrites> writes;
-            std::array<Info, MaxInfos> infos;
-        };
+        using Descriptors = DescriptorSnapshot;
 
         std::array<vk::Pipeline, 2> pipelines{}; ///< graphics, compute
         std::array<Push, 2> pushes{};             ///< graphics stages, compute stage
@@ -259,10 +241,10 @@ struct DynamicState {
         bool SkipPush(vk::PipelineLayout layout, vk::ShaderStageFlags stages, u32 offset, u32 size,
                       const void* values) noexcept;
 
-        /// Notes descriptors pushed; true when they can be left out (set 0 of the bind point was
-        /// pushed last with the same layout and the same writes, skipping on).
-        bool SkipDescriptors(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout, u32 set,
-                             std::span<const vk::WriteDescriptorSet> writes) noexcept;
+        /// Tracks complete pushed state; may skip the call or select whole changed writes.
+        /// Unknown/changed layout or write shape always retains the full update.
+        DescriptorUpdate PrepareDescriptors(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout,
+                                            u32 set, std::span<const vk::WriteDescriptorSet> writes) noexcept;
 
         /// Notes a vertex input set; true when it can be left out (same as the last one, with the
         /// same graphics pipeline bound since, skipping on).
@@ -453,7 +435,8 @@ struct DynamicState {
 };
 
 using SessionFunc = Common::UniqueFunction<void>;
-using SubmitFunc = Common::UniqueFunction<void, SubmitInfo&>;
+// queue_locked: callback may submit sparse bindings only under the queue lock.
+using SubmitFunc = Common::UniqueFunction<void, SubmitInfo&, bool>;
 
 /// Notified when rendering scopes begin and end, for work that cannot span them (Vulkan
 /// occlusion queries begun inside a rendering scope must end in it).
@@ -880,23 +863,23 @@ public:
     void pushDescriptorSetKHR(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout,
                               u32 set,
                               vk::ArrayProxy<const vk::WriteDescriptorSet> const& writes) const {
-        if (scheduler && scheduler->GetDynamicState().binds.SkipDescriptors(
-                             bind_point, layout, set, {writes.data(), writes.size()})) {
-            return;
+        DescriptorUpdate update;
+        if (scheduler) {
+            update = scheduler->GetDynamicState().binds.PrepareDescriptors(
+                bind_point, layout, set, {writes.data(), writes.size()});
         }
-        if (const vk::CommandBuffer c = Direct()) {
-            c.pushDescriptorSetKHR(bind_point, layout, set, writes);
-            return;
+        if (update.mode == DescriptorUpdate::Mode::Skip) return;
+        if (update.mode == DescriptorUpdate::Mode::Partial) {
+            // Only construct selected entries; no heap allocation or initialization of 64 writes.
+            boost::container::static_vector<vk::WriteDescriptorSet, DescriptorSnapshot::MaxWrites> changed;
+            for (u32 n = 0; n < writes.size(); ++n) {
+                if (update.changed_writes & (u64{1} << n)) changed.push_back(writes.data()[n]);
+            }
+            RecordDescriptorWrites(bind_point, layout, set,
+                                   {changed.data(), static_cast<u32>(changed.size())});
+        } else {
+            RecordDescriptorWrites(bind_point, layout, set, {writes.data(), writes.size()});
         }
-        CommandStream& s = scheduler->Stream();
-        const u32 count = writes.size();
-        vk::WriteDescriptorSet* const copies = s.Copy(writes.data(), count);
-        for (u32 i = 0; i < count; ++i) {
-            CopyDescriptorWrite(s, copies[i]);
-        }
-        s.Record([=](vk::CommandBuffer c) {
-            c.pushDescriptorSetKHR(bind_point, layout, set, count, copies);
-        });
     }
 
     void bindDescriptorSets(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout,
@@ -1253,6 +1236,23 @@ private:
     /// The command buffer to record in now, or null to record into the stream.
     [[nodiscard]] vk::CommandBuffer Direct() const noexcept {
         return scheduler ? scheduler->DirectCommandBuffer() : fixed;
+    }
+
+    void RecordDescriptorWrites(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout, u32 set,
+                                std::span<const vk::WriteDescriptorSet> writes) const {
+        if (const vk::CommandBuffer c = Direct()) {
+            c.pushDescriptorSetKHR(bind_point, layout, set, static_cast<u32>(writes.size()), writes.data());
+            return;
+        }
+        CommandStream& s = scheduler->Stream();
+        const u32 count = static_cast<u32>(writes.size());
+        vk::WriteDescriptorSet* const copies = s.Copy(writes.data(), count);
+        for (u32 i = 0; i < count; ++i) {
+            CopyDescriptorWrite(s, copies[i]);
+        }
+        s.Record([=](vk::CommandBuffer c) {
+            c.pushDescriptorSetKHR(bind_point, layout, set, count, copies);
+        });
     }
 
     static void CopyDescriptorWrite(CommandStream& s, vk::WriteDescriptorSet& write) {

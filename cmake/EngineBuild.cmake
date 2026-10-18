@@ -1049,6 +1049,9 @@ set(SHADER_RECOMPILER src/shader_recompiler/profile.h
                       src/shader_recompiler/ir/passes/inject_clip_distance_attributes.cpp
                       src/shader_recompiler/ir/passes/inverse_ballot_elimination_pass.cpp
                       src/shader_recompiler/ir/passes/ir_passes.h
+                      src/shader_recompiler/ir/passes/ifss_address_schedule.cpp
+                      src/shader_recompiler/ifss_depth_reduction.cpp
+                      src/shader_recompiler/ifss_depth_reduction.h
                       src/shader_recompiler/ir/passes/lower_buffer_format_to_raw.cpp
                       src/shader_recompiler/ir/passes/lower_fp64_to_fp32.cpp
                       src/shader_recompiler/ir/passes/lower_hardware_intrinsics.cpp
@@ -1148,6 +1151,10 @@ set(VIDEO_CORE src/video_core/amdgpu/cb_db_extent.h
                src/video_core/renderer_vulkan/vk_driver_cache.h
                src/video_core/renderer_vulkan/vk_driver_cache_format.h
                src/video_core/renderer_vulkan/vk_prewarm_budget.h
+               src/video_core/buffer_cache/feedback_write_history.h
+               src/video_core/renderer_vulkan/vk_descriptor_evidence.h
+               src/video_core/renderer_vulkan/vk_pipeline_layout_cache.cpp
+               src/video_core/renderer_vulkan/vk_pipeline_layout_cache.h
                src/video_core/renderer_vulkan/vk_pipeline_common.cpp
                src/video_core/renderer_vulkan/vk_pipeline_common.h
                src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp

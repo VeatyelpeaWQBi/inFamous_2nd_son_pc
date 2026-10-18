@@ -2,7 +2,9 @@
 [CmdletBinding()]
 param(
     [ValidateSet('menu','check','cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full','capture','stop','mark','xray','status','recover')]
-    [string]$Action='full'
+    [string]$Action='full',
+    [ValidateSet('none','control','all')][string]$OptimizationV3='none',
+    [string]$SaveSession
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -19,6 +21,11 @@ try{
     if($Action -notin @('check','status') -and -not $administrator){
         # Elevate the same interactive entry, so failures remain visible in its window.
         $arguments=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$PSCommandPath+'"'),'-Action',$Action)
+        if($OptimizationV3 -ne 'none'){$arguments+=@('-OptimizationV3',$OptimizationV3)}
+        if($SaveSession){
+            if($SaveSession -notmatch '^state/sessions/[a-zA-Z0-9-]+$'){throw 'SaveSession must name a project session using a relative path.'}
+            $arguments+=@('-SaveSession',$SaveSession)
+        }
         $child=Start-Process -FilePath $powerShell -ArgumentList $arguments -WorkingDirectory $root -Verb RunAs -Wait -PassThru
         $exitCode=$child.ExitCode
         $child.Dispose()
@@ -35,6 +42,8 @@ try{
         try{
             # Run in a child console process: diagnose.ps1 may exit without skipping this entry's final prompt.
             $driverArguments=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'diagnose.ps1'),'-Action',$Action,'-Mode','pro4k','-DelaySeconds','90','-Seconds','60','-Frames','2')
+            if($OptimizationV3 -ne 'none'){$driverArguments+=@('-OptimizationV3',$OptimizationV3)}
+            if($SaveSession){$driverArguments+=@('-SaveSession',$SaveSession)}
             & $powerShell @driverArguments
             $exitCode=$LASTEXITCODE
         }finally{Pop-Location}
@@ -68,7 +77,7 @@ try{
                 }
             }catch{}
             $result=@{
-                schema=2;action=$Action;engine_policy='core-v1-v2';started_utc=$startedUtc.ToString('o');finished_utc=[DateTime]::UtcNow.ToString('o')
+                schema=2;action=$Action;engine_policy='core-v1-v2';optimization_v3=$OptimizationV3;started_utc=$startedUtc.ToString('o');finished_utc=[DateTime]::UtcNow.ToString('o')
                 exit_code=$exitCode;error=$failure;errors=$currentErrors;session=$session;status=$captureStatus
                 failure_kind=$failureKind;runtime_errors_file=$runtimeIssues;storage_usage=$storageUsage;performance_acceptance=$false
             }

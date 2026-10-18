@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "ajm_instance.h"
 #include "ajm_aac.h"
 #include "ajm_at9.h"
-#include "ajm_instance.h"
 #include "ajm_mp3.h"
 #include "ajm_result.h"
 
@@ -56,11 +56,9 @@ void AjmInstance::ExecuteJob(AjmJob& job) {
     const auto control_flags = job.flags.control_flags;
     job.output.p_result->result = 0;
     if (True(control_flags & AjmJobControlFlags::Reset)) {
-        LOG_TRACE(Lib_Ajm, "Resetting instance {}", job.instance_id);
         Reset();
     }
     if (job.input.init_params.has_value()) {
-        LOG_TRACE(Lib_Ajm, "Initializing instance {}", job.instance_id);
         auto& params = job.input.init_params.value();
         m_codec->Initialize(&params, sizeof(params));
     }
@@ -118,8 +116,6 @@ void AjmInstance::ExecuteJob(AjmJob& job) {
                 m_total_samples = 0;
             }
             if (!HasEnoughSpace(out_buf)) {
-                LOG_TRACE(Lib_Ajm, "ORBIS_AJM_RESULT_NOT_ENOUGH_ROOM ({} < {})", out_buf.Size(),
-                          m_codec->GetNextFrameSize(m_gapless));
                 job.output.p_result->result |= ORBIS_AJM_RESULT_NOT_ENOUGH_ROOM;
             }
             if (in_buf.size() < m_codec->GetMinimumInputSize()) {

@@ -98,8 +98,7 @@ s32 VdecDecoder::TrySyncDecodeInput(OrbisVdecswInputResult& input_result) {
         if (m_unsynced_inputs == 0) {
             LOG_ERROR(Lib_Vdecsw, "ORBIS_VDECSW_ERROR_INPUT_QUEUE_EMPTY");
             return ORBIS_VDECSW_ERROR_INPUT_QUEUE_EMPTY;
-        }
-        LOG_TRACE(Lib_Vdecsw, "ORBIS_VDECSW_ERROR_DECODE_PENDING");
+        };
         return ORBIS_VDECSW_ERROR_DECODE_PENDING;
     }
 
@@ -188,8 +187,7 @@ s32 VdecDecoder::TrySyncDecodeOutput(OrbisVdecswOutputInfo& output_info) {
             output_info.is_last_frame = true;
             m_pending_output.reset();
             return ORBIS_OK;
-        }
-        LOG_TRACE(Lib_Vdecsw, "ORBIS_VDECSW_ERROR_DECODE_PENDING");
+        };
         return ORBIS_VDECSW_ERROR_DECODE_PENDING;
     }
 

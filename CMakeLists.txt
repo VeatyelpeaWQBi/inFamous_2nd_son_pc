@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 cmake_minimum_required(VERSION 3.30)
 project(inFamous_2nd_son_pc LANGUAGES NONE)
+set(CMAKE_BUILD_TYPE Release CACHE STRING "Release only" FORCE)
+set(ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(TRACY_ENABLE OFF CACHE BOOL "" FORCE)
+set(SHADPS4_DIAGNOSTIC_MAP OFF CACHE BOOL "" FORCE)
 option(IFSS_BUILD_ENGINE "Build this project Windows runtime" ON)
 if(NOT IFSS_BUILD_ENGINE)
     message(STATUS "Engine build explicitly disabled by IFSS_BUILD_ENGINE=OFF.")
@@ -48,67 +52,24 @@ endforeach()
 target_link_libraries(ifss_ffmpeg INTERFACE psapi strmiids uuid oleaut32 shlwapi ws2_32 ole32 user32 bcrypt)
 add_compile_definitions(IFSS_PROJECT_LOCAL_USER_DATA=1)
 include(cmake/EngineBuild.cmake)
-if(TARGET shadps4)
-    set_target_properties(shadps4 PROPERTIES
-        OUTPUT_NAME "inFAMOUS Second Son"
-        PDB_NAME "inFAMOUS Second Son"
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
-        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-    set(IFSS_GAME_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/inFAMOUS Second Son.ico")
-    if(NOT EXISTS "${IFSS_GAME_ICON_PATH}")
-        message(FATAL_ERROR "The project game icon is missing.")
-    endif()
-    target_compile_definitions(shadps4 PRIVATE IFSS_GAME_ICON_PATH="${IFSS_GAME_ICON_PATH}")
-    # Optional collection control from the installed VTune SDK; no runtime is copied.
-    set(IFSS_ITT_SDK_ROOT "" CACHE PATH "Existing VTune SDK for diagnostic collection control")
-    if(IFSS_ITT_SDK_ROOT)
-        if(NOT EXISTS "${IFSS_ITT_SDK_ROOT}/include/ittnotify.h" OR
-           NOT EXISTS "${IFSS_ITT_SDK_ROOT}/lib64/libittnotify.lib")
-            message(FATAL_ERROR "The configured installed VTune SDK is incomplete.")
-        endif()
-        set_property(SOURCE src/core/benchmark_control.cpp APPEND PROPERTY
-                     COMPILE_DEFINITIONS IFSS_HAVE_ITT=1)
-        set_property(SOURCE src/core/benchmark_control.cpp APPEND PROPERTY
-                     INCLUDE_DIRECTORIES "${IFSS_ITT_SDK_ROOT}/include")
-        target_link_libraries(shadps4 PRIVATE "${IFSS_ITT_SDK_ROOT}/lib64/libittnotify.lib")
-    endif()
-    # Optional integration with the already installed Nsight SDK.
-    file(GLOB IFSS_NSIGHT_SDK_CANDIDATES LIST_DIRECTORIES true
-        "$ENV{ProgramFiles}/NVIDIA Corporation/Nsight Graphics */SDKs/NsightGraphicsSDK/*/include")
-    list(SORT IFSS_NSIGHT_SDK_CANDIDATES COMPARE NATURAL ORDER DESCENDING)
-    foreach(sdk IN LISTS IFSS_NSIGHT_SDK_CANDIDATES)
-        if(EXISTS "${sdk}/NGFX_GPUTrace_Vulkan.h")
-            set_property(SOURCE src/core/benchmark_control.cpp APPEND PROPERTY
-                         COMPILE_DEFINITIONS IFSS_HAVE_NSIGHT_SDK=1)
-            set_property(SOURCE src/core/benchmark_control.cpp APPEND PROPERTY
-                         INCLUDE_DIRECTORIES "${sdk}")
-            break()
-        endif()
-    endforeach()
+target_sources(shadps4 PRIVATE src/core/runtime_policy.h src/core/release_config.cpp
+    src/core/release_config.h src/common/display_state.h)
+set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "inFAMOUS Second Son"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+set(IFSS_GAME_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/inFAMOUS Second Son.ico")
+if(NOT EXISTS "${IFSS_GAME_ICON_PATH}")
+    message(FATAL_ERROR "The project game icon is missing.")
+endif()
+target_compile_definitions(shadps4 PRIVATE IFSS_GAME_ICON_PATH="${IFSS_GAME_ICON_PATH}")
+target_link_libraries(shadps4 PRIVATE bcrypt)
+if(MSVC)
+    target_link_options(shadps4 PRIVATE /OPT:REF /OPT:ICF /DEBUG:NONE)
 endif()
 
-# Small native regression using existing engine dependencies; no test framework download.
-add_executable(ifss_log_sink_test EXCLUDE_FROM_ALL tests/test_log_file_sink.cpp)
-target_compile_features(ifss_log_sink_test PRIVATE cxx_std_23)
-target_include_directories(ifss_log_sink_test PRIVATE src)
-target_link_libraries(ifss_log_sink_test PRIVATE spdlog::spdlog fmt::fmt)
-
-# Pure state/dependency policy regressions, no Vulkan device or downloaded test framework.
-add_executable(ifss_buffer_bind_cache_test EXCLUDE_FROM_ALL tests/test_buffer_bind_cache.cpp)
-target_compile_features(ifss_buffer_bind_cache_test PRIVATE cxx_std_23)
-target_include_directories(ifss_buffer_bind_cache_test PRIVATE src)
+# Not part of the engine or either release package.
+foreach(policy buffer_bind_cache readback_dependencies optimization_v2)
+    add_executable(ifss_${policy}_test EXCLUDE_FROM_ALL tests/test_${policy}.cpp)
+    target_compile_features(ifss_${policy}_test PRIVATE cxx_std_23)
+    target_include_directories(ifss_${policy}_test PRIVATE src)
+endforeach()
 target_link_libraries(ifss_buffer_bind_cache_test PRIVATE Vulkan::Headers)
-
-add_executable(ifss_readback_dependencies_test EXCLUDE_FROM_ALL tests/test_readback_dependencies.cpp)
-target_compile_features(ifss_readback_dependencies_test PRIVATE cxx_std_23)
-target_include_directories(ifss_readback_dependencies_test PRIVATE src)
-
-# V2 scheduling/bounds policies: no device, framework or new dependency.
-add_executable(ifss_optimization_v2_test EXCLUDE_FROM_ALL tests/test_optimization_v2.cpp)
-target_compile_features(ifss_optimization_v2_test PRIVATE cxx_std_23)
-target_include_directories(ifss_optimization_v2_test PRIVATE src)
-
-# Diagnostic transport ordering/full/drop tests. Not part of the default engine build.
-add_executable(ifss_path_trace_queue_test EXCLUDE_FROM_ALL tests/test_path_trace_queue.cpp)
-target_compile_features(ifss_path_trace_queue_test PRIVATE cxx_std_23)
-target_include_directories(ifss_path_trace_queue_test PRIVATE src)

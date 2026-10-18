@@ -251,7 +251,6 @@ if (ENABLE_SYSTEM_LIBRARIES)
     find_package(PNG 1.6 MODULE)
     find_package(OpenAL CONFIG)
     find_package(LibreSSL 4.3.1 MODULE)
-    find_package(RenderDoc 1.6.0 MODULE)
     find_package(SDL3 3.1.2 CONFIG)
     find_package(stb MODULE)
     find_package(toml11 4.2.0 CONFIG)
@@ -745,37 +744,7 @@ set(COMPANION_LIBS  src/core/libraries/companion/companion_httpd.cpp
                     src/core/libraries/companion/companion_util.h
                     src/core/libraries/companion/companion_error.h
 )
-set(DEV_TOOLS src/core/devtools/layer.cpp
-              src/core/devtools/layer.h
-              src/core/devtools/layer_extra.cpp
-              src/core/devtools/options.cpp
-              src/core/devtools/options.h
-              src/core/devtools/gcn/gcn_context_regs.cpp
-              src/core/devtools/gcn/gcn_op_names.cpp
-              src/core/devtools/gcn/gcn_shader_regs.cpp
-              src/core/devtools/widget/cmd_list.cpp
-              src/core/devtools/widget/cmd_list.h
-              src/core/devtools/widget/common.h
-              src/core/devtools/widget/frame_dump.cpp
-              src/core/devtools/widget/frame_dump.h
-              src/core/devtools/widget/frame_graph.cpp
-              src/core/devtools/widget/frame_graph.h
-              src/core/devtools/widget/gpu_memory.cpp
-              src/core/devtools/widget/gpu_memory.h
-              src/core/devtools/widget/imgui_memory_editor.h
-              src/core/devtools/widget/memory_map.cpp
-              src/core/devtools/widget/memory_map.h
-              src/core/devtools/widget/module_list.cpp
-              src/core/devtools/widget/module_list.h
-              src/core/devtools/widget/reg_popup.cpp
-              src/core/devtools/widget/reg_popup.h
-              src/core/devtools/widget/reg_view.cpp
-              src/core/devtools/widget/reg_view.h
-              src/core/devtools/widget/shader_list.cpp
-              src/core/devtools/widget/shader_list.h
-              src/core/devtools/widget/text_editor.cpp
-              src/core/devtools/widget/text_editor.h
-)
+set(GAME_UI src/core/game_ui.cpp src/core/game_ui.h)
 
 set(COMMON src/common/logging/classes.cpp
            src/common/logging/classes.h
@@ -810,9 +779,6 @@ set(COMMON src/common/logging/classes.cpp
            src/common/native_clock.cpp
            src/common/native_clock.h
            src/common/path_util.cpp
-           src/common/path_trace.cpp
-           src/common/path_trace.h
-           src/common/path_trace_queue.h
            src/common/path_util.h
            src/common/object_pool.h
            src/common/polyfill_thread.h
@@ -911,8 +877,6 @@ set(CORE src/core/aerolib/stubs.cpp
          src/core/file_sys/backends/host_fs.h
          src/core/file_sys/backends/zarchive_fs.cpp
          src/core/file_sys/backends/zarchive_fs.h
-         src/core/ipc/ipc.cpp
-         src/core/ipc/ipc.h
          src/core/loader/dwarf.cpp
          src/core/loader/dwarf.h
          src/core/loader/elf.cpp
@@ -945,11 +909,7 @@ set(CORE src/core/aerolib/stubs.cpp
          ${VR_LIBS}
          ${CAMERA_LIBS}
          ${COMPANION_LIBS}
-         ${DEV_TOOLS}
-         src/core/debug_state.cpp
-         src/core/debug_state.h
-         src/core/debugger.cpp
-         src/core/debugger.h
+         ${GAME_UI}
          src/core/linker.cpp
          src/core/linker.h
          src/core/memory.cpp
@@ -957,10 +917,6 @@ set(CORE src/core/aerolib/stubs.cpp
          src/core/module.cpp
          src/core/module.h
          src/core/platform.h
-         src/core/perf_sampler.cpp
-         src/core/perf_sampler.h
-         src/core/benchmark_control.cpp
-         src/core/benchmark_control.h
          src/core/signals.cpp
          src/core/signals.h
          src/core/thread.cpp
@@ -1204,8 +1160,6 @@ set(VIDEO_CORE src/video_core/amdgpu/cb_db_extent.h
                src/video_core/compile_readiness.h
                src/video_core/page_manager.cpp
                src/video_core/page_manager.h
-               src/video_core/renderdoc.cpp
-               src/video_core/renderdoc.h
 )
 
 set(IMGUI src/imgui/imgui_config.h
@@ -1314,7 +1268,7 @@ add_executable(shadps4
 create_target_directory_groups(shadps4)
 
 target_link_libraries(shadps4 PRIVATE spdlog::spdlog)
-target_link_libraries(shadps4 PRIVATE magic_enum::magic_enum fmt::fmt toml11::toml11 tsl::robin_map xbyak::xbyak Tracy::TracyClient RenderDoc::API FFmpeg::ffmpeg Dear_ImGui ImGuiFileDialog gcn half::half ZLIB::ZLIB PNG::PNG minimp3)
+target_link_libraries(shadps4 PRIVATE magic_enum::magic_enum fmt::fmt toml11::toml11 tsl::robin_map xbyak::xbyak FFmpeg::ffmpeg Dear_ImGui ImGuiFileDialog gcn half::half ZLIB::ZLIB PNG::PNG minimp3)
 target_link_libraries(shadps4 PRIVATE Boost::headers GPUOpen::VulkanMemoryAllocator LibAtrac9 sirit Vulkan::Headers xxHash::xxhash Zydis::Zydis SDL3::SDL3 pugixml::pugixml)
 target_link_libraries(shadps4 PRIVATE stb::headers lfreist-hwinfo::hwinfo nlohmann_json::nlohmann_json miniz::miniz fdk-aac CLI11::CLI11 OpenAL::OpenAL Cpp_Httplib miniupnpc::miniupnpc)
 # The AAC wrapper uses an internal FDK header; resolve it from the configured dependency tree.
@@ -1485,7 +1439,7 @@ if (ENABLE_DISCORD_RPC)
 endif()
 
 # Install rules
-install(TARGETS shadps4 BUNDLE DESTINATION .)
+install(TARGETS shadps4 RUNTIME DESTINATION .)
 
 else()
     enable_testing()

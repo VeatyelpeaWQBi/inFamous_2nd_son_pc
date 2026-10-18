@@ -12,7 +12,6 @@
 #include <unistd.h>
 #endif
 
-#include <common/singleton.h>
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/error_codes.h"
@@ -20,6 +19,7 @@
 #include "core/libraries/network/net_ctl_codes.h"
 #include "core/libraries/network/netctl.h"
 #include "net_util.h"
+#include <common/singleton.h>
 
 namespace Libraries::NetCtl {
 
@@ -96,7 +96,6 @@ int PS4_SYSV_ABI sceNetCtlUnregisterCallbackV6() {
 }
 
 int PS4_SYSV_ABI sceNetCtlCheckCallback() {
-    LOG_DEBUG(Lib_NetCtl, "(STUBBED) called");
     return ORBIS_OK;
 }
 
@@ -161,7 +160,6 @@ int PS4_SYSV_ABI sceNetCtlGetIfStat() {
 }
 
 int PS4_SYSV_ABI sceNetCtlGetInfo(int code, OrbisNetCtlInfo* info) {
-    LOG_DEBUG(Lib_NetCtl, "code = {}", code);
     if (!EmulatorSettings.IsConnectedToNetwork()) {
         return ORBIS_NET_CTL_ERROR_NOT_CONNECTED;
     }
@@ -198,7 +196,6 @@ int PS4_SYSV_ABI sceNetCtlGetInfo(int code, OrbisNetCtlInfo* info) {
         auto success = netinfo->RetrieveNetmask();
         if (success) {
             strncpy(info->netmask, netinfo->GetNetmask().data(), sizeof(info->netmask));
-            LOG_DEBUG(Lib_NetCtl, "netmask: {}", info->netmask);
         } else {
             LOG_WARNING(Lib_NetCtl, "netmask: failed to retrieve");
         }
@@ -209,7 +206,6 @@ int PS4_SYSV_ABI sceNetCtlGetInfo(int code, OrbisNetCtlInfo* info) {
         if (success) {
             strncpy(info->default_route, netinfo->GetDefaultGateway().data(),
                     sizeof(info->default_route));
-            LOG_DEBUG(Lib_NetCtl, "default gateway: {}", info->default_route);
         } else {
             LOG_WARNING(Lib_NetCtl, "default gateway: failed to retrieve");
         }
@@ -217,30 +213,23 @@ int PS4_SYSV_ABI sceNetCtlGetInfo(int code, OrbisNetCtlInfo* info) {
     }
     case ORBIS_NET_CTL_INFO_HTTP_PROXY_CONFIG:
         info->http_proxy_config = 0; // off
-        LOG_DEBUG(Lib_NetCtl, "http proxy config: {}", info->http_proxy_config);
         break;
     case ORBIS_NET_CTL_INFO_PRIMARY_DNS:
         strcpy(info->primary_dns, "1.1.1.1");
-        LOG_DEBUG(Lib_NetCtl, "http primary dns: {}", info->primary_dns);
         break;
     case ORBIS_NET_CTL_INFO_SECONDARY_DNS:
         strcpy(info->secondary_dns, "1.1.1.1");
-        LOG_DEBUG(Lib_NetCtl, "http secondary dns: {}", info->secondary_dns);
         break;
     case ORBIS_NET_CTL_INFO_HTTP_PROXY_SERVER:
         info->http_proxy_server[0] = '\0';
-        LOG_DEBUG(Lib_NetCtl, "http proxy server: none");
         break;
     case ORBIS_NET_CTL_INFO_HTTP_PROXY_PORT:
         info->http_proxy_port = 0;
-        LOG_DEBUG(Lib_NetCtl, "http proxy config: {}", info->http_proxy_port);
         break;
     case ORBIS_NET_CTL_INFO_IP_CONFIG:
         info->ip_config = 1; // static
-        LOG_DEBUG(Lib_NetCtl, "ip config: {}", info->ip_config);
         break;
-    case ORBIS_NET_CTL_INFO_DHCP_HOSTNAME:
-        LOG_DEBUG(Lib_NetCtl, "dhcp hostname: none");
+    case ORBIS_NET_CTL_INFO_DHCP_HOSTNAME:;
         break;
     default:
         LOG_ERROR(Lib_NetCtl, "{} unsupported code", code);
@@ -280,8 +269,7 @@ int PS4_SYSV_ABI sceNetCtlGetNatInfo(OrbisNetCtlNatInfo* nat_info) {
         }
     }
 
-    LOG_DEBUG(Lib_NetCtl, "stun_status={} nat_type={} mapped_addr={:#x}", nat_info->stun_status,
-              nat_info->nat_type, nat_info->mapped_addr);
+    ;
     return ORBIS_OK;
 }
 
@@ -298,8 +286,7 @@ int PS4_SYSV_ABI sceNetCtlGetNetEvConfigInfoIpcInt() {
 int PS4_SYSV_ABI sceNetCtlGetResult(int eventType, int* errorCode) {
     if (!errorCode) {
         return ORBIS_NET_CTL_ERROR_INVALID_ADDR;
-    }
-    LOG_DEBUG(Lib_NetCtl, "(STUBBED) called eventType = {} ", eventType);
+    };
     *errorCode = 0;
     return ORBIS_OK;
 }
@@ -341,7 +328,6 @@ int PS4_SYSV_ABI sceNetCtlGetScanInfoForSsidScanIpcInt() {
 
 int PS4_SYSV_ABI sceNetCtlGetState(int* state) {
     const auto connected = EmulatorSettings.IsConnectedToNetwork();
-    LOG_DEBUG(Lib_NetCtl, "connected = {}", connected);
     const auto current_state =
         connected ? ORBIS_NET_CTL_STATE_IPOBTAINED : ORBIS_NET_CTL_STATE_DISCONNECTED;
     *state = current_state;
@@ -457,7 +443,6 @@ int PS4_SYSV_ABI Func_D8DCB6973537A3DC() {
 }
 
 int PS4_SYSV_ABI sceNetCtlCheckCallbackForNpToolkit() {
-    LOG_DEBUG(Lib_NetCtl, "(STUBBED) called");
     return ORBIS_OK;
 }
 

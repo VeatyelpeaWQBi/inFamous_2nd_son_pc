@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
-#include "common/perf_stats.h"
+#include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
-#include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
+#include <algorithm>
 
 #include <vulkan/vulkan_format_traits.hpp>
 
@@ -105,9 +104,7 @@ Runtime::Runtime(const Instance& instance_, Scheduler& scheduler_)
         vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite;
 }
 
-void Runtime::TickFrame() {
-    staging_pool.TickFrame();
-}
+void Runtime::TickFrame() { staging_pool.TickFrame(); }
 
 void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
                          std::span<const vk::BufferCopy> copies) {
@@ -119,7 +116,6 @@ void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* 
         needs_flush |= IsBufferAccessed(dst, copy.dstOffset, copy.size, true);
     }
     if (needs_flush) {
-        Common::Perf::Add(Common::Perf::CopyBarrierFlushes);
         FlushBarriers();
     }
 
@@ -271,12 +267,7 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
     const u32 num_mips = std::min(src->info.resources.levels, dst->info.resources.levels);
 
     // Format mismatch warning (safe but useful)
-    if (src->info.pixel_format != dst->info.pixel_format) {
-        LOG_DEBUG(Render_Vulkan,
-                  "Copy between different formats: src={}, dst={}. "
-                  "Result may be undefined.",
-                  vk::to_string(src->info.pixel_format), vk::to_string(dst->info.pixel_format));
-    }
+
 
     // The region both images have (the destination may be smaller: shrunk render targets).
     const u32 base_width = std::min(src->info.size.width, dst->info.size.width);
@@ -665,12 +656,6 @@ void Runtime::SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool c
         new_backing->image = VideoCore::UniqueImage{instance.GetDevice(), instance.GetAllocator()};
         new_backing->image.Create(new_image_ci);
 
-        Vulkan::SetObjectName(instance.GetDevice(), new_backing->image.image,
-                              "Image {}x{}x{} {} {} {:#x}:{:#x} L:{} M:{} S:{} (backing)",
-                              info.size.width, info.size.height, info.size.depth,
-                              AmdGpu::NameOf(info.tile_mode), vk::to_string(info.pixel_format),
-                              info.guest_address, info.guest_size, info.resources.layers,
-                              info.resources.levels, num_samples);
     } else {
         new_backing = std::addressof(*it);
     }
@@ -779,9 +764,7 @@ void Runtime::FlushBarriers() {
     if (!dep_info.memoryBarrierCount && !dep_info.imageMemoryBarrierCount) {
         return;
     }
-    if (dep_info.memoryBarrierCount) {
-        Common::Perf::Add(Common::Perf::BufferBarrierFlushes);
-    }
+
 
     scheduler.EndRendering();
     const auto cmdbuf = scheduler.Recorder();

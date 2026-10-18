@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <array>
-#include <fmt/format.h>
+#include "core/signals.h"
 #include "common/arch.h"
 #include "common/assert.h"
 #include "common/decoder.h"
@@ -11,8 +10,9 @@
 #include "core/cpu_patches.h" // Windows static guest red-zone protection
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/kernel/threads/exception.h"
-#include "core/signals.h"
 #include "emulator.h"
+#include <array>
+#include <fmt/format.h>
 
 #ifdef _WIN32
 #include <atomic>
@@ -216,9 +216,8 @@ static void LogBacktrace(const char* label, const CONTEXT& start, bool fatal = t
             break;
         }
         if (fatal) {
-            LOG_CRITICAL(Debug, "CrashDiag v2 {} stack #{}: {}", label, frame, DescribeHostAddress(pc));
-        } else {
-            LOG_DEBUG(Debug, "First-chance {} stack #{}: {}", label, frame, DescribeHostAddress(pc));
+            LOG_CRITICAL(Debug, "CrashDiag v2 {} stack #{}: {}", label, frame,
+                         DescribeHostAddress(pc));
         }
         DWORD64 image_base = 0;
         const PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(pc, &image_base, nullptr);
@@ -251,21 +250,17 @@ static void LogCppException(const EXCEPTION_POINTERS& exception) {
         return;
     }
     logging = true;
-    SCOPE_EXIT {
-        logging = false;
-    };
+    SCOPE_EXIT { logging = false; };
     const EXCEPTION_RECORD& record = *exception.ExceptionRecord;
-    LOG_DEBUG(Debug, "CrashDiag v2: C++ exception at {}",
-                 DescribeHostAddress(reinterpret_cast<u64>(record.ExceptionAddress)));
     if (record.NumberParameters >= 4) {
         const u64 object = record.ExceptionInformation[1];
         const u64 throw_info = record.ExceptionInformation[2];
         const u64 image_base = record.ExceptionInformation[3];
-        LOG_DEBUG(Debug, "CrashDiag v2: thrown by module {}", DescribeHostAddress(image_base));
         // x64 ThrowInfo: attributes, unwind, forward compat, catchable type array (image RVAs).
         const auto* info = reinterpret_cast<const s32*>(throw_info);
         if (image_base != 0 && IsReadable(info, 4 * sizeof(s32)) && info[3] != 0) {
-            const auto* types = reinterpret_cast<const s32*>(image_base + static_cast<u32>(info[3]));
+            const auto* types =
+                reinterpret_cast<const s32*>(image_base + static_cast<u32>(info[3]));
             const s32 num_types = IsReadable(types, sizeof(s32)) ? std::min<s32>(types[0], 8) : 0;
             for (s32 i = 0; i < num_types && IsReadable(types + 1 + i, sizeof(s32)); ++i) {
                 // CatchableType: properties, type descriptor, PMD (mdisp, pdisp, vdisp), size.
@@ -281,14 +276,11 @@ static void LogCppException(const EXCEPTION_POINTERS& exception) {
                 std::string type_name;
                 for (size_t c = 0; c < max_length && name[c] != '\0'; ++c) {
                     type_name.push_back(name[c]);
-                }
-                LOG_DEBUG(Debug, "CrashDiag v2: exception type {}", type_name);
+                };
                 if (type_name == ".?AVexception@std@@" && catchable[3] == -1 && object != 0) {
                     const auto* error =
                         reinterpret_cast<const std::exception*>(object + catchable[2]);
-                    if (IsReadable(error, 2 * sizeof(void*))) {
-                        LOG_DEBUG(Debug, "CrashDiag v2: what(): {}", error->what());
-                    }
+
                 }
             }
         }
@@ -404,8 +396,7 @@ static LONG WINAPI SignalHandler(EXCEPTION_POINTERS* pExp) noexcept {
     case DBG_PRINTEXCEPTION_WIDE_C:
         // Used by OutputDebugString functions.
         return EXCEPTION_CONTINUE_EXECUTION;
-    case MS_VC_EXCEPTION:
-        LOG_DEBUG(Debug, "Pass MS_VC_EXCEPTION at {} to handler", address);
+    case MS_VC_EXCEPTION:;
         return EXCEPTION_EXECUTE_HANDLER;
     case MSVC_CPP_EXCEPTION:
         // A C++ throw, seen here before any catch: the code that throws may catch it itself (a
@@ -436,9 +427,7 @@ static LONG WINAPI SignalHandler(EXCEPTION_POINTERS* pExp) noexcept {
             return EXCEPTION_CONTINUE_SEARCH;
         }
         reporting_exception = true;
-        SCOPE_EXIT {
-            reporting_exception = false;
-        };
+        SCOPE_EXIT { reporting_exception = false; };
         LOG_CRITICAL(Debug, "Unhandled Exception code {:#x} at {}", code, address);
         LOG_CRITICAL(Debug, "CrashDiag v1: exception_depth={}", exception_depth);
         if (exception_depth > 1 && first_exception != nullptr) {
@@ -624,7 +613,6 @@ SignalDispatch::SignalDispatch() {
 #if defined(_WIN32)
     ASSERT_MSG(handle = AddVectoredExceptionHandler(0, SignalHandler),
                "Failed to register exception handler.");
-    LOG_INFO(Debug, "CrashDiag v1 enabled: bounded CPU patching and fatal exception context");
 #else
     struct sigaction action{};
     action.sa_sigaction = SignalHandler;
@@ -665,9 +653,7 @@ void SignalDispatch::RemoveHandlers() {
 #endif
 }
 
-SignalDispatch::~SignalDispatch() {
-    RemoveHandlers();
-}
+SignalDispatch::~SignalDispatch() { RemoveHandlers(); }
 
 bool SignalDispatch::DispatchAccessViolation(void* context, void* fault_address) const {
     for (const auto& [handler, _] : access_violation_handlers) {

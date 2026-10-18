@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/ngs2/ngs2.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
-#include "core/libraries/ngs2/ngs2.h"
 #include "core/libraries/ngs2/ngs2_custom.h"
 #include "core/libraries/ngs2/ngs2_error.h"
 #include "core/libraries/ngs2/ngs2_geom.h"
@@ -90,7 +90,6 @@ s32 PS4_SYSV_ABI sceNgs2RackGetUserData(OrbisNgs2Handle rackHandle, uintptr_t* o
 
 s32 PS4_SYSV_ABI sceNgs2RackGetVoiceHandle(OrbisNgs2Handle rackHandle, u32 voiceIndex,
                                            OrbisNgs2Handle* outHandle) {
-    LOG_DEBUG(Lib_Ngs2, "(STUBBED) voiceIndex = {}", voiceIndex);
     return ORBIS_OK;
 }
 
@@ -144,7 +143,7 @@ s32 PS4_SYSV_ABI sceNgs2SystemCreate(const OrbisNgs2SystemOption* option,
 
     // TODO: API reporting?
 
-    LOG_INFO(Lib_Ngs2, "called");
+    ;
     return result;
 }
 
@@ -178,8 +177,7 @@ s32 PS4_SYSV_ABI sceNgs2SystemCreateWithAllocator(const OrbisNgs2SystemOption* o
     } else {
         result = ORBIS_NGS2_ERROR_INVALID_BUFFER_ALLOCATOR;
         LOG_ERROR(Lib_Ngs2, "Invalid system buffer allocator {}", (void*)allocator);
-    }
-    LOG_INFO(Lib_Ngs2, "called");
+    };
     return result;
 }
 
@@ -188,8 +186,7 @@ s32 PS4_SYSV_ABI sceNgs2SystemDestroy(OrbisNgs2Handle systemHandle,
     if (!systemHandle) {
         LOG_ERROR(Lib_Ngs2, "systemHandle is nullptr");
         return ORBIS_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
-    }
-    LOG_INFO(Lib_Ngs2, "called");
+    };
     return ORBIS_OK;
 }
 
@@ -237,7 +234,6 @@ s32 PS4_SYSV_ABI sceNgs2SystemQueryBufferSize(const OrbisNgs2SystemOption* optio
     s32 result;
     if (outBufferInfo) {
         result = SystemSetup(option, outBufferInfo, 0, 0);
-        LOG_INFO(Lib_Ngs2, "called");
     } else {
         result = ORBIS_NGS2_ERROR_INVALID_OUT_ADDRESS;
         LOG_ERROR(Lib_Ngs2, "Invalid system buffer info {}", (void*)outBufferInfo);
@@ -249,7 +245,6 @@ s32 PS4_SYSV_ABI sceNgs2SystemQueryBufferSize(const OrbisNgs2SystemOption* optio
 s32 PS4_SYSV_ABI sceNgs2SystemRender(OrbisNgs2Handle systemHandle,
                                      const OrbisNgs2RenderBufferInfo* aBufferInfo,
                                      u32 numBufferInfo) {
-    LOG_DEBUG(Lib_Ngs2, "(STUBBED) numBufferInfo = {}", numBufferInfo);
     if (!systemHandle) {
         LOG_ERROR(Lib_Ngs2, "systemHandle is nullptr");
         return ORBIS_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
@@ -267,7 +262,6 @@ static s32 PS4_SYSV_ABI sceNgs2SystemResetOption(OrbisNgs2SystemOption* outOptio
     }
     *outOption = option;
 
-    LOG_INFO(Lib_Ngs2, "called");
     return ORBIS_OK;
 }
 
@@ -395,7 +389,6 @@ s32 PS4_SYSV_ABI sceNgs2PanGetVolumeMatrix(OrbisNgs2PanWork* work, const OrbisNg
 
 s32 PS4_SYSV_ABI sceNgs2ReportRegisterHandler(u32 reportType, OrbisNgs2ReportHandler handler,
                                               uintptr_t userData, OrbisNgs2Handle* outHandle) {
-    LOG_INFO(Lib_Ngs2, "reportType = {}, userData = {}", reportType, userData);
     if (!handler) {
         LOG_ERROR(Lib_Ngs2, "handler is nullptr");
         return ORBIS_NGS2_ERROR_INVALID_REPORT_HANDLE;
@@ -407,8 +400,7 @@ s32 PS4_SYSV_ABI sceNgs2ReportUnregisterHandler(OrbisNgs2Handle reportHandle) {
     if (!reportHandle) {
         LOG_ERROR(Lib_Ngs2, "reportHandle is nullptr");
         return ORBIS_NGS2_ERROR_INVALID_REPORT_HANDLE;
-    }
-    LOG_INFO(Lib_Ngs2, "called");
+    };
     return ORBIS_OK;
 }
 

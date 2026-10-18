@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/companion/companion_httpd.h"
 #include "common/logging/log.h"
 #include "companion_error.h"
-#include "core/libraries/companion/companion_httpd.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
 
@@ -23,7 +23,6 @@ sceCompanionHttpdGet2ndScreenStatus(Libraries::UserService::OrbisUserServiceUser
 
 s32 PS4_SYSV_ABI sceCompanionHttpdGetEvent(OrbisCompanionHttpdEvent* pEvent) {
     pEvent->event = ORBIS_COMPANION_HTTPD_EVENT_DISCONNECT; // disconnected
-    LOG_DEBUG(Lib_CompanionHttpd, "device disconnected");
     return ORBIS_COMPANION_HTTPD_ERROR_NO_EVENT; // No events to obtain
 }
 

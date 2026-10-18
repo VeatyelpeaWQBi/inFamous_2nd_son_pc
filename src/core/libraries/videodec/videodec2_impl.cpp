@@ -83,7 +83,6 @@ s32 VdecDecoder::Decode(const OrbisVideodec2InputData& input_data,
 
     ret = avcodec_receive_frame(m_codec_context, frame);
     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-        LOG_TRACE(Lib_Vdec2, "AVERROR_EOF or AVERROR(EAGAIN)");
         av_packet_free(&packet);
         av_frame_free(&frame);
         return ORBIS_OK;

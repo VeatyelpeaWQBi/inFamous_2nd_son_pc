@@ -53,19 +53,15 @@ int EpollTable::CreateHandle(const char* name) {
         it != epolls.end()) {
         *it = Epoll(name);
         const auto ret = std::distance(epolls.begin(), it);
-        LOG_DEBUG(Lib_Net, "epollid = {}", ret);
         return ret;
     } else {
         epolls.emplace_back(name);
         const auto ret = epolls.size() - 1;
-        LOG_DEBUG(Lib_Net, "epollid = {}", ret);
         return ret;
     }
 }
 
-void EpollTable::DeleteHandle(int d) {
-    UNREACHABLE();
-}
+void EpollTable::DeleteHandle(int d) { UNREACHABLE(); }
 
 Epoll* EpollTable::GetEpoll(int epollid) {
     std::scoped_lock lock{m_mutex};

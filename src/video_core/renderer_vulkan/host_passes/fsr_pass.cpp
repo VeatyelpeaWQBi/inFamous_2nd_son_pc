@@ -1,16 +1,15 @@
 //  SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 //  SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
 #include "common/assert.h"
 #include "core/emulator_settings.h"
 #include "video_core/host_shaders/fsr_easu_comp.h"
 #include "video_core/host_shaders/fsr_rcas_comp.h"
-#include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
 #define A_CPU
-#include "core/debug_state.h"
 #include "video_core/host_shaders/fsr/ffx_a.h"
 #include "video_core/host_shaders/fsr/ffx_fsr1.h"
 
@@ -79,11 +78,9 @@ void FsrPass::Create(vk::Device device, VmaAllocator allocator, u32 num_images) 
 
     const auto& cs_easu_module = CompileSPV(FSR_EASU_COMP, device);
     ASSERT(cs_easu_module);
-    SetObjectName(device, cs_easu_module, "fsr.comp [EASU]");
 
     const auto& cs_rcas_module = CompileSPV(FSR_RCAS_COMP, device);
     ASSERT(cs_rcas_module);
-    SetObjectName(device, cs_rcas_module, "fsr.comp [RCAS]");
 
     pipeline_layout = Check<"fsp pipeline layout">(device.createPipelineLayoutUnique({
         .setLayoutCount = 1,
@@ -91,7 +88,6 @@ void FsrPass::Create(vk::Device device, VmaAllocator allocator, u32 num_images) 
         .pushConstantRangeCount = 1,
         .pPushConstantRanges = &push_constants,
     }));
-    SetObjectName(device, pipeline_layout.get(), "fsr pipeline layout");
 
     const vk::ComputePipelineCreateInfo easu_pinfo{
         .stage{
@@ -103,7 +99,6 @@ void FsrPass::Create(vk::Device device, VmaAllocator allocator, u32 num_images) 
     };
     easu_pipeline =
         Check<"fsp easu compute pipelines">(device.createComputePipelineUnique({}, easu_pinfo));
-    SetObjectName(device, easu_pipeline.get(), "fsr easu pipeline");
 
     const vk::ComputePipelineCreateInfo rcas_pinfo{
         .stage{
@@ -115,7 +110,6 @@ void FsrPass::Create(vk::Device device, VmaAllocator allocator, u32 num_images) 
     };
     rcas_pipeline =
         Check<"fsp rcas compute pipelines">(device.createComputePipelineUnique({}, rcas_pinfo));
-    SetObjectName(device, rcas_pipeline.get(), "fsr rcas pipeline");
 
     device.destroyShaderModule(cs_easu_module);
     device.destroyShaderModule(cs_rcas_module);
@@ -133,15 +127,11 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                               vk::Extent2D input_size, vk::Extent2D output_size, Settings settings,
                               bool hdr) {
     if (!settings.enable) {
-        DebugState.is_using_fsr = false;
         return input;
     }
     if (input_size.width >= output_size.width && input_size.height >= output_size.height) {
-        DebugState.is_using_fsr = false;
         return input;
     }
-
-    DebugState.is_using_fsr = true;
 
     if (output_size != cur_size) {
         ResizeAndInvalidate(output_size.width, output_size.height);
@@ -423,13 +413,10 @@ void FsrPass::CreateImages(Img& img) const {
         .initialLayout = vk::ImageLayout::eUndefined,
     };
     img.intermediary_image.Create(image_create_info);
-    SetObjectName(device, static_cast<vk::Image>(img.intermediary_image),
-                  "FSR Intermediary Image #{}", img.id);
     image_create_info.usage = vk::ImageUsageFlagBits::eTransferSrc |
                               vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage |
                               vk::ImageUsageFlagBits::eColorAttachment;
     img.output_image.Create(image_create_info);
-    SetObjectName(device, static_cast<vk::Image>(img.output_image), "FSR Output Image #{}", img.id);
 
     vk::ImageViewCreateInfo image_view_create_info{
         .image = img.intermediary_image,
@@ -443,13 +430,10 @@ void FsrPass::CreateImages(Img& img) const {
     };
     img.intermediary_image_view = Check<"create fsr intermediary image view">(
         device.createImageViewUnique(image_view_create_info));
-    SetObjectName(device, img.intermediary_image_view.get(), "FSR Intermediary ImageView #{}",
-                  img.id);
 
     image_view_create_info.image = img.output_image;
     img.output_image_view =
         Check<"create fsr output image view">(device.createImageViewUnique(image_view_create_info));
-    SetObjectName(device, img.output_image_view.get(), "FSR Output ImageView #{}", img.id);
 }
 
 } // namespace Vulkan::HostPasses

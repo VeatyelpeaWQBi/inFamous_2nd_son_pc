@@ -8,11 +8,11 @@
 
 #include "common/logging/log.h"
 #include "common/path_util.h"
-#include "core/devtools/layer.h"
 #include "core/emulator_settings.h"
 #include "core/file_format/psf.h"
 #include "core/file_sys/fs.h"
 #include "core/file_sys/ifile.h"
+#include "core/game_ui.h"
 #include "emulator.h"
 #include "imgui/big_picture/big_picture.h"
 #include "imgui/big_picture/imgui_impl_sdl3_big_picture.h"

@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/kernel/threads/exception.h"
 #include "common/arch.h"
 #include "common/assert.h"
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/kernel/orbis_error.h"
 #include "core/libraries/kernel/posix_error.h"
-#include "core/libraries/kernel/threads/exception.h"
 #include "core/libraries/kernel/threads/pthread.h"
 #include "core/libraries/libs.h"
 #include "core/signals.h"
@@ -17,8 +17,8 @@
 #include <csignal>
 #include <sys/ucontext.h>
 #endif
-#include <unordered_set>
 #include "exception.h"
+#include <unordered_set>
 
 namespace Libraries::Kernel {
 
@@ -542,8 +542,7 @@ SigHandler PS4_SYSV_ABI posix_signal(s32 sig, SigHandler func) {
 s32 PS4_SYSV_ABI posix_pthread_kill(PthreadT thread, s32 sig) {
     if (sig < 1 || sig > 128) {
         return POSIX_EINVAL;
-    }
-    LOG_INFO(Lib_Kernel, "Raising signal {} on thread '{}'", sig, thread->name);
+    };
     thread->QueueSignal(sig);
 
     if (!thread->IsSignalBlocked(sig)) {
@@ -552,9 +551,7 @@ s32 PS4_SYSV_ABI posix_pthread_kill(PthreadT thread, s32 sig) {
     return ORBIS_OK;
 }
 
-s32 PS4_SYSV_ABI posix_raise(s32 sig) {
-    return posix_pthread_kill(g_curthread, sig);
-}
+s32 PS4_SYSV_ABI posix_raise(s32 sig) { return posix_pthread_kill(g_curthread, sig); }
 
 void PS4_SYSV_ABI sceCallbackHandler(int sig, Siginfo* info, Ucontext* context) {
     auto const cb = sceSigactionCallbacks[sig - 1];
@@ -581,7 +578,6 @@ s32 PS4_SYSV_ABI sceKernelInstallExceptionHandler(s32 signum, OrbisKernelExcepti
         return ORBIS_KERNEL_ERROR_EAGAIN;
     }
     sceSigactionCallbacks[signum - 1] = handler;
-    LOG_INFO(Lib_Kernel, "Installing signal handler for {}", signum);
     Sigaction act = {};
     act.sa_flags = POSIX_SA_SIGINFO | POSIX_SA_RESTART;
     act.__sigaction_handler.sigaction = &sceCallbackHandler;

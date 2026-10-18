@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "common/logging/log.h"
 #include "core/libraries/ajm/ajm.h"
+#include "common/logging/log.h"
 #include "core/libraries/ajm/ajm_context.h"
 #include "core/libraries/ajm/ajm_error.h"
 #include "core/libraries/ajm/ajm_mp3.h"
@@ -39,7 +39,6 @@ u32 GetChannelMask(u32 num_channels) {
 }
 
 int PS4_SYSV_ABI sceAjmBatchCancel(const u32 context_id, const u32 batch_id) {
-    LOG_INFO(Lib_Ajm, "called context_id = {} batch_id = {}", context_id, batch_id);
 
     auto it = contexts.find(context_id);
     if (it == contexts.end()) {
@@ -94,8 +93,6 @@ void* PS4_SYSV_ABI sceAjmBatchJobRunSplitBufferRa(
 int PS4_SYSV_ABI sceAjmBatchStartBuffer(u32 context_id, u8* p_batch, u32 batch_size,
                                         const int priority, AjmBatchError* batch_error,
                                         u32* out_batch_id) {
-    LOG_TRACE(Lib_Ajm, "called context = {}, batch_size = {:#x}, priority = {}", context_id,
-              batch_size, priority);
 
     auto it = contexts.find(context_id);
     if (it == contexts.end()) {
@@ -107,8 +104,6 @@ int PS4_SYSV_ABI sceAjmBatchStartBuffer(u32 context_id, u8* p_batch, u32 batch_s
 
 int PS4_SYSV_ABI sceAjmBatchWait(const u32 context_id, const u32 batch_id, const u32 timeout,
                                  AjmBatchError* const batch_error) {
-    LOG_TRACE(Lib_Ajm, "called context = {}, batch_id = {}, timeout = {}", context_id, batch_id,
-              timeout);
 
     auto it = contexts.find(context_id);
     if (it == contexts.end()) {
@@ -134,7 +129,6 @@ int PS4_SYSV_ABI sceAjmFinalize() {
 }
 
 int PS4_SYSV_ABI sceAjmInitialize(s64 reserved, u32* p_context_id) {
-    LOG_INFO(Lib_Ajm, "called reserved = {}", reserved);
     if (p_context_id == nullptr || reserved != 0) {
         return ORBIS_AJM_ERROR_INVALID_PARAMETER;
     }
@@ -150,8 +144,6 @@ AjmCodecType PS4_SYSV_ABI sceAjmInstanceCodecType(u32 instance_id) {
 
 int PS4_SYSV_ABI sceAjmInstanceCreate(u32 context_id, AjmCodecType codec_type,
                                       AjmInstanceFlags flags, u32* out_instance) {
-    LOG_INFO(Lib_Ajm, "called context = {}, codec_type = {}, flags = {:#x}", context_id,
-             magic_enum::enum_name(codec_type), flags.raw);
 
     auto it = contexts.find(context_id);
     if (it == contexts.end()) {
@@ -162,7 +154,6 @@ int PS4_SYSV_ABI sceAjmInstanceCreate(u32 context_id, AjmCodecType codec_type,
 }
 
 int PS4_SYSV_ABI sceAjmInstanceDestroy(u32 context_id, u32 instance_id) {
-    LOG_INFO(Lib_Ajm, "called context = {}, instance = {}", context_id, instance_id);
 
     auto it = contexts.find(context_id);
     if (it == contexts.end()) {
@@ -184,18 +175,15 @@ int PS4_SYSV_ABI sceAjmInstanceSwitch() {
 
 int PS4_SYSV_ABI sceAjmMemoryRegister(u32 context_id, void* ptr, size_t num_pages) {
     // All memory is already shared with our implementation since we do not use any hardware.
-    LOG_TRACE(Lib_Ajm, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 int PS4_SYSV_ABI sceAjmMemoryUnregister(u32 context_id, void* ptr) {
     // All memory is already shared with our implementation since we do not use any hardware.
-    LOG_TRACE(Lib_Ajm, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 int PS4_SYSV_ABI sceAjmModuleRegister(u32 context_id, AjmCodecType codec_type, s64 reserved) {
-    LOG_INFO(Lib_Ajm, "called context = {}, codec_type = {}", context_id, u32(codec_type));
     if (reserved != 0) {
         return ORBIS_AJM_ERROR_INVALID_PARAMETER;
     }

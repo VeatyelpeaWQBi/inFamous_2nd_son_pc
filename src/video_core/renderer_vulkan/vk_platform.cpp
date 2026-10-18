@@ -16,13 +16,12 @@
 #include <atomic>
 #include <cstring>
 #include <filesystem>
-#include <vector>
 #include <fmt/ranges.h>
+#include <vector>
 
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "common/path_util.h"
-#include "core/benchmark_control.h"
 #include "core/emulator_settings.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
@@ -36,72 +35,10 @@
 
 namespace Vulkan {
 
-static const char* const VALIDATION_LAYER_NAME = "VK_LAYER_KHRONOS_validation";
-static const char* const CRASH_DIAGNOSTIC_LAYER_NAME = "VK_LAYER_LUNARG_crash_diagnostic";
-
 #ifdef _WIN32
 // Attribute layer-generated calls without requiring matching third-party PDBs.
-static void LogValidationCaller(const char* message_id) {
-    if (!message_id ||
-        (!std::strstr(message_id, "VkPrivateDataSlotCreateInfo") &&
-         !std::strstr(message_id, "VkSwapchainCreateInfoKHR-flags") &&
-         !std::strstr(message_id, "vkCmdPipelineBarrier-pImageMemoryBarriers-02819"))) {
-        return;
-    }
-    static std::atomic<u32> traces{};
-    if (traces.fetch_add(1, std::memory_order_relaxed) >= 4) {
-        return;
-    }
-    void* frames[16]{};
-    const auto count = CaptureStackBackTrace(1, 16, frames, nullptr);
-    for (USHORT i = 0; i < count; ++i) {
-        HMODULE module{};
-        wchar_t path[MAX_PATH]{};
-        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                  GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                              reinterpret_cast<LPCWSTR>(frames[i]), &module) &&
-            GetModuleFileNameW(module, path, MAX_PATH)) {
-            path[MAX_PATH - 1] = L'\0';
-            LOG_DEBUG(Render_Vulkan, "Validation caller {} #{}: {}+{:#x}", message_id, i,
-                      std::filesystem::path{path}.filename().string(),
-                      reinterpret_cast<uintptr_t>(frames[i]) -
-                          reinterpret_cast<uintptr_t>(module));
-        }
-    }
-}
+
 #endif
-
-static VKAPI_ATTR VkBool32 VKAPI_CALL DebugUtilsCallback(
-    vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type,
-    const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void* user_data) {
-
-    Common::Log::Level level{};
-    switch (severity) {
-    case vk::DebugUtilsMessageSeverityFlagBitsEXT::eError:
-        level = Common::Log::Level::Error;
-        break;
-    case vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning:
-        level = Common::Log::Level::Info;
-        break;
-    case vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo:
-    case vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose:
-        level = Common::Log::Level::Debug;
-        break;
-    default:
-        level = Common::Log::Level::Info;
-    }
-
-    LOG_GENERIC(Render_Vulkan, level, "{}: {}",
-                callback_data->pMessageIdName ? callback_data->pMessageIdName : "<null>",
-                callback_data->pMessage ? callback_data->pMessage : "<null>");
-
-#ifdef _WIN32
-    if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
-        LogValidationCaller(callback_data->pMessageIdName);
-    }
-#endif
-    return VK_FALSE;
-}
 
 vk::SurfaceKHR CreateSurface(vk::Instance instance, const Frontend::WindowSDL& emu_window) {
     const auto& window_info = emu_window.GetWindowInfo();
@@ -168,37 +105,6 @@ vk::SurfaceKHR CreateSurface(vk::Instance instance, const Frontend::WindowSDL& e
     return surface;
 }
 
-static auto GetLayerExtensions(std::vector<const char*>&& extensions,
-                               const std::vector<const char*>& layers) {
-    auto all_missing_vk_settings = true;
-
-    for (const auto& layer_name : layers) {
-        const auto [layer_properties_result, layer_extensions] =
-            vk::enumerateInstanceExtensionProperties(std::string(layer_name));
-        if (layer_properties_result != vk::Result::eSuccess) {
-            LOG_ERROR(Render_Vulkan, "Failed to query extension properties of {}: {}", layer_name,
-                      vk::to_string(layer_properties_result));
-        }
-        auto found = false;
-        for (const auto& extension : layer_extensions) {
-            if (extension.extensionName == std::string_view(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME)) {
-                found = true;
-                all_missing_vk_settings = false;
-                break;
-            }
-        }
-        if (!found) {
-            LOG_ERROR(Render_Vulkan, "Settings for layer {} not available.", layer_name);
-        }
-    }
-
-    if (!all_missing_vk_settings) {
-        extensions.push_back(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME);
-    }
-
-    return extensions;
-}
-
 std::vector<const char*> GetInstanceExtensions(Frontend::WindowSystemType window_type,
                                                bool enable_debug_utils) {
     const auto [properties_result, properties] = vk::enumerateInstanceExtensionProperties();
@@ -256,7 +162,6 @@ std::vector<const char*> GetInstanceExtensions(Frontend::WindowSystemType window
             });
 
         if (it == properties.end()) {
-            LOG_INFO(Render_Vulkan, "Candidate instance extension {} is not available", extension);
             return true;
         }
         return false;
@@ -265,222 +170,34 @@ std::vector<const char*> GetInstanceExtensions(Frontend::WindowSystemType window
     return extensions;
 }
 
-std::vector<const char*> GetInstanceLayers(bool enable_validation, bool enable_crash_diagnostic) {
-    const auto [properties_result, properties] = vk::enumerateInstanceLayerProperties();
-    if (properties_result != vk::Result::eSuccess || properties.empty()) {
-        LOG_ERROR(Render_Vulkan, "Failed to query layer properties: {}",
-                  vk::to_string(properties_result));
-        return {};
-    }
-
-    std::vector<const char*> layers;
-    layers.reserve(2);
-
-    if (enable_validation) {
-        layers.push_back(VALIDATION_LAYER_NAME);
-    }
-    if (enable_crash_diagnostic) {
-        layers.push_back(CRASH_DIAGNOSTIC_LAYER_NAME);
-    }
-
-    // Sanitize layer list
-    std::erase_if(layers, [&](const char* layer) -> bool {
-        const auto it = std::ranges::find_if(properties, [layer](const auto& prop) {
-            return std::strcmp(layer, prop.layerName) == 0;
-        });
-        if (it == properties.end()) {
-            LOG_ERROR(Render_Vulkan, "Requested layer {} is not available", layer);
-            return true;
-        }
-        return false;
-    });
-
-    return layers;
-}
-
-vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool enable_validation,
-                                  bool enable_crash_diagnostic) {
-    LOG_INFO(Render_Vulkan, "Creating vulkan instance");
-    Core::Benchmark::PrepareGpuDiagnostics();
-
-#if defined(__APPLE__)
-    // Initialize the environment with the path to the included ICD, so that the loader will
-    // find it.
-    static const auto icd_path = [] {
-        char path[PATH_MAX];
-        u32 length = PATH_MAX;
-        _NSGetExecutablePath(path, &length);
-        return std::filesystem::path(path).parent_path();
-    }();
-    setenv("VK_DRIVER_FILES", icd_path.c_str(), true);
-#endif
-
-    static vk::detail::DynamicLoader dl;
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(
-        dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr"));
-
-    const auto [available_version_result, available_version] =
-        VULKAN_HPP_DEFAULT_DISPATCHER.vkEnumerateInstanceVersion
-            ? vk::enumerateInstanceVersion()
-            : vk::ResultValue(vk::Result::eSuccess, VK_API_VERSION_1_0);
-    ASSERT_MSG(available_version_result == vk::Result::eSuccess,
-               "Failed to query Vulkan API version: {}", vk::to_string(available_version_result));
-    ASSERT_MSG(available_version >= TargetVulkanApiVersion,
-               "Vulkan {}.{} is required, but only {}.{} is supported by instance!",
-               VK_VERSION_MAJOR(TargetVulkanApiVersion), VK_VERSION_MINOR(TargetVulkanApiVersion),
-               VK_VERSION_MAJOR(available_version), VK_VERSION_MINOR(available_version));
-
-    const auto layers = GetInstanceLayers(enable_validation, enable_crash_diagnostic);
-    const auto extensions = GetLayerExtensions(GetInstanceExtensions(window_type, true), layers);
-
-    const vk::ApplicationInfo application_info = {
-        .pApplicationName = "shadPS4",
+vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool, bool) {
+    static vk::detail::DynamicLoader loader;
+    const auto get_proc = loader.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
+    ASSERT_MSG(get_proc != nullptr, "The system Vulkan loader is unavailable");
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(get_proc);
+    const auto [result, version] = VULKAN_HPP_DEFAULT_DISPATCHER.vkEnumerateInstanceVersion
+                                       ? vk::enumerateInstanceVersion()
+                                       : vk::ResultValue(vk::Result::eSuccess, VK_API_VERSION_1_0);
+    ASSERT_MSG(result == vk::Result::eSuccess && version >= TargetVulkanApiVersion,
+               "Vulkan 1.3 or newer is required");
+    const auto extensions = GetInstanceExtensions(window_type, false);
+    const vk::ApplicationInfo app = {
+        .pApplicationName = "inFAMOUS Second Son",
         .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
-        .pEngineName = "shadPS4 Vulkan",
+        .pEngineName = "inFAMOUS V2",
         .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-        .apiVersion = available_version,
+        .apiVersion = version,
     };
-
-    const std::string extensions_string = fmt::format("{}", fmt::join(extensions, ", "));
-    const std::string layers_string = fmt::format("{}", fmt::join(layers, ", "));
-    LOG_INFO(Render_Vulkan, "Enabled instance extensions: {}", extensions_string);
-    LOG_INFO(Render_Vulkan, "Enabled instance layers: {}", layers_string);
-
-    // Validation settings
-    vk::Bool32 enable_core = EmulatorSettings.IsVkValidationCoreEnabled() ? vk::True : vk::False;
-    vk::Bool32 enable_sync = EmulatorSettings.IsVkValidationSyncEnabled() ? vk::True : vk::False;
-    vk::Bool32 enable_gpuav = EmulatorSettings.IsVkValidationGpuEnabled() ? vk::True : vk::False;
-
-    // Crash diagnostics settings
-    static const auto crash_diagnostic_path =
-        Common::FS::GetUserPathString(Common::FS::PathType::LogDir);
-    const char* log_path = crash_diagnostic_path.c_str();
-
-    const std::array layer_setings = {
-        vk::LayerSettingEXT{
-            .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "validate_core",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_core,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "validate_sync",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_sync,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "syncval_full_validation",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_sync,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "syncval_message_extra_properties",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_sync,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "gpuav_enable",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_gpuav,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "gpuav_descriptor_checks",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_gpuav,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "gpuav_buffers_validation",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_gpuav,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "gpuav_indirect_draws_buffers",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_gpuav,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "gpuav_indirect_dispatches_buffers",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_gpuav,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "gpuav_indirect_trace_rays_buffers",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_gpuav,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = VALIDATION_LAYER_NAME,
-            .pSettingName = "gpuav_buffer_copies",
-            .type = vk::LayerSettingTypeEXT::eBool32,
-            .valueCount = 1,
-            .pValues = &enable_gpuav,
-        },
-        vk::LayerSettingEXT{
-            .pLayerName = CRASH_DIAGNOSTIC_LAYER_NAME,
-            .pSettingName = "output_path",
-            .type = vk::LayerSettingTypeEXT::eString,
-            .valueCount = 1,
-            .pValues = &log_path,
-        },
+    const vk::InstanceCreateInfo info = {
+        .pApplicationInfo = &app,
+        .enabledExtensionCount = static_cast<u32>(extensions.size()),
+        .ppEnabledExtensionNames = extensions.data(),
     };
-
-    vk::StructureChain<vk::InstanceCreateInfo, vk::LayerSettingsCreateInfoEXT> instance_ci_chain = {
-        vk::InstanceCreateInfo{
-            .pApplicationInfo = &application_info,
-            .enabledLayerCount = static_cast<u32>(layers.size()),
-            .ppEnabledLayerNames = layers.data(),
-            .enabledExtensionCount = static_cast<u32>(extensions.size()),
-            .ppEnabledExtensionNames = extensions.data(),
-        },
-        vk::LayerSettingsCreateInfoEXT{
-            .settingCount = layer_setings.size(),
-            .pSettings = layer_setings.data(),
-        },
-    };
-
-    auto [instance_result, instance] = vk::createInstanceUnique(instance_ci_chain.get());
-    ASSERT_MSG(instance_result == vk::Result::eSuccess, "Failed to create instance: {}",
-               vk::to_string(instance_result));
-
+    auto [created, instance] = vk::createInstanceUnique(info);
+    ASSERT_MSG(created == vk::Result::eSuccess, "Failed to create Vulkan instance: {}",
+               vk::to_string(created));
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*instance);
-
     return std::move(instance);
-}
-
-vk::UniqueDebugUtilsMessengerEXT CreateDebugCallback(vk::Instance instance) {
-    const vk::DebugUtilsMessengerCreateInfoEXT msg_ci = {
-        .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
-                           vk::DebugUtilsMessageSeverityFlagBitsEXT::eError |
-                           vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-                           vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose,
-        .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-                       vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-                       vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
-        .pfnUserCallback = DebugUtilsCallback,
-    };
-    auto [messenger_result, messenger] = instance.createDebugUtilsMessengerEXTUnique(msg_ci);
-    ASSERT_MSG(messenger_result == vk::Result::eSuccess, "Failed to create debug callback: {}",
-               vk::to_string(messenger_result));
-    return std::move(messenger);
 }
 
 } // namespace Vulkan

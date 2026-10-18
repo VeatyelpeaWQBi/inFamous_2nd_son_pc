@@ -7,11 +7,11 @@
 #include <coroutine>
 #include <exception>
 #include <mutex>
+#include <queue>
 #include <semaphore>
 #include <span>
 #include <thread>
 #include <vector>
-#include <queue>
 
 #include "common/assert.h"
 #include "common/slot_vector.h"
@@ -70,7 +70,7 @@ struct Liverpool {
     std::array<CbDbExtent, NUM_COLOR_BUFFERS> last_cb_extent{};
     CbDbExtent last_db_extent{};
 
-public:
+  public:
     explicit Liverpool();
     ~Liverpool();
 
@@ -86,35 +86,23 @@ public:
         submit_cv.wait(lk, [this] { return num_submits == 0; });
     }
 
-    bool IsGpuIdle() const {
-        return num_submits == 0;
-    }
+    bool IsGpuIdle() const { return num_submits == 0; }
 
-    void SetVoPort(Libraries::VideoOut::VideoOutPort* port) {
-        vo_port = port;
-    }
+    void SetVoPort(Libraries::VideoOut::VideoOutPort* port) { vo_port = port; }
 
-    void BindRasterizer(Vulkan::Rasterizer* rasterizer_) {
-        rasterizer = rasterizer_;
-    }
+    void BindRasterizer(Vulkan::Rasterizer* rasterizer_) { rasterizer = rasterizer_; }
 
     /// Starts the scout thread (Tuning::scout), which reads the graphics submissions ahead of
     /// the command processor and precomputes the draws for the client.
     void StartScout(ScoutClient& client);
 
     /// Stops it (before the client goes away).
-    void StopScout() {
-        scout.reset();
-    }
+    void StopScout() { scout.reset(); }
 
-    const Scout* GetScout() const noexcept {
-        return scout.get();
-    }
+    const Scout* GetScout() const noexcept { return scout.get(); }
 
     /// The scout entry of the draw the command processor is processing, null when none.
-    const ScoutDraw* CurrentScoutDraw() const noexcept {
-        return current_scout_draw;
-    }
+    const ScoutDraw* CurrentScoutDraw() const noexcept { return current_scout_draw; }
 
     /// The scout entry of the draw packet after the current one, when already published (its
     /// lookups can be prefetched a draw ahead), null when none.
@@ -124,12 +112,9 @@ public:
 
     /// Context, config and uconfig register writes that changed a value so far (command
     /// processor thread).
-    u64 ContextRegChanges() const noexcept {
-        return context_reg_changes;
-    }
+    u64 ContextRegChanges() const noexcept { return context_reg_changes; }
 
-    template <bool wait_done = false>
-    void SendCommand(auto&& func) {
+    template <bool wait_done = false> void SendCommand(auto&& func) {
         if constexpr (wait_done) {
             std::binary_semaphore sem{0};
             {
@@ -158,14 +143,10 @@ public:
         gfx_queue.dcb_buffer.reserve(GfxReservedSize);
     }
 
-    inline ComputeProgram& GetCsRegs() {
-        return mapped_queues[curr_qid].cs_state;
-    }
+    inline ComputeProgram& GetCsRegs() { return mapped_queues[curr_qid].cs_state; }
 
     /// The queue whose commands the command processor is processing: 0 graphics, 1+ compute.
-    [[nodiscard]] s32 CurrentQueue() const noexcept {
-        return curr_qid;
-    }
+    [[nodiscard]] s32 CurrentQueue() const noexcept { return curr_qid; }
 
     struct AscQueueInfo {
         static constexpr size_t Pm4BufferSize = 1024;
@@ -178,17 +159,13 @@ public:
     };
     Common::SlotVector<AscQueueInfo> asc_queues{};
 
-    std::thread::id GetGpuCommandProcessorThread() {
-        return gpu_id;
-    }
+    std::thread::id GetGpuCommandProcessorThread() { return gpu_id; }
 
 #ifdef __linux__
-    u32 GetGpuCommandProcessorThreadId() {
-        return gpu_tid;
-    }
+    u32 GetGpuCommandProcessorThreadId() { return gpu_tid; }
 #endif
 
-private:
+  private:
     struct Task {
         struct promise_type {
             auto get_return_object() {
@@ -200,9 +177,7 @@ private:
                 // We want the task to be suspended at start
                 return {};
             }
-            static constexpr std::suspend_always final_suspend() noexcept {
-                return {};
-            }
+            static constexpr std::suspend_always final_suspend() noexcept { return {}; }
             void unhandled_exception() {
                 try {
                     std::rethrow_exception(std::current_exception());
@@ -212,9 +187,7 @@ private:
             }
             void return_void() {}
             struct empty {};
-            std::suspend_always yield_value(empty&&) {
-                return {};
-            }
+            std::suspend_always yield_value(empty&&) { return {}; }
         };
 
         using Handle = std::coroutine_handle<promise_type>;
@@ -229,7 +202,7 @@ private:
     Task ProcessCeUpdate(std::span<const u32> ccb);
     /// submit_ns: when the guest submitted the work (top level submissions only, for statistics).
     template <bool is_indirect = false>
-    Task ProcessCompute(std::span<const u32> acb, u32 vqid, u64 submit_ns = 0);
+    Task ProcessCompute(std::span<const u32> acb, u32 vqid);
 
     void ProcessCommands();
     void Process(std::stop_token stoken);
@@ -288,7 +261,6 @@ private:
 
     Vulkan::Rasterizer* rasterizer{};
     Libraries::VideoOut::VideoOutPort* vo_port{};
-    const bool guest_markers_enabled;
     std::jthread process_thread{};
     std::atomic<u32> num_submits{};
     /// Asynchronous compute submissions not fully processed yet. The PS4 runs them alongside the

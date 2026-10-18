@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/videoout/video_out.h"
 #include "common/assert.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
@@ -8,7 +9,6 @@
 #include "core/libraries/libs.h"
 #include "core/libraries/system/userservice.h"
 #include "core/libraries/videoout/driver.h"
-#include "core/libraries/videoout/video_out.h"
 #include "core/libraries/videoout/videoout_error.h"
 #include "core/platform.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
@@ -22,11 +22,6 @@ static std::unique_ptr<VideoOutDriver> driver;
 void PS4_SYSV_ABI sceVideoOutSetBufferAttribute(BufferAttribute* attribute, PixelFormat pixelFormat,
                                                 u32 tilingMode, u32 aspectRatio, u32 width,
                                                 u32 height, u32 pitchInPixel) {
-    LOG_INFO(Lib_VideoOut,
-             "pixelFormat = {}, tilingMode = {}, aspectRatio = {}, width = {}, height = {}, "
-             "pitchInPixel = {}",
-             GetPixelFormatString(pixelFormat), tilingMode, aspectRatio, width, height,
-             pitchInPixel);
 
     std::memset(attribute, 0, sizeof(BufferAttribute));
     attribute->pixel_format = static_cast<PixelFormat>(pixelFormat);
@@ -39,7 +34,6 @@ void PS4_SYSV_ABI sceVideoOutSetBufferAttribute(BufferAttribute* attribute, Pixe
 }
 
 s32 PS4_SYSV_ABI sceVideoOutAddFlipEvent(Kernel::OrbisKernelEqueue eq, s32 handle, void* udata) {
-    LOG_INFO(Lib_VideoOut, "handle = {}", handle);
 
     auto* port = driver->GetPort(handle);
     if (port == nullptr) {
@@ -81,7 +75,6 @@ s32 PS4_SYSV_ABI sceVideoOutDeleteFlipEvent(Kernel::OrbisKernelEqueue eq, s32 ha
 }
 
 s32 PS4_SYSV_ABI sceVideoOutAddVblankEvent(Kernel::OrbisKernelEqueue eq, s32 handle, void* udata) {
-    LOG_INFO(Lib_VideoOut, "handle = {}", handle);
 
     auto* port = driver->GetPort(handle);
     if (port == nullptr) {
@@ -139,13 +132,11 @@ s32 PS4_SYSV_ABI sceVideoOutRegisterBuffers(s32 handle, s32 startIndex, void* co
 }
 
 s32 PS4_SYSV_ABI sceVideoOutSetFlipRate(s32 handle, s32 rate) {
-    LOG_TRACE(Lib_VideoOut, "called");
     driver->GetPort(handle)->flip_rate = rate;
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceVideoOutIsFlipPending(s32 handle) {
-    LOG_TRACE(Lib_VideoOut, "called");
     auto* port = driver->GetPort(handle);
     std::unique_lock lock{port->port_mutex};
     s32 pending = port->flip_status.flip_pending_num;
@@ -173,8 +164,7 @@ s32 PS4_SYSV_ABI sceVideoOutSubmitFlip(s32 handle, s32 bufferIndex, s32 flipMode
         return ORBIS_VIDEO_OUT_ERROR_INVALID_INDEX;
     }
 
-    LOG_DEBUG(Lib_VideoOut, "bufferIndex = {}, flipMode = {}, flipArg = {}", bufferIndex, flipMode,
-              flipArg);
+    ;
 
     if (!driver->SubmitFlip(port, bufferIndex, flipArg)) {
         LOG_ERROR(Lib_VideoOut, "Flip queue is full");
@@ -258,12 +248,7 @@ s32 PS4_SYSV_ABI sceVideoOutGetFlipStatus(s32 handle, FlipStatus* status) {
         *status = port->flip_status;
     }
 
-    LOG_TRACE(Lib_VideoOut,
-              "count = {}, processTime = {}, tsc = {}, submitTsc = {}, flipArg = {}, gcQueueNum = "
-              "{}, flipPendingNum = {}, currentBuffer = {}",
-              status->count, status->process_time, status->tsc, status->submit_tsc,
-              status->flip_arg, status->gc_queue_num, status->flip_pending_num,
-              status->current_buffer);
+    ;
 
     return ORBIS_OK;
 }
@@ -285,7 +270,6 @@ s32 PS4_SYSV_ABI sceVideoOutGetVblankStatus(int handle, SceVideoOutVblankStatus*
 }
 
 s32 PS4_SYSV_ABI sceVideoOutGetResolutionStatus(s32 handle, SceVideoOutResolutionStatus* status) {
-    LOG_INFO(Lib_VideoOut, "called");
     auto* port = driver->GetPort(handle);
     if (!port || !port->is_open) {
         return ORBIS_VIDEO_OUT_ERROR_INVALID_HANDLE;
@@ -297,7 +281,6 @@ s32 PS4_SYSV_ABI sceVideoOutGetResolutionStatus(s32 handle, SceVideoOutResolutio
 
 s32 PS4_SYSV_ABI sceVideoOutOpen(Libraries::UserService::OrbisUserServiceUserId userId, s32 busType,
                                  s32 index, const void* param) {
-    LOG_INFO(Lib_VideoOut, "called");
     ASSERT(busType == SCE_VIDEO_OUT_BUS_TYPE_MAIN);
 
     if (index != 0) {

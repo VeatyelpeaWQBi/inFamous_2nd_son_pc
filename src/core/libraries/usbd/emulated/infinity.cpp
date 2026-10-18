@@ -1,9 +1,9 @@
 //  SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 //  SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "infinity.h"
 #include <bit>
 #include <mutex>
-#include "infinity.h"
 
 namespace Libraries::Usbd {
 
@@ -162,8 +162,9 @@ void InfinityBase::GetFigureIdentifier(u8 fig_num, u8 sequence, std::array<u8, 3
 }
 
 std::optional<std::array<u8, 32>> InfinityBase::PopAddedRemovedResponse() {
-    if (m_figure_added_removed_responses.empty())
+    if (m_figure_added_removed_responses.empty()) {
         return std::nullopt;
+    }
 
     std::array<u8, 32> response = m_figure_added_removed_responses.front();
     m_figure_added_removed_responses.pop();
@@ -280,8 +281,8 @@ libusb_endpoint_descriptor* InfinityBackend::FillEndpointDescriptorPair() {
     return m_endpoint_descriptors.data();
 }
 
-libusb_interface_descriptor* InfinityBackend::FillInterfaceDescriptor(
-    libusb_endpoint_descriptor* descs) {
+libusb_interface_descriptor*
+InfinityBackend::FillInterfaceDescriptor(libusb_endpoint_descriptor* descs) {
     m_interface_descriptors[0].endpoint = descs;
     return m_interface_descriptors.data();
 }
@@ -311,7 +312,6 @@ libusb_transfer_status InfinityBackend::HandleAsyncTransfer(libusb_transfer* tra
     case 0x01: {
         const u8 command = transfer->buffer[2];
         const u8 sequence = transfer->buffer[3];
-        LOG_INFO(Lib_Usbd, "Infinity Backend Transfer command: {:x}", command);
 
         std::array<u8, 32> q_result{};
 
@@ -383,8 +383,9 @@ libusb_transfer_status InfinityBackend::HandleAsyncTransfer(libusb_transfer* tra
 }
 
 void InfinityFigure::Save() {
-    if (!infFile.IsOpen())
+    if (!infFile.IsOpen()) {
         return;
+    }
 
     infFile.Seek(0);
     infFile.Write(data);

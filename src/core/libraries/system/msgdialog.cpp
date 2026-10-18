@@ -23,7 +23,6 @@ static DialogResult g_result{};
 static MsgDialogUi g_msg_dialog_ui;
 
 Error PS4_SYSV_ABI sceMsgDialogClose() {
-    LOG_DEBUG(Lib_MsgDlg, "called");
     if (g_status != Status::RUNNING) {
         return Error::NOT_RUNNING;
     }
@@ -32,7 +31,6 @@ Error PS4_SYSV_ABI sceMsgDialogClose() {
 }
 
 Error PS4_SYSV_ABI sceMsgDialogGetResult(DialogResult* result) {
-    LOG_DEBUG(Lib_MsgDlg, "called");
     if (g_status != Status::FINISHED) {
         return Error::NOT_FINISHED;
     }
@@ -44,12 +42,10 @@ Error PS4_SYSV_ABI sceMsgDialogGetResult(DialogResult* result) {
 }
 
 Status PS4_SYSV_ABI sceMsgDialogGetStatus() {
-    LOG_TRACE(Lib_MsgDlg, "called status={}", magic_enum::enum_name(g_status));
     return g_status;
 }
 
 Error PS4_SYSV_ABI sceMsgDialogInitialize() {
-    LOG_DEBUG(Lib_MsgDlg, "called");
     if (!CommonDialog::g_isInitialized) {
         return Error::NOT_SYSTEM_INITIALIZED;
     }
@@ -67,14 +63,11 @@ Error PS4_SYSV_ABI sceMsgDialogInitialize() {
 
 Error PS4_SYSV_ABI sceMsgDialogOpen(const OrbisParam* param) {
     if (g_status != Status::INITIALIZED && g_status != Status::FINISHED) {
-        LOG_INFO(Lib_MsgDlg, "called without initialize");
         return Error::INVALID_STATE;
     }
     if (param == nullptr) {
-        LOG_DEBUG(Lib_MsgDlg, "called param:(NULL)");
         return Error::ARG_NULL;
-    }
-    LOG_DEBUG(Lib_MsgDlg, "called param->mode: {}", magic_enum::enum_name(param->mode));
+    };
     ASSERT(param->size == sizeof(OrbisParam));
     ASSERT(param->baseParam.size == sizeof(CommonDialog::BaseParam));
     g_result = {};
@@ -85,7 +78,6 @@ Error PS4_SYSV_ABI sceMsgDialogOpen(const OrbisParam* param) {
 }
 
 Error PS4_SYSV_ABI sceMsgDialogProgressBarInc(OrbisMsgDialogProgressBarTarget target, u32 delta) {
-    LOG_DEBUG(Lib_MsgDlg, "called");
     if (g_status != Status::RUNNING) {
         return Error::NOT_RUNNING;
     }
@@ -101,7 +93,6 @@ Error PS4_SYSV_ABI sceMsgDialogProgressBarInc(OrbisMsgDialogProgressBarTarget ta
 
 Error PS4_SYSV_ABI sceMsgDialogProgressBarSetMsg(OrbisMsgDialogProgressBarTarget target,
                                                  const char* msg) {
-    LOG_DEBUG(Lib_MsgDlg, "called");
     if (g_status != Status::RUNNING) {
         return Error::NOT_RUNNING;
     }
@@ -117,7 +108,6 @@ Error PS4_SYSV_ABI sceMsgDialogProgressBarSetMsg(OrbisMsgDialogProgressBarTarget
 
 Error PS4_SYSV_ABI sceMsgDialogProgressBarSetValue(OrbisMsgDialogProgressBarTarget target,
                                                    u32 value) {
-    LOG_DEBUG(Lib_MsgDlg, "called");
     if (g_status != Status::RUNNING) {
         return Error::NOT_RUNNING;
     }
@@ -132,7 +122,6 @@ Error PS4_SYSV_ABI sceMsgDialogProgressBarSetValue(OrbisMsgDialogProgressBarTarg
 }
 
 Error PS4_SYSV_ABI sceMsgDialogTerminate() {
-    LOG_DEBUG(Lib_MsgDlg, "called");
     if (g_status == Status::RUNNING) {
         sceMsgDialogClose();
     }
@@ -145,7 +134,6 @@ Error PS4_SYSV_ABI sceMsgDialogTerminate() {
 }
 
 Status PS4_SYSV_ABI sceMsgDialogUpdateStatus() {
-    LOG_TRACE(Lib_MsgDlg, "called status={}", magic_enum::enum_name(g_status));
     return g_status;
 }
 

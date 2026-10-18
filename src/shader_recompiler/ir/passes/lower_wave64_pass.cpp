@@ -155,7 +155,6 @@ void LowerWave64BallotPass(IR::Program& program, const RuntimeInfo& runtime_info
         scratch_base + scratch_size - runtime_info.hw.cs.shared_memory_size;
 
     for (IR::Inst* inst : worklist) {
-        LOG_INFO(Render_Recompiler, "Lowering {} instruction for wave64", inst->GetOpcode());
         IR::IREmitter ir{*inst->GetParent(), IR::Block::InstructionList::s_iterator_to(*inst)};
         const IR::U32 invocation_index = ir.GetAttributeU32(IR::Attribute::LocalInvocationIndex);
         const IR::U32 subgroup_id = ir.ShiftRightLogical(invocation_index, ir.Imm32(5));

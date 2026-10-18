@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
-#include <png.h>
+#include "core/libraries/libpng/pngenc.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
-#include "core/libraries/libpng/pngenc.h"
 #include "core/libraries/libs.h"
+#include <algorithm>
+#include <png.h>
 
 #include "pngenc_error.h"
 
@@ -31,16 +31,21 @@ static inline int MapPngFilter(u16 filter) {
 
     int f = 0;
 
-    if (filter & (u16)OrbisPngEncFilterType::None)
+    if (filter & (u16)OrbisPngEncFilterType::None) {
         f |= PNG_FILTER_NONE;
-    if (filter & (u16)OrbisPngEncFilterType::Sub)
+    }
+    if (filter & (u16)OrbisPngEncFilterType::Sub) {
         f |= PNG_FILTER_SUB;
-    if (filter & (u16)OrbisPngEncFilterType::Up)
+    }
+    if (filter & (u16)OrbisPngEncFilterType::Up) {
         f |= PNG_FILTER_UP;
-    if (filter & (u16)OrbisPngEncFilterType::Average)
+    }
+    if (filter & (u16)OrbisPngEncFilterType::Average) {
         f |= PNG_FILTER_AVG;
-    if (filter & (u16)OrbisPngEncFilterType::Paeth)
+    }
+    if (filter & (u16)OrbisPngEncFilterType::Paeth) {
         f |= PNG_FILTER_PAETH;
+    }
 
     return f;
 }
@@ -90,8 +95,9 @@ s32 PS4_SYSV_ABI scePngEncCreate(const OrbisPngEncCreateParam* param, void* memo
     pngh->png_ptr =
         png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, PngEncError, PngEncWarning);
 
-    if (pngh->png_ptr == nullptr)
+    if (pngh->png_ptr == nullptr) {
         return ORBIS_PNG_ENC_ERROR_FATAL;
+    }
 
     pngh->info_ptr = png_create_info_struct(pngh->png_ptr);
     if (pngh->info_ptr == nullptr) {
@@ -112,8 +118,6 @@ s32 PS4_SYSV_ABI scePngEncDelete(OrbisPngEncHandle handle) {
 
 s32 PS4_SYSV_ABI scePngEncEncode(OrbisPngEncHandle handle, const OrbisPngEncEncodeParam* param,
                                  OrbisPngEncOutputInfo* outputInfo) {
-    LOG_TRACE(Lib_Png, "called png addr = {}, image addr = {}, image size = {}",
-              (void*)param->png_mem_addr, (void*)param->image_mem_addr, param->image_mem_size);
 
     if (handle == nullptr) {
         LOG_ERROR(Lib_Png, "Invalid handle");

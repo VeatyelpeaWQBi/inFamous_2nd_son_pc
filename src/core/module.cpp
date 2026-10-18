@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <fmt/format.h>
+#include "core/module.h"
 #include "common/alignment.h"
 #include "common/arch.h"
 #include "common/assert.h"
@@ -14,8 +14,8 @@
 #include "core/libraries/error_codes.h"
 #include "core/loader/dwarf.h"
 #include "core/memory.h"
-#include "core/module.h"
 #include "core/tls.h"
+#include <fmt/format.h>
 
 namespace Core {
 
@@ -100,7 +100,6 @@ Module::Module(Core::MemoryManager* memory_, const std::filesystem::path& file_,
 Module::~Module() = default;
 
 s32 Module::Start(u64 args, const void* argp, void* param) {
-    LOG_INFO(Core_Linker, "Module started : {}", name);
     const VAddr addr = dynamic_info.init_virtual_addr + GetBaseAddress();
     return reinterpret_cast<EntryFunc>(addr)(args, argp, param);
 }
@@ -126,7 +125,6 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
         memory->MapMemory(out_addr, load_base, aligned_base_size + TrampolineSize,
                           MemoryProt::NoAccess, MemoryMapFlags::NoFlags, VMAType::Reserved, name);
     ASSERT_MSG(result == ORBIS_OK, "Failed to reserve memory for module {}", name);
-    LOG_INFO(Core_Linker, "Loading module {} to {}", name, fmt::ptr(*out_addr));
 
 #ifdef ARCH_X86_64
     // Initialize trampoline generator.
@@ -139,10 +137,7 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
     RegisterPatchModule(*out_addr, aligned_base_size, trampoline_addr, TrampolineSize);
 #endif
 
-    LOG_INFO(Core_Linker, "======== Load Module to Memory ========");
-    LOG_INFO(Core_Linker, "base_virtual_addr ......: {:#018x}", base_virtual_addr);
-    LOG_INFO(Core_Linker, "base_size ..............: {:#018x}", base_size);
-    LOG_INFO(Core_Linker, "aligned_base_size ......: {:#018x}", aligned_base_size);
+    ;
 
     const auto add_segment = [this](const elf_program_header& phdr, bool do_map = true) {
         const VAddr segment_vaddr = base_virtual_addr + phdr.p_vaddr;
@@ -200,11 +195,6 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
             const u64 segment_file_size = elf_pheader[i].p_filesz;
             const u64 segment_memory_size = GetAlignedSize(elf_pheader[i]);
             const auto segment_mode = elf.ElfPheaderFlagsStr(elf_pheader[i].p_flags);
-            LOG_INFO(Core_Linker, "program header = [{}] type = {}", i, header_type);
-            LOG_INFO(Core_Linker, "segment_addr ..........: {:#018x}", segment_addr);
-            LOG_INFO(Core_Linker, "segment_file_size .....: {:#018x}", segment_file_size);
-            LOG_INFO(Core_Linker, "segment_memory_size ...: {:#018x}", segment_memory_size);
-            LOG_INFO(Core_Linker, "segment_mode ..........: {}", segment_mode);
 
             add_segment(elf_pheader[i]);
 #ifdef ARCH_X86_64
@@ -245,8 +235,6 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
             tls.image_virtual_addr = elf_pheader[i].p_vaddr + base_virtual_addr;
             tls.image_size = GetAlignedSize(elf_pheader[i]);
             tls.modid = ++max_tls_index;
-            LOG_INFO(Core_Linker, "TLS virtual address = {:#x}", tls.image_virtual_addr);
-            LOG_INFO(Core_Linker, "TLS image size      = {}", tls.image_size);
             break;
         case PT_SCE_PROCPARAM:
             proc_param_virtual_addr = elf_pheader[i].p_vaddr + base_virtual_addr;
@@ -256,7 +244,7 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
         case PT_SCE_LIBVERSION:
             // The emulator resolves imports itself. Interpreter names, comments and
             // library-version metadata do not describe segments that need loading.
-            LOG_DEBUG(Core_Linker, "Non-loadable program header: {}", header_type);
+            ;
             break;
         case PT_GNU_EH_FRAME: {
             eh_frame_hdr_addr = elf_pheader[i].p_vaddr;
@@ -304,22 +292,6 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
             unrelocatable_instruction_count += result.unrelocatable_memory_instruction_count;
             unsupported_cpu_patch_instruction_count +=
                 result.unsupported_cpu_patch_instruction_count;
-            LOG_DEBUG(
-                Core_Linker,
-                "Windows guest red-zone static patching for {}: {} functions, {} instructions, "
-                "{} red-zone functions, {}/{} memory instructions patched "
-                "({} short, {} stack-dependent, {} control-flow, {} unrelocatable), "
-                "{}/{} short CPU patches applied ({} unsupported), {} indirect red-zone "
-                "functions",
-                name, result.function_count, result.instruction_count,
-                result.red_zone_function_count, result.patched_memory_instruction_count,
-                result.memory_instruction_count, result.short_memory_instruction_count,
-                result.stack_dependent_memory_instruction_count,
-                result.control_flow_memory_instruction_count,
-                result.unrelocatable_memory_instruction_count,
-                result.patched_cpu_patch_instruction_count, result.cpu_patch_instruction_count,
-                result.unsupported_cpu_patch_instruction_count,
-                result.indirect_red_zone_function_count);
         }
         if (!executable_segments.empty() && analyzed_function_count == 0) {
             LOG_WARNING(Core_Linker,
@@ -341,7 +313,6 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
 #endif
 
     const VAddr entry_addr = base_virtual_addr + elf.GetElfEntry();
-    LOG_INFO(Core_Linker, "program entry addr ..........: {:#018x}", entry_addr);
 
     if (MemoryPatcher::g_eboot_address == 0) {
         // TODO: Come up with a more reliable way to detect the main executable.
@@ -482,14 +453,13 @@ void Module::LoadDynamicInfo() {
             // the given app. How exactly this is generated isn't known, however it is not necessary
             // to have a valid fingerprint. While an invalid fingerprint will cause a warning to be
             // printed to the kernel log, the ELF will still load and run.
-            LOG_INFO(Core_Linker, "DT_SCE_FINGERPRINT value = {:#018x}", dyn->d_un.d_val);
+            ;
             std::memcpy(info.fingerprint.data(), &dyn->d_un.d_val, sizeof(SCE_DBG_NUM_FINGERPRINT));
             break;
         case DT_SCE_IMPORT_LIB_ATTR:
             // The upper 32-bits should contain the module index multiplied by 0x10000. The lower
             // 32-bits should be a constant 0x9.
-            LOG_INFO(Core_Linker, "unsupported DT_SCE_IMPORT_LIB_ATTR value = ......: {:#018x}",
-                     dyn->d_un.d_val);
+            ;
             break;
         case DT_SCE_ORIGINAL_FILENAME:
             dynamic_info.filename = dynamic_info.str_table + dyn->d_un.d_val;
@@ -503,9 +473,7 @@ void Module::LoadDynamicInfo() {
             full_name.copy(this->info.name.data(), full_name.size());
             break;
         };
-        case DT_SCE_MODULE_ATTR:
-            LOG_INFO(Core_Linker, "unsupported DT_SCE_MODULE_ATTR value = ..........: {:#018x}",
-                     dyn->d_un.d_val);
+        case DT_SCE_MODULE_ATTR:;
             break;
         case DT_SCE_EXPORT_LIB: {
             LibraryInfo& info = dynamic_info.export_libs.emplace_back();
@@ -514,8 +482,7 @@ void Module::LoadDynamicInfo() {
             info.enc_id = EncodeId(info.id);
             break;
         }
-        default:
-            LOG_INFO(Core_Linker, "unsupported dynamic tag ..........: {:#018x}", dyn->d_tag);
+        default:;
         }
     }
     const u32 relabits_num = dynamic_info.relocation_table_size / sizeof(elf_relocation) +
@@ -527,7 +494,6 @@ void Module::LoadSymbols() {
     const auto symbol_database = [this](Loader::SymbolsResolver& symbol, bool export_func) {
         if (!dynamic_info.symbol_table || !dynamic_info.str_table ||
             dynamic_info.symbol_table_total_size == 0) {
-            LOG_INFO(Core_Linker, "Symbol table not found!");
             return;
         }
         for (auto* sym = dynamic_info.symbol_table;

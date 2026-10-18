@@ -1,21 +1,21 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <map>
-#include <mutex>
-#include <shared_mutex>
-#include <fmt/format.h>
+#include "core/address_space.h"
 #include "common/alignment.h"
 #include "common/arch.h"
 #include "common/assert.h"
 #include "common/elf_info.h"
 #include "common/error.h"
-#include "common/perf_stats.h"
-#include "core/address_space.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/kernel/memory.h"
 #include "core/memory.h"
+#include "core/runtime_policy.h"
 #include "libraries/error_codes.h"
+#include <fmt/format.h>
+#include <map>
+#include <mutex>
+#include <shared_mutex>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -518,7 +518,7 @@ struct AddressSpace::Impl {
         // those of a same page are ordered by the page locks of the callers (PageManager).
         std::unique_lock<std::shared_mutex> exclusive_lock{mutex, std::defer_lock};
         std::shared_lock<std::shared_mutex> shared_lock{mutex, std::defer_lock};
-        if (Common::Perf::GetTuning().parallel_protect.load(std::memory_order_relaxed)) {
+        if (Core::Runtime::GetPolicy().parallel_protect) {
             shared_lock.lock();
         } else {
             exclusive_lock.lock();
@@ -697,14 +697,7 @@ struct AddressSpace::Impl {
             throw std::bad_alloc{};
         }
 
-        LOG_INFO(Kernel_Vmm, "System managed virtual memory region: {} - {}",
-                 fmt::ptr(system_managed_base),
-                 fmt::ptr(system_managed_base + system_managed_size - 1));
-        LOG_INFO(Kernel_Vmm, "System reserved virtual memory region: {} - {}",
-                 fmt::ptr(system_reserved_base),
-                 fmt::ptr(system_reserved_base + system_reserved_size - 1));
-        LOG_INFO(Kernel_Vmm, "User virtual memory region: {} - {}", fmt::ptr(user_base),
-                 fmt::ptr(user_base + user_size - 1));
+        ;
 
         const VAddr system_managed_addr = reinterpret_cast<VAddr>(system_managed_base);
         const VAddr system_reserved_addr = reinterpret_cast<VAddr>(system_reserved_base);

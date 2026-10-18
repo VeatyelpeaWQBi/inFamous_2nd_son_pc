@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/move/move.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
-#include "core/libraries/move/move.h"
 #include "core/libraries/move/move_error.h"
 #include "move.h"
 
@@ -23,7 +23,6 @@ s32 PS4_SYSV_ABI sceMoveInit() {
 
 s32 PS4_SYSV_ABI sceMoveOpen(Libraries::UserService::OrbisUserServiceUserId user_id, s32 type,
                              s32 index) {
-    LOG_DEBUG(Lib_Move, "called");
     if (!g_library_initialized) {
         return ORBIS_MOVE_ERROR_NOT_INIT;
     }
@@ -34,7 +33,6 @@ s32 PS4_SYSV_ABI sceMoveOpen(Libraries::UserService::OrbisUserServiceUserId user
 }
 
 s32 PS4_SYSV_ABI sceMoveGetDeviceInfo(s32 handle, OrbisMoveDeviceInfo* info) {
-    LOG_TRACE(Lib_Move, "called");
     if (!g_library_initialized) {
         return ORBIS_MOVE_ERROR_NOT_INIT;
     }
@@ -45,7 +43,6 @@ s32 PS4_SYSV_ABI sceMoveGetDeviceInfo(s32 handle, OrbisMoveDeviceInfo* info) {
 }
 
 s32 PS4_SYSV_ABI sceMoveReadStateLatest(s32 handle, OrbisMoveData* data) {
-    LOG_TRACE(Lib_Move, "(called");
     if (!g_library_initialized) {
         return ORBIS_MOVE_ERROR_NOT_INIT;
     }
@@ -57,7 +54,6 @@ s32 PS4_SYSV_ABI sceMoveReadStateLatest(s32 handle, OrbisMoveData* data) {
 
 s32 PS4_SYSV_ABI sceMoveReadStateRecent(s32 handle, s64 timestamp, OrbisMoveData* data,
                                         s32* out_count) {
-    LOG_TRACE(Lib_Move, "called");
     if (!g_library_initialized) {
         return ORBIS_MOVE_ERROR_NOT_INIT;
     }
@@ -68,7 +64,6 @@ s32 PS4_SYSV_ABI sceMoveReadStateRecent(s32 handle, s64 timestamp, OrbisMoveData
 }
 
 s32 PS4_SYSV_ABI sceMoveGetExtensionPortInfo(s32 handle, void* data) {
-    LOG_TRACE(Lib_Move, "called");
     if (!g_library_initialized) {
         return ORBIS_MOVE_ERROR_NOT_INIT;
     }
@@ -79,7 +74,6 @@ s32 PS4_SYSV_ABI sceMoveGetExtensionPortInfo(s32 handle, void* data) {
 }
 
 s32 PS4_SYSV_ABI sceMoveSetVibration(s32 handle, u8 intensity) {
-    LOG_TRACE(Lib_Move, "called");
     if (!g_library_initialized) {
         return ORBIS_MOVE_ERROR_NOT_INIT;
     }
@@ -87,7 +81,6 @@ s32 PS4_SYSV_ABI sceMoveSetVibration(s32 handle, u8 intensity) {
 }
 
 s32 PS4_SYSV_ABI sceMoveSetLightSphere(s32 handle, u8 red, u8 green, u8 blue) {
-    LOG_TRACE(Lib_Move, "called");
     if (!g_library_initialized) {
         return ORBIS_MOVE_ERROR_NOT_INIT;
     }
@@ -95,7 +88,6 @@ s32 PS4_SYSV_ABI sceMoveSetLightSphere(s32 handle, u8 red, u8 green, u8 blue) {
 }
 
 s32 PS4_SYSV_ABI sceMoveResetLightSphere(s32 handle) {
-    LOG_TRACE(Lib_Move, "called");
     if (!g_library_initialized) {
         return ORBIS_MOVE_ERROR_NOT_INIT;
     }
@@ -104,7 +96,6 @@ s32 PS4_SYSV_ABI sceMoveResetLightSphere(s32 handle) {
 }
 
 s32 PS4_SYSV_ABI sceMoveClose(s32 handle) {
-    LOG_DEBUG(Lib_Move, "called");
     if (!g_library_initialized) {
         return ORBIS_MOVE_ERROR_NOT_INIT;
     }
@@ -112,7 +103,6 @@ s32 PS4_SYSV_ABI sceMoveClose(s32 handle) {
 }
 
 s32 PS4_SYSV_ABI sceMoveTerm() {
-    LOG_DEBUG(Lib_Move, "called");
     if (!g_library_initialized) {
         return ORBIS_MOVE_ERROR_NOT_INIT;
     }

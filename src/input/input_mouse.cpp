@@ -29,12 +29,12 @@ static bool IsCapturedMouseButton(const InputEvent& event) {
 
 static void ForgetCapturedMouseButtons() {
     const auto mode = mouse_input.Mode();
-    if (mode != MouseMode::Gyro && mode != MouseMode::Touchpad) return;
+    if (mode != MouseMode::Gyro && mode != MouseMode::Touchpad) {
+        return;
+    }
     // Require a new press after releasing capture; do not reactivate a held mouse
     // button through its ordinary game binding. Physical gamepad inputs stay intact.
-    pressed_keys.remove_if([](const auto& key) {
-        return IsCapturedMouseButton(key.first);
-    });
+    pressed_keys.remove_if([](const auto& key) { return IsCapturedMouseButton(key.first); });
 }
 
 // Switches mouse to a set mode or turns mouse emulation off if it was already in that mode.
@@ -44,7 +44,6 @@ bool ToggleMouseModeTo(MouseMode m) {
     ForgetCapturedMouseButtons();
     const bool enabled = mouse_input.Toggle(m);
     constexpr std::array names{"off", "joystick", "motion", "touch contacts"};
-    LOG_INFO(Input, "Mouse emulation mode: {}", names[static_cast<size_t>(mouse_input.Mode())]);
     return enabled;
 }
 
@@ -52,7 +51,6 @@ MouseMode GetMouseMode() { return mouse_input.Mode(); }
 MouseInput& GetMouseInput() { return mouse_input; }
 void CenterMouseInput() {
     mouse_input.Center();
-    LOG_INFO(Input, "Mouse emulation center requested");
 }
 void ReleaseMouseInput(GameController* controller) {
     std::scoped_lock lock{mouse_poll_mutex};
@@ -60,13 +58,15 @@ void ReleaseMouseInput(GameController* controller) {
     ForgetCapturedMouseButtons();
     mouse_input.Release();
     controller->SetMouseInput({});
-    if (active) LOG_INFO(Input, "Mouse emulation released");
+    if (active)
+        ;
 }
 
 void ProcessMouseEvent(const SDL_Event& event) {
     if (event.type == SDL_EVENT_MOUSE_MOTION) {
         mouse_input.Motion(event.motion.xrel, event.motion.yrel);
-    } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+    } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+               event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
         if (event.button.button == SDL_BUTTON_LEFT || event.button.button == SDL_BUTTON_RIGHT) {
             mouse_input.Button(event.button.button == SDL_BUTTON_RIGHT,
                                event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
@@ -117,16 +117,22 @@ void EmulateJoystick(GameController* controller, u32 interval) {
     float angle = atan2(d_y, d_x);
     float a_x = cos(angle) * output_speed, a_y = sin(angle) * output_speed;
 
-    if (d_x == 0 && d_y == 0) a_x = a_y = 0;
+    if (d_x == 0 && d_y == 0) {
+        a_x = a_y = 0;
+    }
     controller->Axis(axis_x, GetAxis(-0x80, 0x7f, a_x), false);
     controller->Axis(axis_y, GetAxis(-0x80, 0x7f, a_y), false);
 }
 
 void ApplyMouseInputBlockers() {
     const auto mode = GetMouseMode();
-    if (mode != MouseMode::Gyro && mode != MouseMode::Touchpad) return;
+    if (mode != MouseMode::Gyro && mode != MouseMode::Touchpad) {
+        return;
+    }
     for (auto& [event, blocked] : pressed_keys) {
-        if (IsCapturedMouseButton(event)) blocked = true;
+        if (IsCapturedMouseButton(event)) {
+            blocked = true;
+        }
     }
 }
 

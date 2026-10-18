@@ -9,9 +9,9 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <thread>
 #include <queue>
 #include <span>
+#include <thread>
 
 #include "common/interval_set.h"
 #include "common/unique_function.h"
@@ -23,9 +23,6 @@
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 #include "vulkan/vulkan.hpp"
 
-namespace tracy {
-class VkCtxScope;
-}
 
 namespace Vulkan {
 
@@ -88,9 +85,7 @@ struct SubmitInfo {
         signal_ticks[num_signal_semas++] = tick;
     }
 
-    void AddSignal(vk::Fence fence) {
-        this->fence = fence;
-    }
+    void AddSignal(vk::Fence fence) { this->fence = fence; }
 };
 
 using Viewports = boost::container::static_vector<vk::Viewport, AmdGpu::NUM_VIEWPORTS>;
@@ -183,7 +178,7 @@ struct DynamicState {
     void Commit(const Instance& instance, const CommandRecorder& cmdbuf);
 
     /// Pipelines bound, constants pushed and vertex input set last in the command buffer, kept by
-    /// every CommandRecorder of the scheduler. With skip_redundant_binds (perf_tuning.ini), the
+    /// every CommandRecorder of the scheduler. With skip_redundant_binds (fixed V2 policy), the
     /// same ones are not recorded again. Forgotten with the rest of the dynamic state (new command
     /// buffer, blits) and when the command buffer is used directly (Scheduler::CommandBuffer).
     struct BindCache {
@@ -221,7 +216,7 @@ struct DynamicState {
             std::array<Info, MaxInfos> infos;
         };
 
-        std::array<vk::Pipeline, 2> pipelines{}; ///< graphics, compute
+        std::array<vk::Pipeline, 2> pipelines{};  ///< graphics, compute
         std::array<Push, 2> pushes{};             ///< graphics stages, compute stage
         std::array<Descriptors, 2> descriptors{}; ///< graphics, compute
         BufferBindCache buffers{};
@@ -266,8 +261,9 @@ struct DynamicState {
 
         /// Notes a vertex input set; true when it can be left out (same as the last one, with the
         /// same graphics pipeline bound since, skipping on).
-        bool SkipVertexInput(std::span<const vk::VertexInputBindingDescription2EXT> bindings,
-                             std::span<const vk::VertexInputAttributeDescription2EXT> attributes) noexcept;
+        bool SkipVertexInput(
+            std::span<const vk::VertexInputBindingDescription2EXT> bindings,
+            std::span<const vk::VertexInputAttributeDescription2EXT> attributes) noexcept;
     };
     BindCache binds{};
 
@@ -458,7 +454,7 @@ using SubmitFunc = Common::UniqueFunction<void, SubmitInfo&>;
 /// Notified when rendering scopes begin and end, for work that cannot span them (Vulkan
 /// occlusion queries begun inside a rendering scope must end in it).
 class RenderingObserver {
-public:
+  public:
     virtual ~RenderingObserver() = default;
     /// The rendering scope has just begun.
     virtual void OnBeginRendering(const CommandRecorder& cmdbuf) = 0;
@@ -467,7 +463,7 @@ public:
 };
 
 class Scheduler {
-public:
+  public:
     /// queue: the queue the command buffers are submitted to (the graphics queue by default,
     /// or another queue of the graphics family); name: for the log.
     explicit Scheduler(const Instance& instance, vk::Queue queue = {},
@@ -475,9 +471,7 @@ public:
     ~Scheduler();
 
     /// The queue the sessions are submitted to.
-    [[nodiscard]] vk::Queue Queue() const noexcept {
-        return queue;
-    }
+    [[nodiscard]] vk::Queue Queue() const noexcept { return queue; }
 
     /// The commands of the current session depend on work of another queue: the submission of
     /// the session waits for this tick of that queue's timeline semaphore (at most 3 queues,
@@ -521,21 +515,17 @@ public:
     vk::CommandBuffer UploadCommandBuffer();
 
     /// Sets a function to be called on every session finalization.
-    void SetSessionCallback(SessionFunc&& on_session) {
-        this->on_session = std::move(on_session);
-    }
+    void SetSessionCallback(SessionFunc&& on_session) { this->on_session = std::move(on_session); }
 
     /// Sets a function to be called on every scheduler submission.
-    void SetSubmitCallback(SubmitFunc&& on_submit) {
-        this->on_submit = std::move(on_submit);
-    }
+    void SetSubmitCallback(SubmitFunc&& on_submit) { this->on_submit = std::move(on_submit); }
 
     /// The commands recorded so far read data another thread produces (staging memory the upload
     /// worker fills, work number seq): the submission sending them waits for it first.
     void RequireBeforeSubmit(u64 seq) noexcept {
         u64 current = submit_dependency.load(std::memory_order_relaxed);
-        while (current < seq && !submit_dependency.compare_exchange_weak(
-                                    current, seq, std::memory_order_relaxed)) {
+        while (current < seq &&
+               !submit_dependency.compare_exchange_weak(current, seq, std::memory_order_relaxed)) {
         }
     }
 
@@ -547,14 +537,10 @@ public:
     }
 
     /// Returns the current render state.
-    const RenderState& GetRenderState() const {
-        return render_state;
-    }
+    const RenderState& GetRenderState() const { return render_state; }
 
     /// Whether a rendering scope is open in the current command buffer.
-    [[nodiscard]] bool IsRendering() const noexcept {
-        return is_rendering;
-    }
+    [[nodiscard]] bool IsRendering() const noexcept { return is_rendering; }
 
     /// Sets the object notified of rendering scope changes (nullptr: none).
     void SetRenderingObserver(RenderingObserver* observer) noexcept {
@@ -562,9 +548,7 @@ public:
     }
 
     /// Returns the current pipeline dynamic state tracking.
-    DynamicState& GetDynamicState() {
-        return dynamic_state;
-    }
+    DynamicState& GetDynamicState() { return dynamic_state; }
 
     /// Records the commands of the session: directly in the command buffer, or through the
     /// recording thread (threaded recording). Use this rather than CommandBuffer().
@@ -576,7 +560,7 @@ public:
     vk::CommandBuffer CommandBuffer();
 
     /// Lets this scheduler record its commands on a thread of its own when threaded_recording
-    /// is set in perf_tuning.ini (from its next session). Only for a scheduler used by a single
+    /// is enabled by the fixed V2 policy. Only for a scheduler used by a single
     /// thread (the command processor).
     void AllowThreadedRecording();
 
@@ -589,33 +573,13 @@ public:
 
     /// Whether commands were recorded in the current session (through CommandRecorder,
     /// CommandBuffer() or Stream()).
-    [[nodiscard]] bool HasWork() const noexcept {
-        return session_used;
-    }
+    [[nodiscard]] bool HasWork() const noexcept { return session_used; }
 
     /// The commands for the recording thread, handed to it in batches. For CommandRecorder.
     CommandStream& Stream();
 
     /// Returns the current command buffer tick.
-    [[nodiscard]] u64 CurrentTick() const noexcept {
-        return work_semaphore.CurrentTick();
-    }
-
-    /// gpu_profile (perf_tuning.ini, command processor scheduler only): the current session
-    /// carries a GPU readback (its GPU time is counted apart).
-    void MarkReadbackSession() noexcept {
-        session_has_readback = true;
-    }
-
-    /// gpu_profile = 2: GPU timestamps around a compute dispatch, counted for its shader.
-    void ProfileDispatchBegin(u64 shader_hash);
-    void ProfileDispatchEnd();
-    void ProfileDrawBegin(u64 shader_hash);
-    void ProfileDrawEnd();
-
-    /// gpu_profile: reads the timestamps of the submissions the GPU has finished (command
-    /// processor thread, once per guest frame).
-    void CollectProfile();
+    [[nodiscard]] u64 CurrentTick() const noexcept { return work_semaphore.CurrentTick(); }
 
     /// The highest tick of the command buffers handed to the driver so far (submitted, not
     /// necessarily executed). With threaded recording, a flushed session is submitted later by
@@ -635,9 +599,7 @@ public:
     }
 
     /// Returns the scheduler timeline semaphore.
-    [[nodiscard]] Semaphore* GetWorkSemaphore() noexcept {
-        return &work_semaphore;
-    }
+    [[nodiscard]] Semaphore* GetWorkSemaphore() noexcept { return &work_semaphore; }
 
     /// Defers an operation until the gpu has reached the current cpu tick.
     /// Will be run when submitting or calling PopPendingOperations.
@@ -659,7 +621,7 @@ public:
 
     static std::mutex submit_mutex;
 
-private:
+  private:
     void EndSession();
 
     void SubmitExecution(SubmitInfo& info);
@@ -690,7 +652,7 @@ private:
         SubmitInfo info{};
     };
 
-private:
+  private:
     const Instance& instance;
     vk::Queue queue;
     const char* name;
@@ -728,15 +690,14 @@ private:
     RenderState render_state;
     bool is_rendering = false;
     RenderingObserver* rendering_observer{};
-    tracy::VkCtxScope* profiler_scope{};
 
     /// Command buffer recorded directly by the scheduler thread in this session, null while the
     /// session is recorded by the recording thread.
     vk::CommandBuffer direct_cmdbuf{};
     mutable bool session_used{}; ///< See HasWork.
     bool threading_allowed{};
-    bool stream_session{};     ///< This session started recorded by the recording thread.
-    bool recorder_used{};      ///< The recording thread may still use the command pool.
+    bool stream_session{}; ///< This session started recorded by the recording thread.
+    bool recorder_used{};  ///< The recording thread may still use the command pool.
     std::unique_ptr<CommandStream> stream; ///< Commands not handed to the recording thread yet.
     std::mutex recorder_mutex;
     std::condition_variable_any recorder_cv;
@@ -745,22 +706,13 @@ private:
     std::deque<RecorderJob> recorder_jobs;
     std::vector<std::unique_ptr<CommandStream>> free_streams;
     bool recorder_busy{};
-    bool recorder_waiting{}; ///< The recording thread sleeps until it is notified.
-    std::atomic<u32> recorder_queued{}; ///< Jobs given to the recording thread, not started yet.
+    bool recorder_waiting{};             ///< The recording thread sleeps until it is notified.
+    std::atomic<u32> recorder_queued{};  ///< Jobs given to the recording thread, not started yet.
     vk::CommandBuffer recorder_cmdbuf{}; ///< Command buffer of the recorded session.
     std::jthread recorder_thread;
     std::atomic<u64> submit_dependency{}; ///< See RequireBeforeSubmit.
     std::atomic<u64> submitted_tick{};    ///< See SubmittedTick.
 
-    /// gpu_profile state (vk_scheduler.cpp), created when first enabled.
-    struct GpuProfile;
-    std::unique_ptr<GpuProfile> profile;
-    bool session_has_readback{};
-    /// Records the timestamp opening the session (gpu_profile).
-    void ProfileSessionBegin();
-    /// Records the timestamp closing the session, before its submission with this tick.
-    void ProfileSessionEnd();
-    void ProfileSessionSubmitted(u64 tick);
     std::function<void(u64)> submit_dependency_wait;
 };
 
@@ -770,14 +722,13 @@ private:
  * thread (threaded recording), where the data the arguments point to is copied.
  */
 class CommandRecorder {
-public:
+  public:
     explicit CommandRecorder(Scheduler& scheduler_) noexcept : scheduler{&scheduler_} {}
     explicit CommandRecorder(vk::CommandBuffer cmdbuf) noexcept : fixed{cmdbuf} {}
 
     /// Records a command: func(vk::CommandBuffer) runs now, or on the recording thread. The
     /// function must own copies of what it uses.
-    template <typename Func>
-    void Record(Func&& func) const {
+    template <typename Func> void Record(Func&& func) const {
         if (const vk::CommandBuffer cmdbuf = Direct()) {
             func(cmdbuf);
         } else {
@@ -804,8 +755,8 @@ public:
 
     void bindVertexBuffers(u32 first, u32 count, const vk::Buffer* buffers,
                            const vk::DeviceSize* offsets) const {
-        if (scheduler && scheduler->GetDynamicState().binds.SkipVertexBuffers(
-                             first, count, buffers, offsets)) {
+        if (scheduler &&
+            scheduler->GetDynamicState().binds.SkipVertexBuffers(first, count, buffers, offsets)) {
             return;
         }
         if (const vk::CommandBuffer c = Direct()) {
@@ -840,9 +791,9 @@ public:
     void setVertexInputEXT(
         vk::ArrayProxy<const vk::VertexInputBindingDescription2EXT> const& bindings,
         vk::ArrayProxy<const vk::VertexInputAttributeDescription2EXT> const& attributes) const {
-        if (scheduler && scheduler->GetDynamicState().binds.SkipVertexInput(
-                             {bindings.data(), bindings.size()},
-                             {attributes.data(), attributes.size()})) {
+        if (scheduler &&
+            scheduler->GetDynamicState().binds.SkipVertexInput(
+                {bindings.data(), bindings.size()}, {attributes.data(), attributes.size()})) {
             return;
         }
         if (scheduler) {
@@ -857,13 +808,12 @@ public:
         const u32 num_attributes = attributes.size();
         const auto* b = s.Copy(bindings.data(), num_bindings);
         const auto* a = s.Copy(attributes.data(), num_attributes);
-        s.Record([=](vk::CommandBuffer c) {
-            c.setVertexInputEXT(num_bindings, b, num_attributes, a);
-        });
+        s.Record(
+            [=](vk::CommandBuffer c) { c.setVertexInputEXT(num_bindings, b, num_attributes, a); });
     }
 
-    void pushConstants(vk::PipelineLayout layout, vk::ShaderStageFlags stages, u32 offset,
-                       u32 size, const void* values) const {
+    void pushConstants(vk::PipelineLayout layout, vk::ShaderStageFlags stages, u32 offset, u32 size,
+                       const void* values) const {
         if (scheduler &&
             scheduler->GetDynamicState().binds.SkipPush(layout, stages, offset, size, values)) {
             return;
@@ -877,8 +827,7 @@ public:
         s.Record([=](vk::CommandBuffer c) { c.pushConstants(layout, stages, offset, size, data); });
     }
 
-    void pushDescriptorSetKHR(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout,
-                              u32 set,
+    void pushDescriptorSetKHR(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout, u32 set,
                               vk::ArrayProxy<const vk::WriteDescriptorSet> const& writes) const {
         if (scheduler && scheduler->GetDynamicState().binds.SkipDescriptors(
                              bind_point, layout, set, {writes.data(), writes.size()})) {
@@ -932,8 +881,7 @@ public:
         });
     }
 
-    void drawIndirect(vk::Buffer buffer, vk::DeviceSize offset, u32 draw_count,
-                      u32 stride) const {
+    void drawIndirect(vk::Buffer buffer, vk::DeviceSize offset, u32 draw_count, u32 stride) const {
         Record([=](vk::CommandBuffer c) { c.drawIndirect(buffer, offset, draw_count, stride); });
     }
 
@@ -947,14 +895,13 @@ public:
     void drawIndirectCount(vk::Buffer buffer, vk::DeviceSize offset, vk::Buffer count_buffer,
                            vk::DeviceSize count_offset, u32 max_draw_count, u32 stride) const {
         Record([=](vk::CommandBuffer c) {
-            c.drawIndirectCount(buffer, offset, count_buffer, count_offset, max_draw_count,
-                                stride);
+            c.drawIndirectCount(buffer, offset, count_buffer, count_offset, max_draw_count, stride);
         });
     }
 
-    void drawIndexedIndirectCount(vk::Buffer buffer, vk::DeviceSize offset,
-                                  vk::Buffer count_buffer, vk::DeviceSize count_offset,
-                                  u32 max_draw_count, u32 stride) const {
+    void drawIndexedIndirectCount(vk::Buffer buffer, vk::DeviceSize offset, vk::Buffer count_buffer,
+                                  vk::DeviceSize count_offset, u32 max_draw_count,
+                                  u32 stride) const {
         Record([=](vk::CommandBuffer c) {
             c.drawIndexedIndirectCount(buffer, offset, count_buffer, count_offset, max_draw_count,
                                        stride);
@@ -1046,9 +993,8 @@ public:
         CommandStream& s = scheduler->Stream();
         const u32 count = regions.size();
         const auto* r = s.Copy(regions.data(), count);
-        s.Record([=](vk::CommandBuffer c) {
-            c.copyImage(src, src_layout, dst, dst_layout, count, r);
-        });
+        s.Record(
+            [=](vk::CommandBuffer c) { c.copyImage(src, src_layout, dst, dst_layout, count, r); });
     }
 
     void resolveImage(vk::Image src, vk::ImageLayout src_layout, vk::Image dst,
@@ -1066,8 +1012,7 @@ public:
         });
     }
 
-    void clearColorImage(vk::Image image, vk::ImageLayout layout,
-                         const vk::ClearColorValue& color,
+    void clearColorImage(vk::Image image, vk::ImageLayout layout, const vk::ClearColorValue& color,
                          vk::ArrayProxy<const vk::ImageSubresourceRange> const& ranges) const {
         if (const vk::CommandBuffer c = Direct()) {
             c.clearColorImage(image, layout, color, ranges);
@@ -1079,8 +1024,7 @@ public:
         s.Record([=](vk::CommandBuffer c) { c.clearColorImage(image, layout, &color, count, r); });
     }
 
-    void fillBuffer(vk::Buffer buffer, vk::DeviceSize offset, vk::DeviceSize size,
-                    u32 data) const {
+    void fillBuffer(vk::Buffer buffer, vk::DeviceSize offset, vk::DeviceSize size, u32 data) const {
         Record([=](vk::CommandBuffer c) { c.fillBuffer(buffer, offset, size, data); });
     }
 
@@ -1167,7 +1111,8 @@ public:
 
     void setStencilOp(vk::StencilFaceFlags faces, vk::StencilOp fail, vk::StencilOp pass,
                       vk::StencilOp depth_fail, vk::CompareOp compare) const {
-        Record([=](vk::CommandBuffer c) { c.setStencilOp(faces, fail, pass, depth_fail, compare); });
+        Record(
+            [=](vk::CommandBuffer c) { c.setStencilOp(faces, fail, pass, depth_fail, compare); });
     }
 
     void setStencilReference(vk::StencilFaceFlags faces, u32 reference) const {
@@ -1249,7 +1194,7 @@ public:
         Record([](vk::CommandBuffer c) { c.endDebugUtilsLabelEXT(); });
     }
 
-private:
+  private:
     /// The command buffer to record in now, or null to record into the stream.
     [[nodiscard]] vk::CommandBuffer Direct() const noexcept {
         return scheduler ? scheduler->DirectCommandBuffer() : fixed;
@@ -1285,47 +1230,6 @@ private:
     vk::CommandBuffer fixed{};
 };
 
-inline CommandRecorder Scheduler::Recorder() noexcept {
-    return CommandRecorder{*this};
-}
-
-/// GPU crash diagnostics. When enabled (perf_tuning.ini gpu_checkpoints = 1), each draw and
-/// dispatch leaves a checkpoint in the command buffer (VK_NV_device_diagnostic_checkpoints). When
-/// the device is lost, the last checkpoints the GPU reached are logged with the work they mark,
-/// together with the device fault information (VK_EXT_device_fault).
-namespace GpuCrashDiag {
-
-enum class Kind : u32 {
-    Draw,
-    DrawIndexed,
-    DrawIndirect,
-    DrawIndexedIndirect,
-    Dispatch,
-    DispatchIndirect,
-    Detile,
-    Tile,
-};
-
-struct Entry {
-    u64 seq;
-    u64 tick;
-    Kind kind;
-    u32 count;     ///< Vertices/indices, or the maximum count of an indirect draw.
-    u32 instances; ///< Instances, or the indirect stride.
-    u32 dims[3];   ///< Render area or dispatch size (indirect: arguments read on the CPU).
-    u64 hashes[2]; ///< Vertex and fragment shader, or compute shader.
-    u64 address;   ///< Indirect arguments or image guest address.
-};
-
-/// Returns true when checkpoints are enabled and supported.
-bool Enabled();
-
-/// Records a checkpoint for the given work in the command buffer.
-void Mark(const CommandRecorder& cmdbuf, u64 tick, const Entry& entry);
-
-/// Logs the last checkpoints reached by the GPU and the device fault information, once.
-void ReportDeviceLost(const Instance& instance, const char* where);
-
-} // namespace GpuCrashDiag
+inline CommandRecorder Scheduler::Recorder() noexcept { return CommandRecorder{*this}; }
 
 } // namespace Vulkan

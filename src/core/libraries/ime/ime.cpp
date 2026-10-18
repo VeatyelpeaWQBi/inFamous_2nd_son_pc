@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
-#include <cstring>
-#include <queue>
-#include "common/logging/log.h"
 #include "core/libraries/ime/ime.h"
+#include "common/logging/log.h"
 #include "core/libraries/ime/ime_dialog.h"
 #include "core/libraries/ime/ime_error.h"
 #include "core/libraries/ime/ime_ui.h"
 #include "core/libraries/kernel/process.h"
 #include "core/libraries/libs.h"
 #include "core/tls.h"
+#include <algorithm>
+#include <cstring>
+#include <queue>
 
 namespace Libraries::Ime {
 
@@ -166,16 +166,10 @@ bool HasInvalidWorkOverlap(const OrbisImeParam* param) {
 } // namespace
 
 class ImeHandler {
-public:
-    ImeHandler(const OrbisImeKeyboardParam* param) {
-        Init(param, nullptr, false);
-    }
+  public:
+    ImeHandler(const OrbisImeKeyboardParam* param) { Init(param, nullptr, false); }
     ImeHandler(const OrbisImeParam* param, const OrbisImeParamExtended* extended = nullptr) {
 
-        LOG_DEBUG(Lib_Ime, "param->work: 0x{:X}",
-                  static_cast<u64>(reinterpret_cast<uintptr_t>(param->work)));
-        LOG_DEBUG(Lib_Ime, "param->inputTextBuffer: 0x{:X}",
-                  static_cast<u64>(reinterpret_cast<uintptr_t>(param->arg)));
         Init(param, extended, true);
     }
     ~ImeHandler() = default;
@@ -183,14 +177,11 @@ public:
     void Init(const void* param, const OrbisImeParamExtended* extended, bool ime_mode) {
         if (ime_mode) {
             m_param.ime = *(OrbisImeParam*)param;
-            LOG_DEBUG(Lib_Ime, "m_param.ime.work: 0x{:X}",
-                      static_cast<u64>(reinterpret_cast<uintptr_t>(m_param.ime.work)));
-            LOG_DEBUG(Lib_Ime, "m_param.ime.inputTextBuffer: 0x{:X}",
-                      static_cast<u64>(reinterpret_cast<uintptr_t>(m_param.ime.inputTextBuffer)));
-            if (extended)
+            if (extended) {
                 m_param.ime_ext = *extended;
-            else
+            } else {
                 m_param.ime_ext = {};
+            }
         } else {
             m_param.key = *(OrbisImeKeyboardParam*)param;
         }
@@ -221,9 +212,6 @@ public:
             g_ime_ui = std::make_unique<ImeUi>(g_ime_state.get(), &m_param.ime, &m_param.ime_ext);
 
             // Queue the Open event so it is delivered on next sceImeUpdate
-            LOG_DEBUG(Lib_Ime, "IME Event queued: Open rect x={}, y={}, w={}, h={}",
-                      openEvent.param.rect.x, openEvent.param.rect.y, openEvent.param.rect.width,
-                      openEvent.param.rect.height);
             g_ime_state->SendEvent(&openEvent);
         }
     }
@@ -295,21 +283,15 @@ public:
         return Error::OK;
     }
 
-    bool IsIme() {
-        return m_ime_mode;
-    }
+    bool IsIme() { return m_ime_mode; }
 
     OrbisImeEventHandler GetHandler() const {
         return m_ime_mode ? m_param.ime.handler : m_param.key.handler;
     }
 
-    u32 GetImeOptionBits() const {
-        return m_ime_mode ? static_cast<u32>(m_param.ime.option) : 0U;
-    }
+    u32 GetImeOptionBits() const { return m_ime_mode ? static_cast<u32>(m_param.ime.option) : 0U; }
 
-    u32 GetImeMaxTextLength() const {
-        return m_ime_mode ? m_param.ime.maxTextLength : 0U;
-    }
+    u32 GetImeMaxTextLength() const { return m_ime_mode ? m_param.ime.maxTextLength : 0U; }
 
     u32 GetImeCurrentTextLength() const {
         if (!m_ime_mode) {
@@ -318,7 +300,7 @@ public:
         return CountUtf16Text(m_param.ime.inputTextBuffer, m_param.ime.maxTextLength);
     }
 
-private:
+  private:
     struct ImeParam {
         OrbisImeKeyboardParam key;
         OrbisImeParam ime;
@@ -356,7 +338,6 @@ int PS4_SYSV_ABI sceImeCheckUpdateTextInfo() {
 }
 
 Error PS4_SYSV_ABI sceImeClose() {
-    LOG_DEBUG(Lib_Ime, "called");
 
     if (!g_ime_handler) {
         LOG_ERROR(Lib_Ime, "No IME handler is open");
@@ -371,7 +352,6 @@ Error PS4_SYSV_ABI sceImeClose() {
     g_ime_ui = std::make_unique<ImeUi>();
     g_ime_state = std::make_unique<ImeState>();
 
-    LOG_DEBUG(Lib_Ime, "IME closed successfully");
     return Error::OK;
 }
 
@@ -477,7 +457,6 @@ Error PS4_SYSV_ABI sceImeGetPanelSize(const OrbisImeParam* param, u32* width, u3
 }
 
 Error PS4_SYSV_ABI sceImeKeyboardClose(Libraries::UserService::OrbisUserServiceUserId userId) {
-    LOG_INFO(Lib_Ime, "called");
 
     if (!g_keyboard_handler) {
         LOG_ERROR(Lib_Ime, "No keyboard handler is open");
@@ -496,7 +475,7 @@ Error PS4_SYSV_ABI sceImeKeyboardClose(Libraries::UserService::OrbisUserServiceU
         return Error::INTERNAL;
     }
 
-    LOG_DEBUG(Lib_Ime, "Keyboard handler closed successfully for user ID: {}", userId);
+    ;
     return Error::OK;
 }
 
@@ -511,7 +490,6 @@ int PS4_SYSV_ABI sceImeKeyboardGetInfo(u32 resourceId, OrbisImeKeyboardInfo* inf
 Error PS4_SYSV_ABI
 sceImeKeyboardGetResourceId(Libraries::UserService::OrbisUserServiceUserId userId,
                             OrbisImeKeyboardResourceIdArray* resourceIdArray) {
-    LOG_INFO(Lib_Ime, "(partial) called");
 
     if (!resourceIdArray) {
         LOG_ERROR(Lib_Ime, "Invalid resourceIdArray: NULL");
@@ -543,8 +521,7 @@ sceImeKeyboardGetResourceId(Libraries::UserService::OrbisUserServiceUserId userI
     resourceIdArray->user_id = userId;
     for (u32& id : resourceIdArray->resource_id) {
         id = 0;
-    }
-    LOG_DEBUG(Lib_Ime, "No USB keyboard connected (simulated)");
+    };
     return Error::CONNECTION_FAILED;
 
     // For future reference, if we had a real keyboard handler
@@ -553,7 +530,6 @@ sceImeKeyboardGetResourceId(Libraries::UserService::OrbisUserServiceUserId userI
 
 Error PS4_SYSV_ABI sceImeKeyboardOpen(Libraries::UserService::OrbisUserServiceUserId userId,
                                       const OrbisImeKeyboardParam* param) {
-    LOG_INFO(Lib_Ime, "called");
     if (!param) {
         LOG_ERROR(Lib_Ime, "Invalid param: NULL");
         return Error::INVALID_ADDRESS;
@@ -564,11 +540,7 @@ Error PS4_SYSV_ABI sceImeKeyboardOpen(Libraries::UserService::OrbisUserServiceUs
         return Error::INVALID_HANDLER;
     }
 
-    LOG_DEBUG(Lib_Ime, "  userId: {}", static_cast<u32>(userId));
-    LOG_DEBUG(Lib_Ime, "  param->option: {:032b}", static_cast<u32>(param->option));
-    LOG_DEBUG(Lib_Ime, "  param->arg: {}", param->arg);
-    LOG_DEBUG(Lib_Ime, "  param->handler: 0x{:X}",
-              static_cast<u64>(reinterpret_cast<uintptr_t>(param->handler)));
+    ;
 
     // seems like arg is optional, need to check if it is used in the handler
     // Todo: check if arg is used in the handler, temporarily disabled
@@ -604,10 +576,7 @@ Error PS4_SYSV_ABI sceImeKeyboardOpen(Libraries::UserService::OrbisUserServiceUs
     }
 
     // Todo: figure out what it is, always false for now
-    if (false) {
-        LOG_ERROR(Lib_Ime, "USB keyboard some special kind of failure");
-        return Error::CONNECTION_FAILED;
-    }
+    ;
 
     if (g_keyboard_handler) {
         LOG_ERROR(Lib_Ime, "Keyboard handler is already open");
@@ -618,8 +587,7 @@ Error PS4_SYSV_ABI sceImeKeyboardOpen(Libraries::UserService::OrbisUserServiceUs
     if (!g_keyboard_handler) {
         LOG_ERROR(Lib_Ime, "Failed to create keyboard handler");
         return Error::INTERNAL; // or Error::NO_MEMORY;
-    }
-    LOG_DEBUG(Lib_Ime, "Keyboard handler created successfully for user ID: {}", userId);
+    };
     return Error::OK;
 }
 
@@ -642,7 +610,6 @@ int PS4_SYSV_ABI sceImeKeyboardUpdate() {
 }
 
 Error PS4_SYSV_ABI sceImeOpen(const OrbisImeParam* param, const OrbisImeParamExtended* extended) {
-    LOG_INFO(Lib_Ime, "called");
 
     if (g_ime_handler) {
         LOG_ERROR(Lib_Ime, "IME handler is already open");
@@ -654,63 +621,9 @@ Error PS4_SYSV_ABI sceImeOpen(const OrbisImeParam* param, const OrbisImeParamExt
         return Error::INVALID_ADDRESS;
     } else {
         // LOG_DEBUG values for debugging purposes
-        LOG_DEBUG(Lib_Ime, "param->user_id: {}", param->user_id);
-        LOG_DEBUG(Lib_Ime, "param->type: {}", static_cast<u32>(param->type));
-        LOG_DEBUG(Lib_Ime, "param->supported_languages: {:064b}",
-                  static_cast<u64>(param->supported_languages));
-        LOG_DEBUG(Lib_Ime, "param->enter_label: {}", static_cast<u32>(param->enter_label));
-        LOG_DEBUG(Lib_Ime, "param->input_method: {}", static_cast<u32>(param->input_method));
-        LOG_DEBUG(Lib_Ime, "param->filter: {:p}", reinterpret_cast<void*>(param->filter));
-        LOG_DEBUG(Lib_Ime, "param->option: {:032b}", static_cast<u32>(param->option));
-        LOG_DEBUG(Lib_Ime, "param->maxTextLength: {}", param->maxTextLength);
-        LOG_DEBUG(Lib_Ime, "param->inputTextBuffer: {:p}",
-                  static_cast<const void*>(param->inputTextBuffer));
-        LOG_DEBUG(Lib_Ime, "param->posx: {}", param->posx);
-        LOG_DEBUG(Lib_Ime, "param->posy: {}", param->posy);
-        LOG_DEBUG(Lib_Ime, "param->horizontal_alignment: {}",
-                  static_cast<u32>(param->horizontal_alignment));
-        LOG_DEBUG(Lib_Ime, "param->vertical_alignment: {}",
-                  static_cast<u32>(param->vertical_alignment));
-        LOG_DEBUG(Lib_Ime, "param->work: {:p}", param->work);
-        LOG_DEBUG(Lib_Ime, "param->arg: {:p}", param->arg);
-        LOG_DEBUG(Lib_Ime, "  param->handler: 0x{:X}",
-                  static_cast<u64>(reinterpret_cast<uintptr_t>(param->handler)));
     }
 
     if (!extended) {
-        LOG_DEBUG(Lib_Ime, "Not used extended: NULL");
-    } else {
-        LOG_DEBUG(Lib_Ime, "extended->option: {:032b}", static_cast<u32>(extended->option));
-        LOG_DEBUG(Lib_Ime, "extended->color_base: {{{},{},{},{}}}", extended->color_base.r,
-                  extended->color_base.g, extended->color_base.b, extended->color_base.a);
-        LOG_DEBUG(Lib_Ime, "extended->color_line: {{{},{},{},{}}}", extended->color_line.r,
-                  extended->color_line.g, extended->color_line.b, extended->color_line.a);
-        LOG_DEBUG(Lib_Ime, "extended->color_text_field: {{{},{},{},{}}}",
-                  extended->color_text_field.r, extended->color_text_field.g,
-                  extended->color_text_field.b, extended->color_text_field.a);
-        LOG_DEBUG(Lib_Ime, "extended->color_preedit: {{{},{},{},{}}}", extended->color_preedit.r,
-                  extended->color_preedit.g, extended->color_preedit.b, extended->color_preedit.a);
-        LOG_DEBUG(Lib_Ime, "extended->color_button_default: {{{},{},{},{}}}",
-                  extended->color_button_default.r, extended->color_button_default.g,
-                  extended->color_button_default.b, extended->color_button_default.a);
-        LOG_DEBUG(Lib_Ime, "extended->color_button_function: {{{},{},{},{}}}",
-                  extended->color_button_function.r, extended->color_button_function.g,
-                  extended->color_button_function.b, extended->color_button_function.a);
-        LOG_DEBUG(Lib_Ime, "extended->color_button_symbol: {{{},{},{},{}}}",
-                  extended->color_button_symbol.r, extended->color_button_symbol.g,
-                  extended->color_button_symbol.b, extended->color_button_symbol.a);
-        LOG_DEBUG(Lib_Ime, "extended->color_text: {{{},{},{},{}}}", extended->color_text.r,
-                  extended->color_text.g, extended->color_text.b, extended->color_text.a);
-        LOG_DEBUG(Lib_Ime, "extended->color_special: {{{},{},{},{}}}", extended->color_special.r,
-                  extended->color_special.g, extended->color_special.b, extended->color_special.a);
-        LOG_DEBUG(Lib_Ime, "extended->priority: {}", static_cast<u32>(extended->priority));
-        LOG_DEBUG(Lib_Ime, "extended->additional_dictionary_path: {:p}",
-                  static_cast<const void*>(extended->additional_dictionary_path));
-        LOG_DEBUG(Lib_Ime, "extended->ext_keyboard_filter: {:p}",
-                  reinterpret_cast<void*>(extended->ext_keyboard_filter));
-        LOG_DEBUG(Lib_Ime, "extended->disable_device: {:032b}",
-                  static_cast<u32>(extended->disable_device));
-        LOG_DEBUG(Lib_Ime, "extended->ext_keyboard_mode: {}", extended->ext_keyboard_mode);
     }
 
     if (!IsValidImeUserId(param->user_id)) {
@@ -895,7 +808,7 @@ Error PS4_SYSV_ABI sceImeOpen(const OrbisImeParam* param, const OrbisImeParamExt
         return Error::NO_MEMORY; // or Error::INTERNAL
     }
 
-    LOG_DEBUG(Lib_Ime, "IME handler created successfully");
+    ;
     return Error::OK;
 }
 
@@ -905,7 +818,6 @@ int PS4_SYSV_ABI sceImeOpenInternal() {
 }
 
 void PS4_SYSV_ABI sceImeParamInit(OrbisImeParam* param) {
-    LOG_INFO(Lib_Ime, "called");
 
     if (!param) {
         return;
@@ -922,7 +834,6 @@ int PS4_SYSV_ABI sceImeSetCandidateIndex(s32 index) {
 }
 
 Error PS4_SYSV_ABI sceImeSetCaret(const OrbisImeCaret* caret) {
-    LOG_TRACE(Lib_Ime, "called");
 
     if (!g_ime_handler) {
         return Error::NOT_OPENED;
@@ -939,7 +850,6 @@ Error PS4_SYSV_ABI sceImeSetCaret(const OrbisImeCaret* caret) {
 }
 
 Error PS4_SYSV_ABI sceImeSetText(const char16_t* text, u32 length) {
-    LOG_TRACE(Lib_Ime, "called");
 
     if (!g_ime_handler) {
         LOG_ERROR(Lib_Ime, "IME handler not opened");

@@ -22,9 +22,6 @@ namespace Libraries::Kernel {
 struct OrbisQueryInfo;
 }
 
-namespace Core::Devtools::Widget {
-class MemoryMapViewer;
-}
 
 namespace Core {
 
@@ -384,7 +381,6 @@ private:
     };
     std::array<PrtArea, 3> prt_areas{};
 
-    friend class ::Core::Devtools::Widget::MemoryMapViewer;
 };
 
 using Memory = Common::Singleton<MemoryManager>;

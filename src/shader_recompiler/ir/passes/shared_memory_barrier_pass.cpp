@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <unordered_set>
-#include <vector>
 #include "common/logging/log.h"
 #include "shader_recompiler/ir/breadth_first_search.h"
 #include "shader_recompiler/ir/ir_emitter.h"
 #include "shader_recompiler/ir/program.h"
 #include "shader_recompiler/profile.h"
+#include <unordered_set>
+#include <vector>
 
 namespace Shader::Optimization {
 
@@ -190,8 +190,7 @@ void SharedMemoryBarrierPass(IR::Program& program, const RuntimeInfo& runtime_in
     // rely on the 64 invocations of each wave running in lockstep to share data in LDS without
     // barriers (sorting and reduction steps shorter than a wave). Hosts with smaller subgroups
     // split each wave, so those steps race: synchronize the uniform parts of such shaders too.
-    const bool multi_wave = profile.lds_barriers_multi_wave &&
-                            threadgroup_size > GcnSubgroupSize &&
+    const bool multi_wave = profile.lds_barriers_multi_wave && threadgroup_size > GcnSubgroupSize &&
                             threadgroup_size > profile.subgroup_size;
     if (!single_wave && !multi_wave) {
         return;
@@ -234,12 +233,7 @@ void SharedMemoryBarrierPass(IR::Program& program, const RuntimeInfo& runtime_in
             num_barriers += EmitBarrierInBlock(node.data.block);
         }
     }
-    if (multi_wave && num_barriers != 0) {
-        LOG_INFO(Render_Recompiler,
-                 "Compute shader {:#x}: {} LDS barriers for {} invocations ({} bytes of LDS) "
-                 "sharing data within GCN waves",
-                 program.info.pgm_hash, num_barriers, threadgroup_size, shared_memory_size);
-    }
+
 }
 
 static bool IsLoadBuffer(const IR::Inst& inst) {
@@ -437,12 +431,7 @@ void WaveMemoryBarrierPass(IR::Program& program, const RuntimeInfo& runtime_info
             ++num_barriers;
         }
     }
-    if (num_barriers != 0) {
-        LOG_INFO(Render_Recompiler,
-                 "Compute shader {:#x}: {} buffer memory barriers for {} invocations exchanging "
-                 "data within GCN waves",
-                 program.info.pgm_hash, num_barriers, threadgroup_size);
-    }
+
 }
 
 } // namespace Shader::Optimization

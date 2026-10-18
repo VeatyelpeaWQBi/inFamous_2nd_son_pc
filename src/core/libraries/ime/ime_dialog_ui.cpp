@@ -5,18 +5,18 @@
 #include <cmath>
 #include <cstring>
 #include <cwchar>
+#include <imgui.h>
+#include <imgui_internal.h>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <imgui.h>
-#include <imgui_internal.h>
-#include <magic_enum/magic_enum.hpp>
 
 #include "common/assert.h"
+#include "common/display_state.h"
 #include "common/logging/log.h"
-#include "core/debug_state.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/ime/ime_dialog.h"
 #include "core/libraries/ime/ime_dialog_ui.h"
@@ -91,8 +91,6 @@ ImeDialogState::ImeDialogState()
 
 ImeDialogState::ImeDialogState(const OrbisImeDialogParam* param,
                                const OrbisImeParamExtended* extended) {
-    LOG_INFO(Lib_ImeDialog, "param={}, text_buffer={}", static_cast<const void*>(param),
-             static_cast<void*>(param ? param->input_text_buffer : nullptr));
     if (!param) {
         LOG_ERROR(Lib_ImeDialog, "param==nullptr, returning without init");
         return;
@@ -114,21 +112,6 @@ ImeDialogState::ImeDialogState(const OrbisImeDialogParam* param,
     style_config = Libraries::Ime::ResolveImeStyleConfig(extended);
     max_text_length = param->max_text_length;
     text_buffer = param->input_text_buffer;
-    LOG_INFO(Lib_ImeDialog,
-             "ImeDialogState: option=0x{:X} (multiline={}, password={}, ext_kbd={}, fixed_pos={}, "
-             "over2k={}), enter_label={}, type={}",
-             static_cast<u32>(param->option), is_multi_line,
-             True(param->option & OrbisImeOption::PASSWORD),
-             True(param->option & OrbisImeOption::EXT_KEYBOARD),
-             True(param->option & OrbisImeOption::FIXED_POSITION),
-             True(param->option & OrbisImeOption::USE_OVER_2K_COORDINATES),
-             static_cast<u32>(enter_label), static_cast<u32>(type));
-    LOG_DEBUG(Lib_ImeDialog,
-              "ImeDialogState: user_id={}, type={}, enter_label={}, multiline={}, numeric={}, "
-              "max_len={}, text_filter={}, keyboard_filter={}",
-              static_cast<u32>(user_id), static_cast<u32>(type), static_cast<u32>(enter_label),
-              is_multi_line, is_numeric, max_text_length, (void*)text_filter,
-              (void*)keyboard_filter);
 
     if (param->title) {
         std::size_t title_len = std::char_traits<char16_t>::length(param->title);
@@ -185,8 +168,7 @@ ImeDialogState::ImeDialogState(const OrbisImeDialogParam* param,
                                                &panel_req_height);
     } else {
         (void)sceImeDialogGetPanelSize(param, &panel_req_width, &panel_req_height);
-    }
-    LOG_DEBUG(Lib_ImeDialog, "ImeDialogState: initial_text_len={}", current_text.size());
+    };
 }
 
 ImeDialogState::ImeDialogState(ImeDialogState&& other) noexcept
@@ -246,7 +228,6 @@ ImeDialogState& ImeDialogState::operator=(ImeDialogState&& other) {
 
 bool ImeDialogState::CopyTextToOrbisBuffer(bool use_original) {
     if (!text_buffer) {
-        LOG_DEBUG(Lib_ImeDialog, "CopyTextToOrbisBuffer: no text_buffer");
         return false;
     }
 
@@ -255,15 +236,13 @@ bool ImeDialogState::CopyTextToOrbisBuffer(bool use_original) {
             original_text.empty() ? 0 : static_cast<std::size_t>(max_text_length) + 1;
         if (count > 0) {
             std::copy(original_text.begin(), original_text.end(), text_buffer);
-        }
-        LOG_DEBUG(Lib_ImeDialog, "CopyTextToOrbisBuffer: restored original");
+        };
         return true;
     }
 
     const std::size_t utf8_len = current_text.size();
     const bool ok = ConvertUTF8ToOrbis(current_text.begin(), utf8_len, text_buffer,
                                        static_cast<std::size_t>(max_text_length) + 1);
-    LOG_DEBUG(Lib_ImeDialog, "CopyTextToOrbisBuffer: {}", ok ? "ok" : "failed");
     return ok;
 }
 
@@ -650,7 +629,6 @@ void ImeDialogUi::FinishDialog(OrbisImeDialogEndStatus endstatus, bool restore_o
     state->CopyTextToOrbisBuffer(restore_original);
     *status = OrbisImeDialogStatus::Finished;
     result->endstatus = endstatus;
-    LOG_INFO(Lib_ImeDialog, "ImeDialog {} -> status=Finished", reason ? reason : "Done");
     Free();
 }
 
@@ -889,7 +867,6 @@ void ImeDialogUi::Draw() {
         if (!accept_armed) {
             if (!cross_down) {
                 accept_armed = true;
-                LOG_DEBUG(Lib_ImeDialog, "ImeDialog: accept armed");
             }
         }
         const bool panel_activate_pressed =
@@ -1092,20 +1069,12 @@ void ImeDialogUi::Draw() {
         SetWindowFontScale(std::max(ui_scale, metrics.input_font_scale));
 
         if (first_render) {
-            const auto game_res = DebugState.game_resolution;
-            const auto out_res = DebugState.output_resolution;
+            const auto game_res = Common::DisplayDimensions::Load(Common::display_dimensions.game);
+            const auto out_res = Common::DisplayDimensions::Load(Common::display_dimensions.output);
             const float req_w = has_layout ? static_cast<float>(layout.width)
                                            : static_cast<float>(state->panel_req_width);
             const float req_h = has_layout ? static_cast<float>(layout.height)
                                            : static_cast<float>(state->panel_req_height);
-            LOG_INFO(Lib_ImeDialog,
-                     "ImeDialog UI metrics: game_res={}x{}, out_res={}x{}, viewport_pos=({}, {}), "
-                     "viewport_size=({}, {}), base={}x{}, scale=({:.4f}, {:.4f}), "
-                     "panel_req=({}, {}), panel_scaled=({}, {})",
-                     game_res.first, game_res.second, out_res.first, out_res.second,
-                     viewport_offset.x, viewport_offset.y, viewport_size.x, viewport_size.y,
-                     viewport.base_w, viewport.base_h, scale_x, scale_y, req_w, req_h,
-                     window_size.x, window_size.y);
         }
 
         if (!state->title.empty()) {
@@ -1822,8 +1791,6 @@ void ImeDialogUi::Draw() {
         Dummy({metrics.kb_size.x, metrics.kb_size.y + metrics.padding_bottom});
 
         if (accept_pressed) {
-            LOG_INFO(Lib_ImeDialog, "ImeDialog OK text(len={}): \"{}\"", state->current_text.size(),
-                     state->current_text.begin());
             FinishDialog(OrbisImeDialogEndStatus::Ok, false, "OK");
         } else if (cancel_pressed) {
             FinishDialog(OrbisImeDialogEndStatus::UserCanceled, true, "Cancel");
@@ -2063,8 +2030,6 @@ int ImeDialogUi::InputTextCallback(ImGuiInputTextCallbackData* data) {
         }
         if (data->BufTextLen > 0) {
             const int caret_utf16 = Utf16CountFromUtf8Range(data->Buf, data->Buf + data->CursorPos);
-            LOG_DEBUG(Lib_ImeDialog, "ImeDialog caret: buf_len={}, cursor_byte={}, caret_utf16={}",
-                      data->BufTextLen, data->CursorPos, caret_utf16);
         }
         if (ui->state->caret_dirty && !ui->text_select_mode) {
             const int len_chars = Utf16CountFromUtf8Range(data->Buf, data->Buf + buf_len);
@@ -2102,8 +2067,7 @@ int ImeDialogUi::InputTextCallback(ImGuiInputTextCallbackData* data) {
         return 0;
     }
 
-    LOG_DEBUG(Lib_ImeDialog, ">> InputTextCallback: EventFlag={}, EventChar={}", data->EventFlag,
-              data->EventChar);
+    ;
 
     if (data->EventFlag == ImGuiInputTextFlags_CallbackCharFilter &&
         RejectInputCharByUtf16Limit(data, static_cast<int>(ui->state->max_text_length))) {
@@ -2114,8 +2078,6 @@ int ImeDialogUi::InputTextCallback(ImGuiInputTextCallbackData* data) {
     if (ui->state->is_numeric && (data->EventChar < '0' || data->EventChar > '9') &&
         data->EventChar != '\b' && data->EventChar != ',' && data->EventChar != '-' &&
         data->EventChar != '.') {
-        LOG_INFO(Lib_ImeDialog, "InputTextCallback: rejecting non-digit char '{}'",
-                 static_cast<char>(data->EventChar));
         return 1;
     }
 
@@ -2126,10 +2088,8 @@ int ImeDialogUi::InputTextCallback(ImGuiInputTextCallbackData* data) {
     }
 
     if (!ui->state->keyboard_filter) {
-        LOG_DEBUG(Lib_ImeDialog, "InputTextCallback: no keyboard_filter, accepting char");
         return 0;
-    }
-    LOG_DEBUG(Lib_ImeDialog, "InputTextCallback: skipping keyboard_filter on render thread");
+    };
     return 0;
 
     // ImGui encodes ImWchar32 as multi-byte UTF-8 characters
@@ -2153,21 +2113,15 @@ int ImeDialogUi::InputTextCallback(ImGuiInputTextCallbackData* data) {
         return 0;
     }
     src_keycode.character = tmp_char[0];
-    LOG_DEBUG(Lib_ImeDialog, "InputTextCallback: converted to Orbis char={:#X}",
-              static_cast<uint16_t>(src_keycode.character));
     src_keycode.keycode = src_keycode.character; // TODO set this to the correct value
 
     u16 out_keycode;
     u32 out_status;
 
     bool keep = ui->state->CallKeyboardFilter(&src_keycode, &out_keycode, &out_status);
-    LOG_DEBUG(Lib_ImeDialog,
-              "InputTextCallback: CallKeyboardFilter returned %s (keycode=0x%X, status=0x%X)",
-              keep ? "true" : "false", out_keycode, out_status);
     // TODO. set the keycode
 
     if (!keep) {
-        LOG_INFO(Lib_ImeDialog, "InputTextCallback: keyboard_filter rejected char");
         return 1;
     }
     return 0;

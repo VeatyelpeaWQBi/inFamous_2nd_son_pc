@@ -11,8 +11,6 @@
 #include <fcntl.h>
 #endif
 
-#include <core/libraries/kernel/kernel.h>
-#include <magic_enum/magic_enum.hpp>
 #include "common/assert.h"
 #include "common/error.h"
 #include "common/logging/log.h"
@@ -28,6 +26,8 @@
 #include "netctl.h"
 #include "sockets.h"
 #include "sys_net.h"
+#include <core/libraries/kernel/kernel.h>
+#include <magic_enum/magic_enum.hpp>
 
 namespace Libraries::Net {
 
@@ -961,7 +961,6 @@ int PS4_SYSV_ABI sceNetEpollControl(OrbisNetId epollid, OrbisNetEpollFlag op, Or
 }
 
 int PS4_SYSV_ABI sceNetEpollCreate(const char* name, int flags) {
-    LOG_INFO(Lib_Net, "called, name = {}, flags = {}", name, flags);
     if (flags != 0) {
         *sceNetErrnoLoc() = ORBIS_NET_EINVAL;
         return ORBIS_NET_ERROR_EINVAL;
@@ -983,7 +982,7 @@ int PS4_SYSV_ABI sceNetEpollDestroy(OrbisNetId epollid) {
         return ORBIS_NET_ERROR_EBADF;
     }
 
-    LOG_DEBUG(Lib_Net, "called, epollid = {} ({})", epollid, file->epoll->name);
+    ;
 
     file->epoll->Destroy();
     FDTable::Instance()->DeleteHandle(epollid);
@@ -1002,8 +1001,6 @@ int PS4_SYSV_ABI sceNetEpollWait(OrbisNetId epollid, OrbisNetEpollEvent* events,
         return ORBIS_NET_ERROR_EBADF;
     }
     auto epoll = file->epoll;
-    LOG_DEBUG(Lib_Net, "called, epollid = {} ({}), maxevents = {}, timeout = {}", epollid,
-              epoll->name, maxevents, timeout);
 
     int sockets_waited_on = (epoll->events.size() - epoll->async_resolutions.size()) > 0;
 
@@ -1039,12 +1036,9 @@ int PS4_SYSV_ABI sceNetEpollWait(OrbisNetId epollid, OrbisNetEpollEvent* events,
             return ORBIS_NET_ERROR_EINTERNAL;
         }
     } else if (result == 0) {
-        LOG_TRACE(Lib_Net, "timed out");
     } else {
         for (; i < result; ++i) {
             const auto& current_event = native_events[i];
-            LOG_DEBUG(Lib_Net, "native_event[{}] = ( .events = {}, .data = {:#x} )", i,
-                      current_event.events, current_event.data.u64);
             const auto it = std::ranges::find_if(
                 epoll->events, [&](auto& el) { return el.first == current_event.data.fd; });
             ASSERT(it != epoll->events.end());
@@ -1053,8 +1047,6 @@ int PS4_SYSV_ABI sceNetEpollWait(OrbisNetId epollid, OrbisNetEpollEvent* events,
                 .ident = static_cast<u64>(current_event.data.fd),
                 .data = it->second.data,
             };
-            LOG_DEBUG(Lib_Net, "event[{}] = ( .events = {:#x}, .ident = {}, .data = {:#x} )", i,
-                      events[i].events, events[i].ident, events[i].data.data_u64);
         }
     }
 
@@ -1085,8 +1077,6 @@ int PS4_SYSV_ABI sceNetEpollWait(OrbisNetId epollid, OrbisNetEpollEvent* events,
                 .ident = static_cast<u64>(rid),
                 .data = it->second.data,
             };
-            LOG_DEBUG(Lib_Net, "event[{}] = ( .events = {:#x}, .ident = {}, .data = {:#x} )", i,
-                      events[i].events, events[i].ident, events[i].data.data_u64);
             ++i;
         }
     }
@@ -1095,7 +1085,6 @@ int PS4_SYSV_ABI sceNetEpollWait(OrbisNetId epollid, OrbisNetEpollEvent* events,
 }
 
 int* PS4_SYSV_ABI sceNetErrnoLoc() {
-    LOG_TRACE(Lib_Net, "called");
     return &net_errno;
 }
 
@@ -1173,8 +1162,7 @@ int PS4_SYSV_ABI sceNetGetMacAddress(Libraries::NetCtl::OrbisNetEtherAddr* addr,
     if (addr == nullptr) {
         LOG_ERROR(Lib_Net, "addr is null!");
         return ORBIS_NET_EINVAL;
-    }
-    LOG_DEBUG(Lib_Net, "called");
+    };
 
     auto* netinfo = Common::Singleton<NetUtil::NetUtilInternal>::Instance();
     netinfo->RetrieveEthernetAddr();
@@ -1222,7 +1210,6 @@ int PS4_SYSV_ABI sceNetGetSockInfo(OrbisNetId s, OrbisNetSockInfo* info, int n, 
             return ORBIS_NET_ERROR_EINVAL;
         }
         const int count = static_cast<int>(FDTable::Instance()->GetSocketHandles().size());
-        LOG_DEBUG(Lib_Net, "queried socket count = {}", count);
         return count;
     }
 
@@ -1239,8 +1226,6 @@ int PS4_SYSV_ABI sceNetGetSockInfo(OrbisNetId s, OrbisNetSockInfo* info, int n, 
             return ORBIS_NET_ERROR_EBADF;
         }
         FillSockInfo(s, file, info);
-        LOG_DEBUG(Lib_Net, "s = {} ({}), state = {}, flags = {:#x}", s, file->m_guest_name,
-                  info->state, info->flags);
         return 1;
     }
 
@@ -1255,8 +1240,7 @@ int PS4_SYSV_ABI sceNetGetSockInfo(OrbisNetId s, OrbisNetSockInfo* info, int n, 
         }
         FillSockInfo(id, file, &info[written]);
         written++;
-    }
-    LOG_DEBUG(Lib_Net, "enumerated {} of at most {} sockets (flags = {:#x})", written, n, flags);
+    };
     return written;
 }
 
@@ -1296,17 +1280,11 @@ int PS4_SYSV_ABI sceNetGetSystemTime() {
     return ORBIS_OK;
 }
 
-u32 PS4_SYSV_ABI sceNetHtonl(u32 host32) {
-    return htonl(host32);
-}
+u32 PS4_SYSV_ABI sceNetHtonl(u32 host32) { return htonl(host32); }
 
-u64 PS4_SYSV_ABI sceNetHtonll(u64 host64) {
-    return HTONLL(host64);
-}
+u64 PS4_SYSV_ABI sceNetHtonll(u64 host64) { return HTONLL(host64); }
 
-u16 PS4_SYSV_ABI sceNetHtons(u16 host16) {
-    return htons(host16);
-}
+u16 PS4_SYSV_ABI sceNetHtons(u16 host16) { return htons(host16); }
 
 #if defined(WIN32) || defined(__linux__)
 // there isn't a strlcpy function in windows/glibc so implement one
@@ -1360,32 +1338,37 @@ const char* freebsd_inet_ntop6(const unsigned char* src, char* dst, u64 size) {
      *	Find the longest run of 0x00's in src[] for :: shorthanding.
      */
     memset(words, '\0', sizeof words);
-    for (i = 0; i < NS_IN6ADDRSZ; i++)
+    for (i = 0; i < NS_IN6ADDRSZ; i++) {
         words[i / 2] |= (src[i] << ((1 - (i % 2)) << 3));
+    }
     best.base = -1;
     best.len = 0;
     cur.base = -1;
     cur.len = 0;
     for (i = 0; i < (NS_IN6ADDRSZ / NS_INT16SZ); i++) {
         if (words[i] == 0) {
-            if (cur.base == -1)
+            if (cur.base == -1) {
                 cur.base = i, cur.len = 1;
-            else
+            } else {
                 cur.len++;
+            }
         } else {
             if (cur.base != -1) {
-                if (best.base == -1 || cur.len > best.len)
+                if (best.base == -1 || cur.len > best.len) {
                     best = cur;
+                }
                 cur.base = -1;
             }
         }
     }
     if (cur.base != -1) {
-        if (best.base == -1 || cur.len > best.len)
+        if (best.base == -1 || cur.len > best.len) {
             best = cur;
+        }
     }
-    if (best.base != -1 && best.len < 2)
+    if (best.base != -1 && best.len < 2) {
         best.base = -1;
+    }
 
     /*
      * Format the result.
@@ -1394,27 +1377,31 @@ const char* freebsd_inet_ntop6(const unsigned char* src, char* dst, u64 size) {
     for (i = 0; i < (NS_IN6ADDRSZ / NS_INT16SZ); i++) {
         /* Are we inside the best run of 0x00's? */
         if (best.base != -1 && i >= best.base && i < (best.base + best.len)) {
-            if (i == best.base)
+            if (i == best.base) {
                 *tp++ = ':';
+            }
             continue;
         }
         /* Are we following an initial run of 0x00s or any real hex? */
-        if (i != 0)
+        if (i != 0) {
             *tp++ = ':';
+        }
         /* Is this address an encapsulated IPv4? */
         if (i == 6 && best.base == 0 &&
             (best.len == 6 || (best.len == 7 && words[7] != 0x0001) ||
              (best.len == 5 && words[5] == 0xffff))) {
-            if (!freebsd_inet_ntop4(src + 12, tp, sizeof tmp - (tp - tmp)))
+            if (!freebsd_inet_ntop4(src + 12, tp, sizeof tmp - (tp - tmp))) {
                 return nullptr;
+            }
             tp += strlen(tp);
             break;
         }
         tp += snprintf(tp, sizeof(tmp) - (tp - tmp), "%x", words[i]);
     }
     /* Was it a trailing run of 0x00's? */
-    if (best.base != -1 && (best.base + best.len) == (NS_IN6ADDRSZ / NS_INT16SZ))
+    if (best.base != -1 && (best.base + best.len) == (NS_IN6ADDRSZ / NS_INT16SZ)) {
         *tp++ = ':';
+    }
     *tp++ = '\0';
 
     /*
@@ -1449,8 +1436,6 @@ const char* PS4_SYSV_ABI sceNetInetNtop(int af, const void* src, char* dst, u32 
     if (returnvalue == nullptr) {
         *sceNetErrnoLoc() = ORBIS_NET_ENOSPC;
         LOG_ERROR(Lib_Net, "returned ORBIS_NET_ENOSPC");
-    } else {
-        LOG_DEBUG(Lib_Net, "{}: {}", magic_enum::enum_name((OrbisNetFamily)af), dst);
     }
     return returnvalue;
 }
@@ -1525,18 +1510,14 @@ int PS4_SYSV_ABI sceNetMemoryFree() {
     return ORBIS_OK;
 }
 
-u32 PS4_SYSV_ABI sceNetNtohl(u32 net32) {
-    return ntohl(net32);
-}
+u32 PS4_SYSV_ABI sceNetNtohl(u32 net32) { return ntohl(net32); }
 
 int PS4_SYSV_ABI sceNetNtohll() {
     LOG_ERROR(Lib_Net, "(STUBBED) called");
     return ORBIS_OK;
 }
 
-u16 PS4_SYSV_ABI sceNetNtohs(u16 net16) {
-    return ntohs(net16);
-}
+u16 PS4_SYSV_ABI sceNetNtohs(u16 net16) { return ntohs(net16); }
 
 int PS4_SYSV_ABI sceNetPoolCreate(const char* name, int size, int flags) {
     LOG_ERROR(Lib_Net, "(DUMMY) name = {} size = {} flags = {} ", std::string(name), size, flags);
@@ -1613,7 +1594,6 @@ int PS4_SYSV_ABI sceNetResolverConnectDestroy() {
 
 int PS4_SYSV_ABI sceNetResolverCreate(const char* name, int poolid, int flags) {
     const char* safe_name = name ? name : "";
-    LOG_INFO(Lib_Net, "name = {}, poolid = {}, flags = {}", safe_name, poolid, flags);
 
     if (flags != 0) {
         *sceNetErrnoLoc() = ORBIS_NET_EINVAL;
@@ -1649,7 +1629,6 @@ int PS4_SYSV_ABI sceNetResolverGetError(OrbisNetId resolverid, s32* status) {
     }
 
     *status = file->resolver->resolution_error;
-    LOG_INFO(Lib_Net, "called rid = {}, error = {:#x}", resolverid, static_cast<u32>(*status));
     return ORBIS_OK;
 }
 
@@ -1665,9 +1644,6 @@ int PS4_SYSV_ABI sceNetResolverStartAton6() {
 
 int PS4_SYSV_ABI sceNetResolverStartNtoa(OrbisNetId resolverid, const char* hostname,
                                          OrbisNetInAddr* addr, int timeout, int retry, int flags) {
-    LOG_INFO(Lib_Net,
-             "called, resolverid = {}, hostname = {}, timeout = {}, retry = {}, flags = {}",
-             resolverid, hostname, timeout, retry, flags);
 
     auto file = FDTable::Instance()->GetResolver(resolverid);
     if (!file) {

@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/videodec/videodec.h"
 #include "common/alignment.h"
 #include "common/logging/log.h"
 #include "core/libraries/libs.h"
-#include "core/libraries/videodec/videodec.h"
 #include "core/libraries/videodec/videodec_error.h"
 #include "core/libraries/videodec/videodec_impl.h"
 
@@ -52,7 +52,6 @@ static void ComputeWorstCaseDimensions(const OrbisVideodecConfigInfo& cfg, s32& 
 int PS4_SYSV_ABI sceVideodecCreateDecoder(const OrbisVideodecConfigInfo* pCfgInfoIn,
                                           const OrbisVideodecResourceInfo* pRsrcInfoIn,
                                           OrbisVideodecCtrl* pCtrlOut) {
-    LOG_INFO(Lib_Videodec, "called");
 
     if (!pCfgInfoIn || !pRsrcInfoIn || !pCtrlOut) {
         LOG_ERROR(Lib_Videodec, "Invalid arguments");
@@ -75,7 +74,6 @@ int PS4_SYSV_ABI sceVideodecDecode(OrbisVideodecCtrl* pCtrlIn,
                                    const OrbisVideodecInputData* pInputDataIn,
                                    OrbisVideodecFrameBuffer* pFrameBufferInOut,
                                    OrbisVideodecPictureInfo* pPictureInfoOut) {
-    LOG_TRACE(Lib_Videodec, "called");
     if (!pCtrlIn || !pInputDataIn || !pPictureInfoOut) {
         LOG_ERROR(Lib_Videodec, "Invalid arguments");
         return ORBIS_VIDEODEC_ERROR_ARGUMENT_POINTER;
@@ -95,7 +93,6 @@ int PS4_SYSV_ABI sceVideodecDecode(OrbisVideodecCtrl* pCtrlIn,
 }
 
 int PS4_SYSV_ABI sceVideodecDeleteDecoder(OrbisVideodecCtrl* pCtrlIn) {
-    LOG_INFO(Lib_Videodec, "(STUBBED) called");
 
     VdecDecoder* decoder = (VdecDecoder*)pCtrlIn->handle;
     if (!decoder) {
@@ -109,7 +106,6 @@ int PS4_SYSV_ABI sceVideodecDeleteDecoder(OrbisVideodecCtrl* pCtrlIn) {
 int PS4_SYSV_ABI sceVideodecFlush(OrbisVideodecCtrl* pCtrlIn,
                                   OrbisVideodecFrameBuffer* pFrameBufferInOut,
                                   OrbisVideodecPictureInfo* pPictureInfoOut) {
-    LOG_INFO(Lib_Videodec, "called");
 
     if (!pFrameBufferInOut || !pPictureInfoOut) {
         LOG_ERROR(Lib_Videodec, "Invalid arguments");
@@ -136,7 +132,6 @@ int PS4_SYSV_ABI sceVideodecMapMemory() {
 
 int PS4_SYSV_ABI sceVideodecQueryResourceInfo(const OrbisVideodecConfigInfo* pCfgInfoIn,
                                               OrbisVideodecResourceInfo* pRsrcInfoOut) {
-    LOG_INFO(Lib_Videodec, "called");
 
     if (!pCfgInfoIn || !pRsrcInfoOut) {
         LOG_ERROR(Lib_Videodec, "Invalid arguments");
@@ -187,7 +182,6 @@ int PS4_SYSV_ABI sceVideodecQueryResourceInfo(const OrbisVideodecConfigInfo* pCf
 }
 
 int PS4_SYSV_ABI sceVideodecReset(OrbisVideodecCtrl* pCtrlIn) {
-    LOG_INFO(Lib_Videodec, "(STUBBED) called");
 
     VdecDecoder* decoder = (VdecDecoder*)pCtrlIn->handle;
     decoder->Reset();

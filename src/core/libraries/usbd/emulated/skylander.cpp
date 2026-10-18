@@ -1,8 +1,8 @@
 //  SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 //  SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <mutex>
 #include "skylander.h"
+#include <mutex>
 
 namespace Libraries::Usbd {
 
@@ -160,8 +160,9 @@ std::array<u8, 64> SkylanderPortal::GetStatus() {
 }
 
 void SkylanderPortal::QueryBlock(u8 sky_num, u8 block, u8* reply_buf) {
-    if (!IsSkylanderNumberValid(sky_num) || !IsBlockNumberValid(block))
+    if (!IsSkylanderNumberValid(sky_num) || !IsBlockNumberValid(block)) {
         return;
+    }
 
     std::lock_guard lock(sky_mutex);
 
@@ -178,8 +179,9 @@ void SkylanderPortal::QueryBlock(u8 sky_num, u8 block, u8* reply_buf) {
 }
 
 void SkylanderPortal::WriteBlock(u8 sky_num, u8 block, const u8* to_write_buf, u8* reply_buf) {
-    if (!IsSkylanderNumberValid(sky_num) || !IsBlockNumberValid(block))
+    if (!IsSkylanderNumberValid(sky_num) || !IsBlockNumberValid(block)) {
         return;
+    }
 
     std::lock_guard lock(sky_mutex);
 
@@ -197,20 +199,16 @@ void SkylanderPortal::WriteBlock(u8 sky_num, u8 block, const u8* to_write_buf, u
     }
 }
 
-bool SkylanderPortal::IsSkylanderNumberValid(u8 sky_num) {
-    return sky_num < MAX_SKYLANDERS;
-}
+bool SkylanderPortal::IsSkylanderNumberValid(u8 sky_num) { return sky_num < MAX_SKYLANDERS; }
 
-bool SkylanderPortal::IsBlockNumberValid(u8 block) {
-    return block < 64;
-}
+bool SkylanderPortal::IsBlockNumberValid(u8 block) { return block < 64; }
 
 libusb_endpoint_descriptor* SkylanderBackend::FillEndpointDescriptorPair() {
     return m_endpoint_descriptors.data();
 }
 
-libusb_interface_descriptor* SkylanderBackend::FillInterfaceDescriptor(
-    libusb_endpoint_descriptor* descs) {
+libusb_interface_descriptor*
+SkylanderBackend::FillInterfaceDescriptor(libusb_endpoint_descriptor* descs) {
     m_interface_descriptors[0].endpoint = descs;
     return m_interface_descriptors.data();
 }
@@ -241,18 +239,16 @@ s32 SkylanderBackend::ControlTransfer(libusb_device_handle* dev_handle, u8 bmReq
     switch (data[0]) {
     case 'A': {
         // Activation
-        // Command	{ 'A', (00 | 01), 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
-        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 }
-        // Response	{ 'A', (00 | 01),
-        // ff, 77, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
-        // 00, 00, 00, 00, 00, 00, 00, 00 }
-        // The 2nd byte of the command is whether to activate (0x01) or deactivate (0x00) the
-        // portal. The response echos back the activation byte as the 2nd byte of the response. The
-        // 3rd and 4th bytes of the response appear to vary from wired to wireless. On wired
-        // portals, the bytes appear to always be ff 77. On wireless portals, during activation the
-        // 3rd byte appears to count down from ff (possibly a battery power indication) and during
-        // deactivation ed and eb responses have been observed. The 4th byte appears to always be 00
-        // for wireless portals.
+        // Command	{ 'A', (00 | 01), 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 } Response	{ 'A', (00 |
+        // 01), ff, 77, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+        // 00, 00, 00, 00, 00, 00, 00, 00, 00 } The 2nd byte of the command is whether to activate
+        // (0x01) or deactivate (0x00) the portal. The response echos back the activation byte as
+        // the 2nd byte of the response. The 3rd and 4th bytes of the response appear to vary from
+        // wired to wireless. On wired portals, the bytes appear to always be ff 77. On wireless
+        // portals, during activation the 3rd byte appears to count down from ff (possibly a battery
+        // power indication) and during deactivation ed and eb responses have been observed. The 4th
+        // byte appears to always be 00 for wireless portals.
 
         // Wii U Wireless: 41 01 f4 00 41 00 ed 00 41 01 f4 00 41 00 eb 00 41 01 f3 00 41 00 ed 00
         if (wLength == 2) {
@@ -269,12 +265,10 @@ s32 SkylanderBackend::ControlTransfer(libusb_device_handle* dev_handle, u8 bmReq
     }
     case 'C': {
         // Color
-        // Command	{ 'C', 12, 34, 56, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
-        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 }
-        // Response	{ 'C', 12, 34, 56, 00, 00,
+        // Command	{ 'C', 12, 34, 56, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 } Response	{ 'C', 12, 34, 56,
         // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
-        // 00, 00, 00, 00 }
-        // The 3 bytes {12, 34, 56} are RGB values.
+        // 00, 00, 00, 00, 00, 00 } The 3 bytes {12, 34, 56} are RGB values.
 
         // This command should set the color of the LED in the portal, however this appears
         // deprecated in most of the recent portals. On portals that do not have LEDs, this command
@@ -342,14 +336,13 @@ s32 SkylanderBackend::ControlTransfer(libusb_device_handle* dev_handle, u8 bmReq
         break;
     }
         // Query
-        // Command	{ 'Q', 10, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
-        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 }
-        // Response	{ 'Q', 10, 00, 00, 00, 00,
+        // Command	{ 'Q', 10, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 } Response	{ 'Q', 10, 00, 00,
         // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
-        // 00, 00, 00, 00 }
-        // In the command the 2nd byte indicates which Skylander to query data
-        // from. Index starts at 0x10 for the 1st Skylander (as reported in the Status command.) The
-        // 16th Skylander indexed would be 0x20. The 3rd byte indicate which block to read from.
+        // 00, 00, 00, 00, 00, 00 } In the command the 2nd byte indicates which Skylander to query
+        // data from. Index starts at 0x10 for the 1st Skylander (as reported in the Status
+        // command.) The 16th Skylander indexed would be 0x20. The 3rd byte indicate which block to
+        // read from.
 
         // A response with the 2nd byte of 0x01 indicates an error in the read. Otherwise, the
         // response indicates the Skylander's index in the 2nd byte, the block read in the 3rd byte,
@@ -370,13 +363,11 @@ s32 SkylanderBackend::ControlTransfer(libusb_device_handle* dev_handle, u8 bmReq
     }
     case 'R': {
         // Ready
-        // Command	{ 'R', 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
-        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 }
-        // Response	{ 'R', 02, 0a, 03, 02, 00,
-        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
-        // 00, 00, 00, 00 }
-        // The 4 byte sequence after the R (0x52) is unknown, but appears consistent based on device
-        // type.
+        // Command	{ 'R', 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 } Response	{ 'R', 02, 0a, 03,
+        // 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+        // 00, 00, 00, 00, 00, 00 } The 4 byte sequence after the R (0x52) is unknown, but appears
+        // consistent based on device type.
         if (wLength == 2) {
             control_response = {0x52, 0x00};
             interrupt_response = {0x52, 0x02, 0x1b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -388,13 +379,11 @@ s32 SkylanderBackend::ControlTransfer(libusb_device_handle* dev_handle, u8 bmReq
         break;
     }
         // Status
-        // Command	{ 'S', 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
-        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 }
-        // Response	{ 'S', 55, 00, 00, 55, 3e,
-        // (00|01), 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
-        // 00, 00, 00, 00, 00 }
-        // Status is the default command. If you open the HID device and
-        // activate the portal, you will get status outputs.
+        // Command	{ 'S', 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 } Response	{ 'S', 55, 00, 00,
+        // 55, 3e, (00|01), 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+        // 00, 00, 00, 00, 00, 00, 00 } Status is the default command. If you open the HID device
+        // and activate the portal, you will get status outputs.
 
         // The 4 bytes {55, 00, 00, 55} are the status of characters on the portal. The 4 bytes are
         // treated as a 32-bit binary array. Each unique Skylander placed on a board is represented
@@ -432,14 +421,12 @@ s32 SkylanderBackend::ControlTransfer(libusb_device_handle* dev_handle, u8 bmReq
         break;
     }
         // Write
-        // Command	{ 'W', 10, 00, 01, 02, 03, 04, 05, 06, 07, 08, 09, 0a, 0b, 0c, 0d, 0e, 0f, 00,
-        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 }
-        // Response	{ 'W', 00, 00, 00, 00, 00,
+        // Command	{ 'W', 10, 00, 01, 02, 03, 04, 05, 06, 07, 08, 09, 0a, 0b, 0c, 0d, 0e, 0f,
+        // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00 } Response	{ 'W', 00, 00, 00,
         // 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
-        // 00, 00, 00, 00 }
-        // In the command the 2nd byte indicates which Skylander to query data from. Index starts at
-        // 0x10 for the 1st Skylander (as reported in the Status command.) The 16th Skylander
-        // indexed would be 0x20.
+        // 00, 00, 00, 00, 00, 00 } In the command the 2nd byte indicates which Skylander to query
+        // data from. Index starts at 0x10 for the 1st Skylander (as reported in the Status
+        // command.) The 16th Skylander indexed would be 0x20.
 
         // 3rd byte is the block to write to.
 
@@ -482,8 +469,7 @@ libusb_transfer_status SkylanderBackend::HandleAsyncTransfer(libusb_transfer* tr
         }
         transfer->length = 32;
         break;
-    case 0x02:
-        LOG_INFO(Lib_Usbd, "OUT ENDPOINT");
+    case 0x02:;
         break;
 
     default:
@@ -493,8 +479,9 @@ libusb_transfer_status SkylanderBackend::HandleAsyncTransfer(libusb_transfer* tr
 }
 
 void Skylander::Save() {
-    if (!skyFile.IsOpen())
+    if (!skyFile.IsOpen()) {
         return;
+    }
 
     skyFile.Seek(0);
     skyFile.Write(data);

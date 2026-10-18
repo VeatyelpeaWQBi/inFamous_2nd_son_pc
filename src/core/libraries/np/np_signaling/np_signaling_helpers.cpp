@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <chrono>
-#include <cstring>
-#include <fmt/format.h>
+#include "core/libraries/np/np_signaling/np_signaling_helpers.h"
 #include "common/alignment.h"
 #include "common/logging/log.h"
 #include "common/singleton.h"
@@ -14,9 +12,11 @@
 #include "core/libraries/network/net_util.h"
 #include "core/libraries/np/np_common.h"
 #include "core/libraries/np/np_error.h"
-#include "core/libraries/np/np_signaling/np_signaling_helpers.h"
 #include "core/libraries/np/np_signaling/np_signaling_state.h"
 #include "core/libraries/np/np_signaling/np_signaling_stubs.h"
+#include <chrono>
+#include <cstring>
+#include <fmt/format.h>
 
 namespace Libraries::Np::NpSignaling::Helpers {
 
@@ -43,13 +43,9 @@ s32 GetInferredAppType(s32* app_type) {
     return ORBIS_OK;
 }
 
-s16 GetAppTypeStateGate() {
-    return 0;
-}
+s16 GetAppTypeStateGate() { return 0; }
 
-void SetAppTypeMarker(u16 marker) {
-    LOG_DEBUG(Lib_NpSignaling, "marker={:#x}", marker);
-}
+void SetAppTypeMarker(u16 marker) { ; }
 } // namespace
 
 void SetRuntimeHooks(const SignalingRuntimeHooks& hooks) {
@@ -72,7 +68,6 @@ s32 CheckInitializeAppType(u32* is_app_type_4) {
 }
 
 s32 InitSignalingHeap(s64 pool_size) {
-    LOG_DEBUG(Lib_NpSignaling, "pool_size={}", pool_size);
 
     if (pool_size == 0 || g_signaling_heap_initialized) {
         return ORBIS_NP_SIGNALING_INTERNAL_ERROR_ALLOCATOR;
@@ -127,10 +122,6 @@ s32 CheckAppType() {
 }
 
 s32 StartMainRuntime(s32 thread_priority, s32 cpu_affinity_mask, s64 thread_stack_size) {
-    LOG_DEBUG(Lib_NpSignaling,
-              "thread_priority={} cpu_affinity_mask={} "
-              "thread_stack_size={}",
-              thread_priority, cpu_affinity_mask, thread_stack_size);
 
     if (!g_runtime_hooks_registered) {
         return ORBIS_NP_SIGNALING_INTERNAL_ERROR_NOT_INITIALIZED;
@@ -153,8 +144,6 @@ s32 StartMainRuntime(s32 thread_priority, s32 cpu_affinity_mask, s64 thread_stac
 }
 
 s32 StartEchoRuntime(s32 thread_priority, s32 cpu_affinity_mask) {
-    LOG_DEBUG(Lib_NpSignaling, "thread_priority={} cpu_affinity_mask={}", thread_priority,
-              cpu_affinity_mask);
 
     auto sock = Libraries::Net::sceNetSocket("SceNpSignalingIoctl", 2, 6, 0);
     if (sock < 0) {
@@ -218,8 +207,6 @@ static void HandleStunEcho(s32 ctx_id, const StunEcho& echo) {
     ctx.ext_addr.store(echo.ext_ip);
     ctx.ext_port.store(echo.ext_port);
 
-    LOG_DEBUG(Lib_NpSignaling, "STUN echo: ctxId={} ext_addr={:#x} ext_port={}", ctx_id,
-              echo.ext_ip, sceNetNtohs(echo.ext_port));
 
     auto* netinfo = Common::Singleton<NetUtil::NetUtilInternal>::Instance();
     netinfo->SetExternalIp(echo.ext_ip);
@@ -271,13 +258,7 @@ static void ReceiveThreadMain() {
 
         const auto nbytes = static_cast<size_t>(rc);
 
-        if (nbytes != sizeof(StunEcho)) {
-            LOG_DEBUG(
-                Lib_NpSignaling,
-                "ReceiveThread DATA from {:#x}:{} size={} b0-4={:02x},{:02x},{:02x},{:02x},{:02x}",
-                from_addr, sceNetNtohs(from_port), nbytes, buf[0], buf[1], buf[2], buf[3],
-                nbytes >= 5 ? buf[4] : 0);
-        }
+
 
         if (nbytes == sizeof(StunEcho)) {
             s32 ctx_id = 0;
@@ -467,15 +448,6 @@ static void DispatchThreadMain() {
         }
 
         if (dispatch.callback) {
-            LOG_INFO(Lib_NpSignaling, "t={} ctxId={} connId={} event={}({}) delay={}ms", NowMs(),
-                     dispatch.ctx_id, dispatch.conn_id, dispatch.event_type,
-                     SignalingEventName(dispatch.event_type), dispatch.delay_ms);
-            LOG_DEBUG(Lib_NpSignaling,
-                      "INVOKE signaling_cb={} ctxId={} connId={} event={}({}) errorCode={} arg={}",
-                      fmt::ptr(reinterpret_cast<void*>(dispatch.callback)), dispatch.ctx_id,
-                      dispatch.conn_id, dispatch.event_type,
-                      SignalingEventName(dispatch.event_type), dispatch.error_code,
-                      fmt::ptr(dispatch.callback_arg));
             dispatch.callback(static_cast<u32>(dispatch.ctx_id), static_cast<u32>(dispatch.conn_id),
                               dispatch.event_type, dispatch.error_code, dispatch.callback_arg);
         }

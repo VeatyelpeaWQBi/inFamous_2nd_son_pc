@@ -1,25 +1,25 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
-#include <charconv>
-#include <cctype>
-#include <array>
-#include <cstdlib>
-#include <string_view>
-#include <codecvt>
-#include <fstream>
-#include <limits>
-#include <sstream>
-#include <string>
-#include <nlohmann/json.hpp>
-#include <pugixml.hpp>
+#include "memory_patcher.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "common/path_util.h"
 #include "core/emulator_state.h"
 #include "core/file_format/psf.h"
-#include "memory_patcher.h"
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <charconv>
+#include <codecvt>
+#include <cstdlib>
+#include <fstream>
+#include <limits>
+#include <nlohmann/json.hpp>
+#include <pugixml.hpp>
+#include <sstream>
+#include <string>
+#include <string_view>
 
 namespace MemoryPatcher {
 
@@ -47,9 +47,7 @@ static bool isHex0x(const std::string& s) {
 
 // possible prefixes == (s == `0x` || s == `#` || s == `$`) will be interpet as hex value, else is
 // decimal
-static int convertNumBase(const std::string& s) {
-    return (isHex0x(s) || isHexSym(s)) ? 16 : 10;
-}
+static int convertNumBase(const std::string& s) { return (isHex0x(s) || isHexSym(s)) ? 16 : 10; }
 
 std::string convertValueToHex(const std::string type, const std::string valueStr) {
     std::string result;
@@ -127,8 +125,6 @@ std::string convertValueToHex(const std::string type, const std::string valueStr
         result = valueStr;
     } else if (type == "mask" || type == "mask_jump32") {
         result = valueStr;
-    } else {
-        LOG_INFO(Loader, "Error applying Patch, unknown type: {}", type);
     }
     return result;
 }
@@ -154,16 +150,18 @@ void ApplyPatchesFromXML(std::filesystem::path path) {
                     std::string metadataAppElf = it->attribute("AppElf").value();
                     bool versionMatches = metadataAppVer == app_version;
 
-                    if (metadataAppElf != g_eboot_name)
+                    if (metadataAppElf != g_eboot_name) {
                         continue;
+                    }
 
                     auto patchList = it->first_child();
                     for (pugi::xml_node_iterator patchLineIt = patchList.children().begin();
                          patchLineIt != patchList.children().end(); ++patchLineIt) {
 
                         std::string type = patchLineIt->attribute("Type").value();
-                        if (!versionMatches && type != "mask" && type != "mask_jump32")
+                        if (!versionMatches && type != "mask" && type != "mask_jump32") {
                             continue;
+                        }
 
                         std::string address = patchLineIt->attribute("Address").value();
                         std::string patchValue = patchLineIt->attribute("Value").value();
@@ -198,11 +196,13 @@ void ApplyPatchesFromXML(std::filesystem::path path) {
                         MemoryPatcher::PatchMask patchMask = MemoryPatcher::PatchMask::None;
                         int maskOffsetValue = 0;
 
-                        if (type == "mask")
+                        if (type == "mask") {
                             patchMask = MemoryPatcher::PatchMask::Mask;
+                        }
 
-                        if (type == "mask_jump32")
+                        if (type == "mask_jump32") {
                             patchMask = MemoryPatcher::PatchMask::Mask_Jump32;
+                        }
 
                         if ((type == "mask" || type == "mask_jump32") && !maskOffsetStr.empty()) {
                             maskOffsetValue = std::stoi(maskOffsetStr, 0, 10);
@@ -293,7 +293,6 @@ static void ApplyBuiltInFixes() {
             }
         }
         if (already) {
-            LOG_INFO(Loader, "Built-in fix {}: already made by a patch", fix.name);
             continue;
         }
         PatchMemory({
@@ -382,8 +381,9 @@ void ApplyPendingPatches() {
     for (size_t i = 0; i < pending_patches.size(); ++i) {
         const patchInfo& currentPatch = pending_patches[i];
 
-        if (currentPatch.gameSerial != "*" && currentPatch.gameSerial != g_game_serial)
+        if (currentPatch.gameSerial != "*" && currentPatch.gameSerial != g_game_serial) {
             continue;
+        }
 
         PatchMemory(currentPatch);
     }
@@ -392,8 +392,7 @@ void ApplyPendingPatches() {
 }
 
 static bool WithinImage(uintptr_t address, size_t size) {
-    return g_eboot_address != 0 && address >= g_eboot_address &&
-           size <= g_eboot_image_size &&
+    return g_eboot_address != 0 && address >= g_eboot_address && size <= g_eboot_image_size &&
            address - g_eboot_address <= g_eboot_image_size - size;
 }
 
@@ -408,7 +407,9 @@ bool PatchMemory(const patchInfo& patch) {
 
     if (patch.patchMask == PatchMask::None) {
         std::string_view text{patch.offsetStr};
-        if (text.starts_with("0x") || text.starts_with("0X")) text.remove_prefix(2);
+        if (text.starts_with("0x") || text.starts_with("0X")) {
+            text.remove_prefix(2);
+        }
         u64 offset{};
         const auto parsed = std::from_chars(text.data(), text.data() + text.size(), offset, 16);
         if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
@@ -416,8 +417,12 @@ bool PatchMemory(const patchInfo& patch) {
             LOG_ERROR(Loader, "Invalid offset for patch {}", patch.modNameStr);
             return false;
         }
-        if (!patch.isOffset) offset -= 0x400000;
-        if (offset >= g_eboot_image_size) return false;
+        if (!patch.isOffset) {
+            offset -= 0x400000;
+        }
+        if (offset >= g_eboot_image_size) {
+            return false;
+        }
         cheatAddress = reinterpret_cast<void*>(g_eboot_address + offset);
     }
 
@@ -430,7 +435,9 @@ bool PatchMemory(const patchInfo& patch) {
         const auto parsedSize = std::from_chars(
             patch.sizeStr.data(), patch.sizeStr.data() + patch.sizeStr.size(), jumpSize);
         if (parsedSize.ec != std::errc{} ||
-            parsedSize.ptr != patch.sizeStr.data() + patch.sizeStr.size()) return false;
+            parsedSize.ptr != patch.sizeStr.data() + patch.sizeStr.size()) {
+            return false;
+        }
 
         constexpr int MAX_PATTERN_LENGTH = 256;
         if (jumpSize < 5) {
@@ -481,11 +488,13 @@ bool PatchMemory(const patchInfo& patch) {
             return false;
         }
         const s64 forward = static_cast<s64>(jump_target) - static_cast<s64>(patchAddress + 5);
-        const s64 backward = static_cast<s64>(patchAddress + jumpSize) -
-                             static_cast<s64>(code_cave_end + 5);
+        const s64 backward =
+            static_cast<s64>(patchAddress + jumpSize) - static_cast<s64>(code_cave_end + 5);
         if ((patchAddress < code_cave_end + 5 && jump_target < patchAddress + jumpSize) ||
-            forward < std::numeric_limits<s32>::min() || forward > std::numeric_limits<s32>::max() ||
-            backward < std::numeric_limits<s32>::min() || backward > std::numeric_limits<s32>::max()) {
+            forward < std::numeric_limits<s32>::min() ||
+            forward > std::numeric_limits<s32>::max() ||
+            backward < std::numeric_limits<s32>::min() ||
+            backward > std::numeric_limits<s32>::max()) {
             LOG_ERROR(Loader, "Patch cave overlaps the source or needs an out-of-range jump");
             return false;
         }
@@ -513,10 +522,6 @@ bool PatchMemory(const patchInfo& patch) {
         std::memcpy(&jumpBack[1], &target_return, sizeof(target_return));
         std::memcpy(reinterpret_cast<void*>(code_cave_end), jumpBack, sizeof(jumpBack));
 
-        LOG_INFO(Loader,
-                 "Applied Patch mask_jump32: {}, PatchAddress: {:#x}, JumpTarget: {:#x}, "
-                 "CodeCaveEnd: {:#x}, JumpSize: {}",
-                 patch.modNameStr, patchAddress, jump_target, code_cave_end, jumpSize);
         return true;
     }
 
@@ -577,8 +582,6 @@ bool PatchMemory(const patchInfo& patch) {
 
     std::memcpy(cheatAddress, bytePatch.data(), bytePatch.size());
 
-    LOG_INFO(Loader, "Applied patch: {}, Offset: {:#x}, Value: {}", patch.modNameStr,
-             (uintptr_t)cheatAddress, patch.valueStr);
     return true;
 }
 
@@ -590,14 +593,20 @@ static std::vector<int32_t> PatternToByte(const std::string& pattern) {
             ++cursor;
         } else if (pattern[cursor] == '?') {
             ++cursor;
-            if (cursor < pattern.size() && pattern[cursor] == '?') ++cursor;
+            if (cursor < pattern.size() && pattern[cursor] == '?') {
+                ++cursor;
+            }
             bytes.push_back(-1);
         } else {
-            if (pattern.size() - cursor < 2) return {};
+            if (pattern.size() - cursor < 2) {
+                return {};
+            }
             unsigned value{};
             const auto start = pattern.data() + cursor;
             const auto parsed = std::from_chars(start, start + 2, value, 16);
-            if (parsed.ec != std::errc{} || parsed.ptr != start + 2) return {};
+            if (parsed.ec != std::errc{} || parsed.ptr != start + 2) {
+                return {};
+            }
             bytes.push_back(static_cast<int32_t>(value));
             cursor += 2;
         }
@@ -613,7 +622,9 @@ uintptr_t PatternScan(const std::string& signature) {
     const int32_t* sigPtr = patternBytes.data();
     const size_t sigSize = patternBytes.size();
 
-    if (!g_eboot_address || sigSize == 0 || sigSize > g_eboot_image_size) return 0;
+    if (!g_eboot_address || sigSize == 0 || sigSize > g_eboot_image_size) {
+        return 0;
+    }
     for (size_t i = 0; i <= g_eboot_image_size - sigSize; ++i) {
         bool found = true;
         for (size_t j = 0; j < sigSize; ++j) {

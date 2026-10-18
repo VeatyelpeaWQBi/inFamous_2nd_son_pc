@@ -13,8 +13,8 @@
 #include <utility>
 #include <vector>
 
-#include "common/perf_stats.h"
 #include "common/types.h"
+#include "core/runtime_policy.h"
 #include "video_core/buffer_cache/region_manager.h"
 
 namespace VideoCore {
@@ -26,21 +26,15 @@ using PageSnapshot = std::array<u8, BYTES_PER_PAGE>;
 void CopyGuestPage(VAddr page, u8* dest);
 
 class MemoryTracker {
-public:
+  public:
     static constexpr u64 MAX_CPU_PAGE_BITS = 40;
     static constexpr u64 MAX_CPU_ADDRESS = 1ULL << MAX_CPU_PAGE_BITS;
     static constexpr u64 NUM_HIGH_PAGES = 1ULL << (MAX_CPU_PAGE_BITS - HIGHER_PAGE_BITS);
     static constexpr u64 MANAGER_POOL_SIZE = 32;
 
-public:
+  public:
     explicit MemoryTracker(PageManager& tracker_)
         : tracker{&tracker_}, readbacks_mode{EmulatorSettings.GetReadbacksMode()} {
-        // perf_tuning.ini, applied before the game starts, takes precedence.
-        auto& tuning = Common::Perf::GetTuning();
-        if (!tuning.readback_write_discard_from_ini.load(std::memory_order_relaxed)) {
-            tuning.readback_write_discard.store(EmulatorSettings.IsReadbacksWriteDiscard(),
-                                                std::memory_order_relaxed);
-        }
         for (auto& word : region_summary) {
             word.store(~u64{0}, std::memory_order_relaxed);
         }
@@ -65,8 +59,7 @@ public:
     /// Calls func() with the region of the page locked if the page is neither CPU nor GPU modified
     /// (guest memory and the GPU copy hold the same data): a guest write to it waits meanwhile.
     /// Returns whether func was called.
-    template <typename Func>
-    bool WithCleanPageLocked(VAddr page, Func&& func) {
+    template <typename Func> bool WithCleanPageLocked(VAddr page, Func&& func) {
         bool called = false;
         IteratePages(page, BYTES_PER_PAGE, [&](RegionManager* manager, u64 offset, u64 size) {
             const auto bounds = manager->GetBounds(offset, size);
@@ -249,35 +242,31 @@ public:
     /// A write fault (is_fault) also counts towards making the page hot, see RegionManager.
     bool InvalidateRegion(VAddr cpu_addr, u64 size, bool is_fault, bool from_gpu_thread,
                           auto&& on_flush) noexcept {
-        const u32 hot_threshold =
-            is_fault ? Common::Perf::GetTuning().hot_page_faults.load(std::memory_order_relaxed)
-                     : 0;
+        const u32 hot_threshold = is_fault ? Core::Runtime::GetPolicy().hot_page_faults : 0;
         if (readbacks_mode == GpuReadbacksMode::Disabled) {
-            IteratePages(cpu_addr, size,
-                         [is_fault, from_gpu_thread, hot_threshold](RegionManager* manager,
-                                                                    u64 offset, u64 size) {
-                             const auto bounds = manager->GetBounds(offset, size);
-                             const bool late = manager->Lock(bounds);
-                             manager->template ChangeRegionState<StateOp::Set, StateOp::None,
-                                                                 false>(offset, size);
-                             if (is_fault) {
-                                 manager->NoteWriteFrame(offset, size);
-                                 manager->NoteWriteFault(offset, size, from_gpu_thread,
-                                                         hot_threshold);
-                             }
-                             manager->Unlock(bounds, late);
-                         });
+            IteratePages(
+                cpu_addr, size,
+                [is_fault, from_gpu_thread, hot_threshold](RegionManager* manager, u64 offset,
+                                                           u64 size) {
+                    const auto bounds = manager->GetBounds(offset, size);
+                    const bool late = manager->Lock(bounds);
+                    manager->template ChangeRegionState<StateOp::Set, StateOp::None, false>(offset,
+                                                                                            size);
+                    if (is_fault) {
+                        manager->NoteWriteFrame(offset, size);
+                        manager->NoteWriteFault(offset, size, from_gpu_thread, hot_threshold);
+                    }
+                    manager->Unlock(bounds, late);
+                });
             return false;
         }
         bool should_flush = false;
         bool discarded = false;
-        const bool discard =
-            readbacks_mode == GpuReadbacksMode::Precise &&
-            Common::Perf::GetTuning().readback_write_discard.load(std::memory_order_relaxed);
+        const bool discard = readbacks_mode == GpuReadbacksMode::Precise &&
+                             Core::Runtime::GetPolicy().readback_write_discard;
         // Only small invalidations (write faults) keep the content of the pages they discard.
-        const bool merge =
-            discard && size <= MaxSnapshotPages * BYTES_PER_PAGE &&
-            Common::Perf::GetTuning().readback_write_merge.load(std::memory_order_relaxed);
+        const bool merge = discard && size <= MaxSnapshotPages * BYTES_PER_PAGE &&
+                           Core::Runtime::GetPolicy().readback_write_merge;
         IteratePages(
             cpu_addr, size,
             [this, &should_flush, &discarded, discard, merge, cpu_addr, is_fault, from_gpu_thread,
@@ -321,7 +310,7 @@ public:
                 } else {
                     if (discard) {
                         // A pending readback would overwrite the CPU write: flush instead.
-                        Common::Perf::Add(Common::Perf::ReadbackDiscardsBlocked);
+                        ;
                     }
                     should_flush = true;
                 }
@@ -386,9 +375,7 @@ public:
 
     /// The sequence number of the last GPU write recorded (command processor thread only): a
     /// range whose GetWriteSeq is above the number read earlier was written since.
-    u64 CurrentWriteSeq() const noexcept {
-        return last_write_seq;
-    }
+    u64 CurrentWriteSeq() const noexcept { return last_write_seq; }
 
     /// The sequence number of the latest GPU write of the range (256 KB granularity), 0 if none.
     u64 GetWriteSeq(VAddr cpu_addr, u64 size) noexcept {
@@ -418,8 +405,7 @@ public:
     /// Protects the hot pages of every region again, see RegionManager::CoolHotPages.
     /// Returns the number of pages cooled.
     u32 CoolHotPages() {
-        const u32 threshold =
-            Common::Perf::GetTuning().hot_page_faults.load(std::memory_order_relaxed);
+        const u32 threshold = Core::Runtime::GetPolicy().hot_page_faults;
         u32 cooled = 0;
         for (RegionManager* manager : top_tier) {
             if (manager) {
@@ -433,12 +419,11 @@ public:
     /// func(addr, size, keep_gpu_owned) is called with the region locked; the uploaded pages are
     /// no longer GPU owned (write merge) unless func calls keep_gpu_owned(page) for them.
     void ForEachUploadRange(VAddr cpu_addr, u64 size, bool is_written, auto&& func) {
-        if (!is_written &&
-            Common::Perf::GetTuning().region_summary.load(std::memory_order_relaxed) &&
+        if (!is_written && Core::Runtime::GetPolicy().region_summary &&
             !MayHaveCpuModified(cpu_addr, size)) {
             // No region of the range has CPU modified or hot pages (regions not created yet
             // count as modified): nothing to upload, no region to visit.
-            Common::Perf::Add(Common::Perf::RegionSummarySkips);
+            ;
             return;
         }
         IteratePages<true>(
@@ -455,7 +440,6 @@ public:
                     // every dispatch): nothing to upload, no state or protection to change.
                     if (!manager->template IsRegionModified<Type::CPU>(offset, size) &&
                         manager->IsRegionFullyGpuModified(offset, size)) {
-                        Common::Perf::Add(Common::Perf::WrittenRangeSkips);
                         return;
                     }
                     manager->template ForEachModifiedRange<Type::CPU, StateOp::Clear, StateOp::Set>(
@@ -481,8 +465,7 @@ public:
     }
 
     /// Call 'func' for each GPU modified range and unmark those pages as GPU modified
-    template <bool clear>
-    void ForEachDownloadRange(VAddr cpu_addr, u64 size, auto&& func) {
+    template <bool clear> void ForEachDownloadRange(VAddr cpu_addr, u64 size, auto&& func) {
         constexpr auto gpu_op = clear ? StateOp::Clear : StateOp::None;
         IteratePages(cpu_addr, size, [&func](RegionManager* manager, u64 offset, u64 size) {
             manager->template ForEachModifiedRange<Type::GPU, StateOp::None, gpu_op>(offset, size,
@@ -490,7 +473,7 @@ public:
         });
     }
 
-private:
+  private:
     template <bool create_region_on_fail = false, typename Func>
     bool IteratePages(VAddr cpu_address, u64 size, Func&& func) {
         using FuncReturn = typename std::invoke_result<Func, RegionManager*, u64, size_t>::type;
@@ -583,14 +566,12 @@ private:
                 continue;
             }
             if (snapshots.size() >= MaxSnapshots) {
-                Common::Perf::Add(Common::Perf::MergeSnapshotsSkipped);
                 continue;
             }
             auto entry = std::make_unique<SnapshotEntry>();
             entry->frame = frame;
             CopyGuestPage(page, entry->data.data());
             snapshots.emplace(page, std::move(entry));
-            Common::Perf::Add(Common::Perf::MergeSnapshots);
         }
         num_snapshots.store(static_cast<u32>(snapshots.size()), std::memory_order_release);
     }

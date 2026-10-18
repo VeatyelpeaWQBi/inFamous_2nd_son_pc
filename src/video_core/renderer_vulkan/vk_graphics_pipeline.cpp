@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
-#include <utility>
 #include <boost/container/small_vector.hpp>
+#include <utility>
 
 #include "common/assert.h"
-#include "common/perf_stats.h"
+#include "core/runtime_policy.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_discard_frag.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_quad_rect.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
-#include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_driver_cache.h"
+#include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
@@ -44,7 +44,6 @@ GraphicsPipeline::GraphicsPipeline(
     const vk::Device device = instance.GetDevice();
     std::ranges::copy(infos, stages.begin());
     BuildDescSetLayout(preloading);
-    const auto debug_str = GetDebugString();
 
     const vk::PushConstantRange push_constants = {
         .stageFlags = AllGraphicsStageBits,
@@ -63,7 +62,6 @@ GraphicsPipeline::GraphicsPipeline(
     ASSERT_MSG(layout_result == vk::Result::eSuccess,
                "Failed to create graphics pipeline layout: {}", vk::to_string(layout_result));
     pipeline_layout = std::move(layout);
-    SetObjectName(device, *pipeline_layout, "Graphics PipelineLayout {}", debug_str);
 
     // Everything that depends on the guest state (runtime infos, vertex sharps) is gathered here,
     // on the command processor thread, into sdata. Building the create infos and creating the
@@ -118,7 +116,6 @@ GraphicsPipeline::GraphicsPipeline(
 }
 
 void GraphicsPipeline::Compile() {
-    const u64 start_ns = Common::Perf::NowNs();
     const vk::Device device = instance.GetDevice();
     auto& sdata = build->sdata;
     const auto& modules = build->modules;
@@ -456,12 +453,10 @@ void GraphicsPipeline::Compile() {
     ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create graphics pipeline: {}",
                vk::to_string(pipeline_result));
     pipeline = std::move(pipe);
-    SetObjectName(device, *pipeline, "Graphics Pipeline {}", GetDebugString());
     build.reset();
-    Common::Perf::Add(Common::Perf::PipelineCreates);
-    Common::Perf::Add(Common::Perf::PipelineCreateNs, Common::Perf::NowNs() - start_ns);
-    if (driver_cache)
+    if (driver_cache) {
         driver_cache->Compiled();
+    }
     MarkReady();
 }
 

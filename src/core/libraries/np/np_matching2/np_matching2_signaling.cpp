@@ -143,9 +143,6 @@ void MarkMatching2PeerActive(ContextObject& ctx, OrbisNpMatching2RoomId room_id,
         peer.sent_established = true;
         QueueMatching2SignalingEvent(ctx, room_id, member_id,
                                      ORBIS_NP_MATCHING2_SIGNALING_EVENT_ESTABLISHED, ORBIS_OK);
-        LOG_INFO(Lib_NpMatching2,
-                 "Matching2 signaling established: ctx={} room={} member={} addr={:#x}:{}",
-                 ctx.ctx_id, room_id, member_id, peer.addr, Libraries::Net::sceNetNtohs(peer.port));
     }
 }
 
@@ -186,11 +183,7 @@ bool SendMatching2Handshake(ContextObject& ctx, OrbisNpMatching2RoomId room_id,
     peer.last_send = now;
     if (kind == Matching2HandshakeKind::Check) {
         peer.last_check_send = now;
-    }
-    LOG_DEBUG(Lib_NpMatching2,
-              "Matching2 handshake send kind={} ctx={} room={} {}->{} dst={:#x}:{} rc={}",
-              static_cast<u8>(kind), ctx.ctx_id, room_id, ctx.my_member_id, member_id, peer.addr,
-              Libraries::Net::sceNetNtohs(peer.port), rc);
+    };
     return rc >= 0;
 }
 
@@ -217,8 +210,6 @@ void HandleMatching2HandshakePacket(u32 from_addr, u16 from_port,
 
     ContextObject* ctx = FindContextForMatching2Packet(pkt);
     if (!ctx) {
-        LOG_DEBUG(Lib_NpMatching2, "Matching2 handshake: no ctx for room={} to_member={}",
-                  pkt.room_id, pkt.to_member_id);
         return;
     }
 
@@ -358,10 +349,6 @@ bool SendMatching2StunPing(const ContextObject& ctx) {
 
     const int rc =
         NpSignaling::Stubs::SignalingSendTo(&ping, sizeof(ping), server_addr, server_udp);
-    LOG_DEBUG(Lib_NpMatching2,
-              "Matching2 STUN ping: ctx={} online_id='{}' server={:#x}:{} local_ip={:#x} rc={}",
-              ctx.ctx_id, OnlineIdToString(ctx.online_id), server_addr,
-              Libraries::Net::sceNetNtohs(server_udp), ping.local_ip, rc);
     return rc >= 0;
 }
 
@@ -441,8 +428,6 @@ void QueueMatching2DeadForRoomPeers(ContextObject& ctx, OrbisNpMatching2RoomId r
 
         QueueMatching2SignalingEvent(ctx, room_id, member_id,
                                      ORBIS_NP_MATCHING2_SIGNALING_EVENT_DEAD, error_code);
-        LOG_INFO(Lib_NpMatching2, "Matching2 signaling dead: ctx={} room={} member={} reason={:#x}",
-                 ctx.ctx_id, room_id, member_id, static_cast<u32>(error_code));
     }
 }
 
@@ -522,7 +507,6 @@ s32 FillMatching2ConnectionInfo(const ContextObject& ctx, OrbisNpMatching2RoomId
 
     const auto room_it = ctx.room_cache.find(roomId);
     if (room_it == ctx.room_cache.end()) {
-        LOG_INFO(Lib_NpMatching2, "room={} not cached for connection info", roomId);
         if (a_variant) {
             *static_cast<OrbisNpMatching2SignalingConnectionInfoA*>(connInfo) = {};
         } else {
@@ -605,9 +589,7 @@ s32 FillMatching2ConnectionInfo(const ContextObject& ctx, OrbisNpMatching2RoomId
         }
     }
 
-    LOG_INFO(Lib_NpMatching2, "connection info{}: ctx={} room={} member={} type={} rtt={}",
-             a_variant ? "A" : "", ctx.ctx_id, roomId, memberId, infoType,
-             peer ? peer->ping_us : 0);
+    ;
     return ORBIS_OK;
 }
 

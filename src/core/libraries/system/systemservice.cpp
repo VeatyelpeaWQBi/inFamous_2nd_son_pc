@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <cstdlib>
-#include <cstring>
+#include "core/libraries/system/systemservice.h"
 #include "common/elf_info.h"
 #include "common/singleton.h"
 #include "core/emulator_settings.h"
 #include "core/file_sys/fs.h"
 #include "core/libraries/kernel/process.h"
 #include "core/libraries/libs.h"
-#include "core/libraries/system/systemservice.h"
 #include "core/libraries/system/systemservice_error.h"
 #include "emulator.h"
+#include <cstdlib>
+#include <cstring>
 
 namespace Libraries::SystemService {
 
@@ -20,9 +20,7 @@ std::queue<OrbisSystemServiceEvent> g_event_queue;
 std::mutex g_event_queue_mutex;
 s32 g_sdk_version{};
 
-bool IsSplashVisible() {
-    return EmulatorSettings.IsShowSplash() && g_splash_status;
-}
+bool IsSplashVisible() { return EmulatorSettings.IsShowSplash() && g_splash_status; }
 
 int PS4_SYSV_ABI sceAppMessagingClearEventFlag() {
     LOG_ERROR(Lib_SystemService, "(STUBBED) called");
@@ -1726,7 +1724,6 @@ int PS4_SYSV_ABI sceSystemServiceGetAppType() {
 
 s32 PS4_SYSV_ABI
 sceSystemServiceGetDisplaySafeAreaInfo(OrbisSystemServiceDisplaySafeAreaInfo* info) {
-    LOG_DEBUG(Lib_SystemService, "called");
     if (info == nullptr) {
         LOG_ERROR(Lib_SystemService, "OrbisSystemServiceDisplaySafeAreaInfo is null");
         return ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER;
@@ -1776,7 +1773,6 @@ int PS4_SYSV_ABI sceSystemServiceGetRenderingMode() {
 }
 
 s32 PS4_SYSV_ABI sceSystemServiceGetStatus(OrbisSystemServiceStatus* status) {
-    LOG_TRACE(Lib_SystemService, "called");
     if (status == nullptr) {
         LOG_ERROR(Lib_SystemService, "OrbisSystemServiceStatus is null");
         return ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER;
@@ -1803,7 +1799,6 @@ int PS4_SYSV_ABI sceSystemServiceGetVersionNumberOfCameraCalibrationData() {
 }
 
 s32 PS4_SYSV_ABI sceSystemServiceHideSplashScreen() {
-    LOG_INFO(Lib_SystemService, "called");
     g_splash_status = false;
     return ORBIS_OK;
 }
@@ -1874,12 +1869,10 @@ int PS4_SYSV_ABI sceSystemServiceLaunchWebBrowser() {
 }
 
 int PS4_SYSV_ABI sceSystemServiceLoadExec(const char* path, const char* argv[]) {
-    LOG_DEBUG(Lib_SystemService, "called");
     auto emu = Common::Singleton<Core::Emulator>::Instance();
     auto mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
     // Validate through the mount stack so archive-backed targets resolve.
     if (!mnt->Exists(std::string_view(path))) {
-        LOG_INFO(Lib_SystemService, "Restart called with invalid file '{}', exiting.", path);
         std::quick_exit(0);
     }
     std::filesystem::path exec_path;
@@ -1924,7 +1917,6 @@ int PS4_SYSV_ABI sceSystemServiceNavigateToGoHome() {
 
 s32 PS4_SYSV_ABI sceSystemServiceParamGetInt(OrbisSystemServiceParamId param_id, int* value) {
     // TODO this probably should be stored in config for UI configuration
-    LOG_DEBUG(Lib_SystemService, "called param_id {}", u32(param_id));
     if (value == nullptr) {
         LOG_ERROR(Lib_SystemService, "value is null");
         return ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER;
@@ -1977,8 +1969,8 @@ s32 PS4_SYSV_ABI sceSystemServiceParamGetInt(OrbisSystemServiceParamId param_id,
     return ORBIS_OK;
 }
 
-s32 PS4_SYSV_ABI sceSystemServiceParamGetString(OrbisSystemServiceParamId param_id,
-                                              char* buffer, size_t buffer_size) {
+s32 PS4_SYSV_ABI sceSystemServiceParamGetString(OrbisSystemServiceParamId param_id, char* buffer,
+                                                size_t buffer_size) {
     static constexpr char system_name[] = "inFAMOUS Second Son";
     if (param_id != OrbisSystemServiceParamId::SystemName || !buffer ||
         buffer_size < sizeof(system_name)) {
@@ -1999,7 +1991,6 @@ int PS4_SYSV_ABI sceSystemServiceRaiseExceptionLocalProcess() {
 }
 
 s32 PS4_SYSV_ABI sceSystemServiceReceiveEvent(OrbisSystemServiceEvent* event) {
-    LOG_TRACE(Lib_SystemService, "called");
     if (event == nullptr) {
         return ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER;
     }
@@ -2011,8 +2002,6 @@ s32 PS4_SYSV_ABI sceSystemServiceReceiveEvent(OrbisSystemServiceEvent* event) {
 
     *event = g_event_queue.front();
     g_event_queue.pop();
-    LOG_DEBUG(Lib_SystemService, "delivered event type={:#x} ({} still queued)",
-              static_cast<u32>(event->event_type), g_event_queue.size());
     return ORBIS_OK;
 }
 

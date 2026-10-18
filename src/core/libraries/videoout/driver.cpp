@@ -1,14 +1,12 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/videoout/driver.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/thread.h"
-#include "common/path_trace.h"
-#include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/kernel/time.h"
-#include "core/libraries/videoout/driver.h"
 #include "core/libraries/videoout/videoout_error.h"
 #include "imgui/renderer/imgui_core.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -147,12 +145,7 @@ int VideoOutDriver::RegisterBuffers(VideoOutPort* port, s32 startIndex, void* co
         return ORBIS_VIDEO_OUT_ERROR_INVALID_TILING_MODE;
     }
 
-    LOG_INFO(Lib_VideoOut,
-             "startIndex = {}, bufferNum = {}, pixelFormat = {}, aspectRatio = {}, "
-             "tilingMode = {}, width = {}, height = {}, pitchInPixel = {}, option = {:#x}",
-             startIndex, bufferNum, GetPixelFormatString(attribute->pixel_format),
-             attribute->aspect_ratio, static_cast<u32>(attribute->tiling_mode), attribute->width,
-             attribute->height, attribute->pitch_in_pixel, attribute->option);
+    ;
 
     auto& group = port->groups[group_index];
     std::memcpy(&group.attrib, attribute, sizeof(BufferAttribute));
@@ -171,7 +164,6 @@ int VideoOutDriver::RegisterBuffers(VideoOutPort* port, s32 startIndex, void* co
         port->SignalVoLabel();
 
         presenter->RegisterVideoOutSurface(group, address);
-        LOG_INFO(Lib_VideoOut, "buffers[{}] = {:#x}", i + startIndex, address);
     }
 
     return group_index;
@@ -222,12 +214,7 @@ int VideoOutDriver::ChangeBufferAttribute(VideoOutPort* port, s32 attributeIndex
         return ORBIS_VIDEO_OUT_ERROR_INVALID_TILING_MODE;
     }
 
-    LOG_INFO(Lib_VideoOut,
-             "attributeIndex = {}, pixelFormat = {}, aspectRatio = {}, "
-             "tilingMode = {}, width = {}, height = {}, pitchInPixel = {}, option = {:#x}",
-             attributeIndex, GetPixelFormatString(attribute->pixel_format), attribute->aspect_ratio,
-             static_cast<u32>(attribute->tiling_mode), attribute->width, attribute->height,
-             attribute->pitch_in_pixel, attribute->option);
+    ;
 
     std::unique_lock lock{port->port_mutex};
     std::memcpy(&port->groups[attributeIndex].attrib, attribute, sizeof(BufferAttribute));
@@ -235,14 +222,11 @@ int VideoOutDriver::ChangeBufferAttribute(VideoOutPort* port, s32 attributeIndex
 }
 
 void VideoOutDriver::Flip(const Request& req) {
-    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipConsume, req.trace_id,
-                            req.index, req.frame->ready_tick);
     // Update HDR status before presenting.
     presenter->SetHDR(req.port->is_hdr);
 
     // Present the frame.
     presenter->Present(req.frame);
-    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipPresentReturn, req.trace_id);
 
     // Update flip status.
     auto* port = req.port;
@@ -279,7 +263,6 @@ void VideoOutDriver::Flip(const Request& req) {
     }
     // save to prev buf index
     port->prev_index = req.index;
-    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipDone, req.trace_id);
 }
 
 void VideoOutDriver::DrawBlankFrame() {
@@ -310,24 +293,18 @@ bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
         port->flip_status.submit_tsc = Libraries::Kernel::sceKernelReadTsc();
     }
 
-    const u64 trace_id = Common::PathTrace::NextId();
-    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipRequest, trace_id, index, is_eop,
-                            static_cast<u64>(flip_arg));
+    ;
     if (!is_eop) {
         // Non EOP flips can arrive from any thread so ask GPU thread to perform them
-        liverpool->SendCommand([=, this]() {
-            SubmitFlipInternal(port, index, flip_arg, is_eop, trace_id);
-        });
+        liverpool->SendCommand([=, this]() { SubmitFlipInternal(port, index, flip_arg, is_eop); });
     } else {
-        SubmitFlipInternal(port, index, flip_arg, is_eop, trace_id);
+        SubmitFlipInternal(port, index, flip_arg, is_eop);
     }
 
     return true;
 }
 
-void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop,
-                                       u64 trace_id) {
-    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipPrepare, trace_id);
+void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop) {
     Vulkan::Frame* frame;
     if (index == -1) {
         frame = presenter->PrepareBlankFrame(false);
@@ -339,14 +316,12 @@ void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_
     }
 
     std::scoped_lock lock{mutex};
-    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipReady, trace_id, index, frame->ready_tick);
     requests.push({
         .frame = frame,
         .port = port,
         .flip_arg = flip_arg,
         .index = index,
         .eop = is_eop,
-        .trace_id = trace_id,
     });
 }
 
@@ -372,11 +347,6 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     while (!token.stop_requested()) {
         timer.Start();
 
-        if (DebugState.IsGuestThreadsPaused()) {
-            DrawLastFrame();
-            timer.End();
-            continue;
-        }
 
         // Check if it's time to take a request.
         auto& vblank_status = main_port.vblank_status;

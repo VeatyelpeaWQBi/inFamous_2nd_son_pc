@@ -66,9 +66,7 @@ std::string_view BufferTypeName(MemoryType type) {
 UniqueBuffer::UniqueBuffer(vk::Device device_, VmaAllocator allocator_)
     : device{device_}, allocator{allocator_} {}
 
-UniqueBuffer::~UniqueBuffer() {
-    Destroy();
-}
+UniqueBuffer::~UniqueBuffer() { Destroy(); }
 
 void UniqueBuffer::Destroy() {
     if (allocation) {
@@ -135,9 +133,6 @@ Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes
 
     const auto device = instance.GetDevice();
     if (!debug_name.empty()) {
-        Vulkan::SetObjectName(device, Handle(), debug_name);
-    } else {
-        Vulkan::SetObjectName(device, Handle(), "Buffer {:#x}:{:#x}", cpu_addr, size_bytes);
     }
 
     if (mem_type != MemoryType::Sparse) {
@@ -174,8 +169,6 @@ StreamBuffer::StreamBuffer(const Vulkan::Instance& instance, Vulkan::Scheduler& 
       non_coherent_atom_size{instance.NonCoherentAtomSize()} {
     ReserveWatches(current_watches, WATCHES_INITIAL_RESERVE);
     ReserveWatches(previous_watches, WATCHES_INITIAL_RESERVE);
-    Vulkan::SetObjectName(instance.GetDevice(), Handle(), "StreamBuffer({}):{:#x}",
-                          BufferTypeName(mem_type), size_bytes);
 }
 
 void StreamBuffer::AlignMapSize(u64& size, u64& alignment) const {
@@ -231,8 +224,7 @@ bool StreamBuffer::MayFlushOnMap(u64 size, u64 alignment) const {
         return false;
     }
     AlignMapSize(size, alignment);
-    const u64 requested_end =
-        (alignment > 0 ? Common::AlignUp(offset, alignment) : offset) + size;
+    const u64 requested_end = (alignment > 0 ? Common::AlignUp(offset, alignment) : offset) + size;
     u64 bound = wait_bound;
     for (size_t i = wait_cursor; requested_end > bound && i < *invalidation_mark; ++i) {
         const auto& watch = previous_watches[i];

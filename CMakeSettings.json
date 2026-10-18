@@ -6,35 +6,7 @@
       "configurationType": "Release",
       "buildRoot": "${projectDir}\\Build\\Release",
       "installRoot": "${projectDir}\\Install\\${name}",
-      "cmakeCommandArgs": "-DIFSS_BUILD_ENGINE=ON -DENABLE_TESTS=OFF -DTRACY_ENABLE=OFF -DSHADPS4_DIAGNOSTIC_MAP=ON",
-      "buildCommandArgs": "",
-      "ctestCommandArgs": "",
-      "inheritEnvironments": [
-        "clang_cl_x64_x64"
-      ],
-      "intelliSenseMode": "windows-clang-x64"
-    },
-    {
-      "name": "x64-Clang-Debug",
-      "generator": "Ninja",
-      "configurationType": "Debug",
-      "buildRoot": "${projectDir}\\Build\\Debug",
-      "installRoot": "${projectDir}\\Install\\${name}",
-      "cmakeCommandArgs": "-DIFSS_BUILD_ENGINE=ON -DENABLE_TESTS=OFF -DTRACY_ENABLE=OFF -DSHADPS4_DIAGNOSTIC_MAP=ON",
-      "buildCommandArgs": "",
-      "ctestCommandArgs": "",
-      "inheritEnvironments": [
-        "clang_cl_x64_x64"
-      ],
-      "intelliSenseMode": "windows-clang-x64"
-    },
-    {
-      "name": "x64-Clang-RelWithDebInfo",
-      "generator": "Ninja",
-      "configurationType": "RelWithDebInfo",
-      "buildRoot": "${projectDir}\\Build\\RelWithDebInfo",
-      "installRoot": "${projectDir}\\Install\\${name}",
-      "cmakeCommandArgs": "-DIFSS_BUILD_ENGINE=ON -DENABLE_TESTS=OFF -DTRACY_ENABLE=OFF -DSHADPS4_DIAGNOSTIC_MAP=ON",
+      "cmakeCommandArgs": "-DIFSS_BUILD_ENGINE=ON -DENABLE_TESTS=OFF -DTRACY_ENABLE=OFF -DSHADPS4_DIAGNOSTIC_MAP=OFF",
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
       "inheritEnvironments": [

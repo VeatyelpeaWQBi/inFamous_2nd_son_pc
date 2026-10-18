@@ -82,7 +82,7 @@ struct ServiceThreadParams {
 };
 
 class VideoOutDriver {
-public:
+  public:
     VideoOutDriver(u32 width, u32 height);
     ~VideoOutDriver();
 
@@ -99,24 +99,21 @@ public:
 
     bool SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop = false);
 
-private:
+  private:
     struct Request {
         Vulkan::Frame* frame;
         VideoOutPort* port;
         s64 flip_arg;
         s32 index;
         bool eop;
-        u64 trace_id{};
 
-        operator bool() const noexcept {
-            return frame != nullptr;
-        }
+        operator bool() const noexcept { return frame != nullptr; }
     };
 
     void Flip(const Request& req);
     void DrawBlankFrame(); // Video port out not open
     void DrawLastFrame();  // Used when there is no flip request
-    void SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop, u64 trace_id);
+    void SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop);
     void PresentThread(std::stop_token token);
 
     std::mutex mutex;

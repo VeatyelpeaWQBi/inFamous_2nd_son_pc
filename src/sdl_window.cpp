@@ -15,10 +15,8 @@
 #include "common/io_file.h"
 #include "common/logging/formatter.h"
 #include "common/scope_exit.h"
-#include "core/debug_state.h"
-#include "core/benchmark_control.h"
-#include "core/devtools/layer.h"
 #include "core/emulator_settings.h"
+#include "core/game_ui.h"
 #include "core/libraries/kernel/time.h"
 #include "core/libraries/pad/pad.h"
 #include "core/libraries/system/userservice.h"
@@ -29,18 +27,17 @@
 #include "input/input_handler.h"
 #include "input/input_mouse.h"
 #include "sdl_window.h"
-#include "video_core/renderdoc.h"
 #ifdef _WIN32
-#include <SDL3/SDL_system.h>
 #include "input/windows_touchpad.h"
+#include <SDL3/SDL_system.h>
 #endif
 
 #ifdef __APPLE__
 #include <SDL3/SDL_metal.h>
 #endif
-#include <core/emulator_settings.h>
 #include "core/libraries/keyboard/keyboard.h"
 #include "core/libraries/mouse/sdl_mouse.h"
+#include <core/emulator_settings.h>
 
 CMRC_DECLARE(res);
 
@@ -156,6 +153,7 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
             window, EmulatorSettings.GetFullScreenMode() == "Fullscreen" ? displayMode : NULL);
     }
     SDL_SetWindowFullscreen(window, EmulatorSettings.IsFullScreen());
+    if (!EmulatorSettings.IsFullScreen()) SDL_MaximizeWindow(window);
     SDL_SyncWindow(window);
     // The window geometry is only final once the fullscreen transition has settled; refresh
     // the cached size so the first swapchain and the splashscreen use the real drawable size.
@@ -196,19 +194,29 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
 #ifdef _WIN32
     native_touchpad = std::make_unique<Input::WindowsTouchpad>();
     native_touchpad->Attach(static_cast<HWND>(window_info.render_surface));
-    SDL_SetWindowsMessageHook([](void* context, MSG* message) -> bool {
-        auto& self = *static_cast<WindowSDL*>(context);
-        const bool allowed = self.keyboard_grab == 0 && !ImGui::Core::IsGamepadInputCaptured() &&
-            GetForegroundWindow() == static_cast<HWND>(self.window_info.render_surface);
-        self.native_touchpad->Message(*message, Input::GetMouseInput(), allowed, SDL_GetTicks());
-        return true; // Keep SDL/Windows cleanup and normal OS touchpad gestures.
-    }, this);
+    SDL_SetWindowsMessageHook(
+        [](void* context, MSG* message) -> bool {
+            auto& self = *static_cast<WindowSDL*>(context);
+            const bool allowed =
+                self.keyboard_grab == 0 && !ImGui::Core::IsGamepadInputCaptured() &&
+                GetForegroundWindow() == static_cast<HWND>(self.window_info.render_surface);
+            self.native_touchpad->Message(*message, Input::GetMouseInput(), allowed,
+                                          SDL_GetTicks());
+            return true; // Keep SDL/Windows cleanup and normal OS touchpad gestures.
+        },
+        this);
 #endif
 }
 
 WindowSDL::~WindowSDL() {
-    if (mouse_timer) SDL_RemoveTimer(mouse_timer);
-    for (const auto timer : controller_timers) if (timer) SDL_RemoveTimer(timer);
+    if (mouse_timer) {
+        SDL_RemoveTimer(mouse_timer);
+    }
+    for (const auto timer : controller_timers) {
+        if (timer) {
+            SDL_RemoveTimer(timer);
+        }
+    }
 #ifdef _WIN32
     SDL_SetWindowsMessageHook(nullptr, nullptr);
     native_touchpad.reset();
@@ -230,18 +238,16 @@ void WindowSDL::WaitEvent() {
     // Called on main thread
     SDL_Event event;
 
-    const bool benchmark = Core::Benchmark::Enabled();
-    if (benchmark) Core::Benchmark::Poll(*controllers[0]);
-    if (!(benchmark ? SDL_WaitEventTimeout(&event, 50) : SDL_WaitEvent(&event))) {
+    if (!SDL_WaitEvent(&event)) {
         return;
     }
 
     const bool overlay_captured = ImGui::Core::ProcessEvent(&event);
     const bool mouse_allowed = !overlay_captured && keyboard_grab == 0 &&
-        !ImGui::Core::IsGamepadInputCaptured() &&
-        (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) &&
-        !(event.type == SDL_EVENT_WINDOW_FOCUS_LOST &&
-          event.window.windowID == SDL_GetWindowID(window));
+                               !ImGui::Core::IsGamepadInputCaptured() &&
+                               (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) &&
+                               !(event.type == SDL_EVENT_WINDOW_FOCUS_LOST &&
+                                 event.window.windowID == SDL_GetWindowID(window));
     if (!mouse_allowed) {
 #ifdef _WIN32
         native_touchpad->Reset();
@@ -251,7 +257,8 @@ void WindowSDL::WaitEvent() {
         Input::ActivateOutputsFromInputs();
     } else if ((event.type == SDL_EVENT_MOUSE_MOTION &&
                 event.motion.windowID == SDL_GetWindowID(window)) ||
-               ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+               ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                 event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
                 event.button.windowID == SDL_GetWindowID(window))) {
         Input::ProcessMouseEvent(event);
     }
@@ -310,20 +317,8 @@ void WindowSDL::WaitEvent() {
         }
         break;
     }
-    case SDL_EVENT_TOGGLE_PAUSE:
-        if (DebugState.IsGuestThreadsPaused()) {
-            LOG_INFO(Frontend, "Game Resumed");
-            DebugState.ResumeGuestThreads();
-        } else {
-            LOG_INFO(Frontend, "Game Paused");
-            DebugState.PauseGuestThreads();
-        }
-        break;
     case SDL_EVENT_CHANGE_CONTROLLER:
         UNREACHABLE_MSG("todo");
-        break;
-    case SDL_EVENT_TOGGLE_SIMPLE_FPS:
-        Overlay::ToggleSimpleFps();
         break;
     case SDL_EVENT_TOGGLE_FRIENDS:
         ImGui::Friends::Toggle();
@@ -332,19 +327,25 @@ void WindowSDL::WaitEvent() {
         Input::ParseInputConfig(std::string(Common::ElfInfo::Instance().GameSerial()));
         break;
     case SDL_EVENT_MOUSE_TO_JOYSTICK:
-        if (!mouse_allowed) break;
+        if (!mouse_allowed) {
+            break;
+        }
         SDL_SetWindowRelativeMouseMode(this->GetSDLWindow(),
                                        Input::ToggleMouseModeTo(Input::MouseMode::Joystick));
         Input::ActivateOutputsFromInputs();
         break;
     case SDL_EVENT_MOUSE_TO_GYRO:
-        if (!mouse_allowed) break;
+        if (!mouse_allowed) {
+            break;
+        }
         SDL_SetWindowRelativeMouseMode(this->GetSDLWindow(),
                                        Input::ToggleMouseModeTo(Input::MouseMode::Gyro));
         Input::ActivateOutputsFromInputs();
         break;
     case SDL_EVENT_MOUSE_TO_TOUCHPAD:
-        if (!mouse_allowed) break;
+        if (!mouse_allowed) {
+            break;
+        }
 #ifdef _WIN32
         native_touchpad->Reset();
 #endif
@@ -356,7 +357,9 @@ void WindowSDL::WaitEvent() {
 #ifdef _WIN32
         native_touchpad->Reset();
 #endif
-        if (mouse_allowed) Input::CenterMouseInput();
+        if (mouse_allowed) {
+            Input::CenterMouseInput();
+        }
         break;
     case SDL_EVENT_RELEASE_MOUSE_EMULATION:
 #ifdef _WIN32
@@ -380,8 +383,7 @@ void WindowSDL::WaitEvent() {
             }
         }
         break;
-    case SDL_EVENT_REMOVE_VIRTUAL_USER:
-        LOG_INFO(Input, "Remove user");
+    case SDL_EVENT_REMOVE_VIRTUAL_USER:;
         for (int i = 3; i >= 0; i--) {
             if (controllers[i]->user_id != -1) {
                 UserManagement.LogoutUser(UserManagement.GetUserByID(controllers[i]->user_id));
@@ -391,13 +393,9 @@ void WindowSDL::WaitEvent() {
             }
         }
         break;
-    case SDL_EVENT_RDOC_CAPTURE:
-        if (VideoCore::IsRenderDocLoaded()) {
-            VideoCore::TriggerCapture();
-        } else {
-            VideoCore::RequestScreenshot(VideoCore::ScreenshotRequest::GameOnly);
-        }
-        break;
+    case SDL_EVENT_RDOC_CAPTURE: {
+        VideoCore::RequestScreenshot(VideoCore::ScreenshotRequest::GameOnly);
+    } break;
     case SDL_EVENT_SCREENSHOT_WITH_OVERLAYS:
         VideoCore::RequestScreenshot(VideoCore::ScreenshotRequest::WithOverlays);
         break;
@@ -424,8 +422,8 @@ void WindowSDL::RequestKeyboard() {
                 Input::ReleaseMouseInput(self.controllers[0]);
                 SDL_SetWindowRelativeMouseMode(self.window, false);
                 SDL_StartTextInput(self.window);
-            }, this,
-            true);
+            },
+            this, true);
     }
     keyboard_grab++;
 }
@@ -544,9 +542,7 @@ void SetWindowIcon(SDL_Window* window, const std::vector<u8>& png) {
         LOG_ERROR(Core, "Failed to load window icon image: {}", stbi_failure_reason());
         return;
     }
-    SCOPE_EXIT {
-        stbi_image_free(imageData);
-    };
+    SCOPE_EXIT { stbi_image_free(imageData); };
 
     SDL_Surface* surface = SDL_CreateSurfaceFrom(imageWidth, imageHeight, SDL_PIXELFORMAT_RGBA32,
                                                  imageData, imageWidth * numChannels);

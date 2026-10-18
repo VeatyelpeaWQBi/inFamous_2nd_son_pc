@@ -19,8 +19,6 @@ static InvitationDialogUi g_dialog_ui;
 static DialogState g_state;
 
 s32 PS4_SYSV_ABI sceInvitationDialogGetResultA(OrbisInvitationDialogResultA* result) {
-    LOG_DEBUG(Lib_InvitationDialog, "Getting invitation dialog result (async), result ptr={}",
-              fmt::ptr(result));
 
     if (g_status == Libraries::CommonDialog::Status::NONE) {
         return static_cast<s32>(Libraries::CommonDialog::Error::NOT_INITIALIZED);
@@ -69,17 +67,13 @@ s32 PS4_SYSV_ABI sceInvitationDialogGetResultA(OrbisInvitationDialogResultA* res
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI
 sceInvitationDialogOpenA(const OrbisInvitationDialogParamA* param) {
-    LOG_DEBUG(Lib_InvitationDialog, "sceInvitationDialogOpenA() called (async version)");
-    LOG_INFO(Lib_InvitationDialog, "Opening invitation dialog asynchronously, param ptr={}",
-             fmt::ptr(param));
 
     if (!param) {
         LOG_ERROR(Lib_InvitationDialog, "Parameter is NULL");
         return Libraries::CommonDialog::Error::ARG_NULL;
     }
 
-    LOG_INFO(Lib_InvitationDialog, "ParamA size={:#x}", param->size);
-    LOG_INFO(Lib_InvitationDialog, "ParamA mode={}", param->mode);
+    ;
 
     // Validate mode
     if (param->mode != ORBIS_INVITATION_DIALOG_MODE_SEND &&
@@ -90,52 +84,29 @@ sceInvitationDialogOpenA(const OrbisInvitationDialogParamA* param) {
         return Libraries::CommonDialog::Error::PARAM_INVALID;
     }
 
-    LOG_INFO(Lib_InvitationDialog, "ParamA userId={:#x}", param->userId);
-    LOG_INFO(Lib_InvitationDialog, "ParamA callbackArg={}", fmt::ptr(param->callbackArg));
-    LOG_INFO(Lib_InvitationDialog, "ParamA dataParam={}", fmt::ptr(param->dataParam));
+    ;
 
     // Log data parameters if present
     if (param->dataParam) {
-        LOG_INFO(Lib_InvitationDialog, "DataParamA pointer: {}", fmt::ptr(param->dataParam));
         if (param->mode == ORBIS_INVITATION_DIALOG_MODE_SEND) {
-            LOG_INFO(Lib_InvitationDialog, "SendInfo:");
-            if (param->dataParam->SendInfo.userMessage) {
-                LOG_INFO(Lib_InvitationDialog, "  userMessage: '{}'",
-                         param->dataParam->SendInfo.userMessage);
-            }
-            if (param->dataParam->SendInfo.sessionId) {
-                LOG_INFO(Lib_InvitationDialog, "  sessionId: {}",
-                         param->dataParam->SendInfo.sessionId->data);
-            }
+
+
 
             // Log address parameters
             const auto& addressParam = param->dataParam->SendInfo.addressParam;
-            LOG_INFO(Lib_InvitationDialog, "  addressType={}", addressParam.addressType);
             if (addressParam.addressType == ORBIS_INVITATION_DIALOG_ADDRESS_TYPE_USERDISABLE) {
-                LOG_INFO(Lib_InvitationDialog, "  UserSelectDisableAddress:");
-                LOG_INFO(Lib_InvitationDialog, "    accountIds={}",
-                         fmt::ptr(addressParam.addressInfo.UserSelectDisableAddress.accountIds));
-                LOG_INFO(Lib_InvitationDialog, "    accountIdsCount={}",
-                         addressParam.addressInfo.UserSelectDisableAddress.accountIdsCount);
             } else if (addressParam.addressType ==
                        ORBIS_INVITATION_DIALOG_ADDRESS_TYPE_USERENABLE) {
-                LOG_INFO(Lib_InvitationDialog, "  UserSelectEnableAddress:");
-                LOG_INFO(Lib_InvitationDialog, "    userMaxCount={}",
-                         addressParam.addressInfo.UserSelectEnableAddress.userMaxCount);
             } else {
                 LOG_WARNING(Lib_InvitationDialog, "  Invalid addressType: {}",
                             addressParam.addressType);
             }
-        } else if (param->mode == ORBIS_INVITATION_DIALOG_MODE_RECV) {
-            LOG_INFO(Lib_InvitationDialog, "RecvInfo (receive mode - no additional data)");
         }
     }
 
     // Check initialization state
     if (g_status != Libraries::CommonDialog::Status::INITIALIZED &&
         g_status != Libraries::CommonDialog::Status::FINISHED) {
-        LOG_INFO(Lib_InvitationDialog, "Called without proper initialization (status={})",
-                 magic_enum::enum_name(g_status));
         return Libraries::CommonDialog::Error::INVALID_STATE;
     }
 
@@ -169,15 +140,11 @@ sceInvitationDialogOpenA(const OrbisInvitationDialogParamA* param) {
             for (u32 i = 0; i < count && addr.accountIds != nullptr; i++) {
                 g_state.account_ids.push_back(addr.accountIds[i]);
             }
-        }
-        LOG_INFO(Lib_InvitationDialog, "OpenA(SEND) user={} sessionId='{}' recipients={}",
-                 param->userId, g_state.session_id, g_state.account_ids.size());
+        };
     } else {
         g_state.recv_invitations =
             Libraries::Np::NpHandler::GetInstance().GetPendingInvitations(param->userId);
         g_state.recv_selected = g_state.recv_invitations.empty() ? -1 : 0;
-        LOG_INFO(Lib_InvitationDialog, "OpenA(RECV) user={} pending={}", param->userId,
-                 g_state.recv_invitations.size());
     }
 
     g_status = Libraries::CommonDialog::Status::RUNNING;
@@ -187,7 +154,6 @@ sceInvitationDialogOpenA(const OrbisInvitationDialogParamA* param) {
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI
 sceInvitationDialogOpen(const OrbisInvitationDialogParam* param) {
-    LOG_DEBUG(Lib_InvitationDialog, "Opening invitation dialog, param ptr={}", fmt::ptr(param));
 
     if (g_status != Libraries::CommonDialog::Status::INITIALIZED &&
         g_status != Libraries::CommonDialog::Status::FINISHED) {
@@ -200,9 +166,7 @@ sceInvitationDialogOpen(const OrbisInvitationDialogParam* param) {
         return Libraries::CommonDialog::Error::ARG_NULL;
     }
 
-    LOG_INFO(Lib_InvitationDialog,
-             "size={:#x} mode={} userId={} Param callbackArg={} Param dataParam={}", param->size,
-             param->mode, param->userId, fmt::ptr(param->callbackArg), fmt::ptr(param->dataParam));
+    ;
 
     // Validate mode
     if (param->mode != ORBIS_INVITATION_DIALOG_MODE_SEND &&
@@ -215,38 +179,19 @@ sceInvitationDialogOpen(const OrbisInvitationDialogParam* param) {
 
     // Log data parameters if present
     if (param->dataParam) {
-        LOG_INFO(Lib_InvitationDialog, "DataParam pointer: {}", fmt::ptr(param->dataParam));
         if (param->mode == ORBIS_INVITATION_DIALOG_MODE_SEND) {
-            LOG_INFO(Lib_InvitationDialog, "SendInfo:");
-            if (param->dataParam->SendInfo.userMessage) {
-                LOG_INFO(Lib_InvitationDialog, "  userMessage: '{}'",
-                         param->dataParam->SendInfo.userMessage);
-            }
-            if (param->dataParam->SendInfo.sessionId) {
-                LOG_INFO(Lib_InvitationDialog, "  sessionId: {}",
-                         param->dataParam->SendInfo.sessionId->data);
-            }
+
+
 
             // Log address parameters
             const auto& addressParam = param->dataParam->SendInfo.addressParam;
-            LOG_INFO(Lib_InvitationDialog, "  addressType={}", addressParam.addressType);
             if (addressParam.addressType == ORBIS_INVITATION_DIALOG_ADDRESS_TYPE_USERDISABLE) {
-                LOG_INFO(Lib_InvitationDialog, "  UserSelectDisableAddress:");
-                LOG_INFO(Lib_InvitationDialog, "    onlineIds={}",
-                         fmt::ptr(addressParam.addressInfo.UserSelectDisableAddress.onlineIds));
-                LOG_INFO(Lib_InvitationDialog, "    onlineIdsCount={}",
-                         addressParam.addressInfo.UserSelectDisableAddress.onlineIdsCount);
             } else if (addressParam.addressType ==
                        ORBIS_INVITATION_DIALOG_ADDRESS_TYPE_USERENABLE) {
-                LOG_INFO(Lib_InvitationDialog, "  UserSelectEnableAddress:");
-                LOG_INFO(Lib_InvitationDialog, "    onlineIdsMaxCount={}",
-                         addressParam.addressInfo.UserSelectEnableAddress.onlineIdsMaxCount);
             } else {
                 LOG_WARNING(Lib_InvitationDialog, "  Invalid addressType: {}",
                             addressParam.addressType);
             }
-        } else if (param->mode == ORBIS_INVITATION_DIALOG_MODE_RECV) {
-            LOG_INFO(Lib_InvitationDialog, "RecvInfo (receive mode - no additional data)");
         }
     }
 
@@ -280,15 +225,11 @@ sceInvitationDialogOpen(const OrbisInvitationDialogParam* param) {
             if (count != 0 && addr.onlineIds != nullptr) {
                 g_state.online_ids.assign(addr.onlineIds, addr.onlineIds + count);
             }
-        }
-        LOG_INFO(Lib_InvitationDialog, "Open(SEND) user={} sessionId='{}' recipients={}",
-                 param->userId, g_state.session_id, g_state.online_ids.size());
+        };
     } else {
         auto pend = Libraries::Np::NpHandler::GetInstance().GetPendingInvitations(param->userId);
         g_state.recv_invitations = std::move(pend);
         g_state.recv_selected = g_state.recv_invitations.empty() ? -1 : 0;
-        LOG_INFO(Lib_InvitationDialog, "Open(RECV) user={} pending={}", param->userId,
-                 g_state.recv_invitations.size());
     }
 
     g_status = Libraries::CommonDialog::Status::RUNNING;
@@ -297,8 +238,6 @@ sceInvitationDialogOpen(const OrbisInvitationDialogParam* param) {
 }
 
 s32 PS4_SYSV_ABI sceInvitationDialogGetResult(OrbisInvitationDialogResult* result) {
-    LOG_DEBUG(Lib_InvitationDialog, "Getting invitation dialog result, result ptr={}",
-              fmt::ptr(result));
 
     if (g_status == Libraries::CommonDialog::Status::NONE) {
         return static_cast<s32>(Libraries::CommonDialog::Error::NOT_INITIALIZED);
@@ -316,20 +255,12 @@ s32 PS4_SYSV_ABI sceInvitationDialogGetResult(OrbisInvitationDialogResult* resul
     }
 
     // Log result fields if they contain data
-    if (result->callbackArg) {
-        LOG_INFO(Lib_InvitationDialog, "Result callbackArg={}", fmt::ptr(result->callbackArg));
-    }
-    LOG_INFO(Lib_InvitationDialog, "Result errorCode={:#x}", result->errorCode);
-    LOG_INFO(Lib_InvitationDialog, "Result status={}", magic_enum::enum_name(result->result));
+
 
     if (result->sentOnlineIds) {
-        LOG_INFO(Lib_InvitationDialog, "Result sentOnlineIds count={}",
-                 result->sentOnlineIds->count);
         for (u32 i = 0; i < result->sentOnlineIds->count &&
                         i < ORBIS_INVITATION_DIALOG_ADDRESS_USER_LIST_MAX_SIZE;
              i++) {
-            LOG_INFO(Lib_InvitationDialog, "  sentOnlineIds[{}]: {}", i,
-                     result->sentOnlineIds->onlineId[i].data);
         }
     }
     result->callbackArg = g_state.callback_arg;
@@ -352,14 +283,10 @@ s32 PS4_SYSV_ABI sceInvitationDialogGetResult(OrbisInvitationDialogResult* resul
 }
 
 Libraries::CommonDialog::Status PS4_SYSV_ABI sceInvitationDialogUpdateStatus() {
-    LOG_DEBUG(Lib_InvitationDialog, "UpdateStatus called, current status={}",
-              magic_enum::enum_name(g_status));
     return g_status;
 }
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI sceInvitationDialogClose() {
-    LOG_DEBUG(Lib_InvitationDialog, "Closing invitation dialog, current status={}",
-              magic_enum::enum_name(g_status));
 
     if (g_status != Libraries::CommonDialog::Status::RUNNING) {
         LOG_WARNING(Lib_InvitationDialog, "Cannot close dialog: not running (status={})",
@@ -372,11 +299,8 @@ Libraries::CommonDialog::Error PS4_SYSV_ABI sceInvitationDialogClose() {
 }
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI sceInvitationDialogTerminate() {
-    LOG_DEBUG(Lib_InvitationDialog, "Terminating invitation dialog system, current status={}",
-              magic_enum::enum_name(g_status));
 
     if (g_status == Libraries::CommonDialog::Status::RUNNING) {
-        LOG_DEBUG(Lib_InvitationDialog, "Dialog is running, closing before termination");
         sceInvitationDialogClose();
     }
 
@@ -387,18 +311,14 @@ Libraries::CommonDialog::Error PS4_SYSV_ABI sceInvitationDialogTerminate() {
 
     g_status = Libraries::CommonDialog::Status::NONE;
     CommonDialog::g_isUsed = false;
-    LOG_DEBUG(Lib_InvitationDialog, "Invitation dialog terminated successfully");
     return Libraries::CommonDialog::Error::OK;
 }
 
 Libraries::CommonDialog::Status PS4_SYSV_ABI sceInvitationDialogGetStatus() {
-    LOG_DEBUG(Lib_InvitationDialog, "Getting invitation dialog status: {}",
-              magic_enum::enum_name(g_status));
     return g_status;
 }
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI sceInvitationDialogInitialize() {
-    LOG_DEBUG(Lib_InvitationDialog, "called");
     if (!CommonDialog::g_isInitialized) {
         LOG_ERROR(Lib_InvitationDialog, "CommonDialog system not initialized");
         return Libraries::CommonDialog::Error::NOT_SYSTEM_INITIALIZED;
@@ -417,7 +337,6 @@ Libraries::CommonDialog::Error PS4_SYSV_ABI sceInvitationDialogInitialize() {
 
     g_status = Libraries::CommonDialog::Status::INITIALIZED;
     CommonDialog::g_isUsed = true;
-    LOG_INFO(Lib_InvitationDialog, "Invitation dialog initialized successfully");
     return Libraries::CommonDialog::Error::OK;
 }
 

@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <utility>
 #include <fmt/format.h>
 #include <imgui.h>
 #include <magic_enum/magic_enum.hpp>
+#include <utility>
 
 #include "common/assert.h"
 #include "common/logging/log.h"
@@ -29,7 +29,7 @@ class ErrorDialogUi final : public ImGui::Layer {
     Status* status{nullptr};
     std::string err_message{};
 
-public:
+  public:
     explicit ErrorDialogUi(Status* status = nullptr, std::string err_message = "")
         : status(status), err_message(std::move(err_message)) {
         if (status && *status == Status::RUNNING) {
@@ -37,9 +37,7 @@ public:
             AddLayer(this);
         }
     }
-    ~ErrorDialogUi() override {
-        Finish();
-    }
+    ~ErrorDialogUi() override { Finish(); }
     ErrorDialogUi(const ErrorDialogUi& other) = delete;
     ErrorDialogUi(ErrorDialogUi&& other) noexcept
         : Layer(other), status(other.status), err_message(std::move(other.err_message)) {
@@ -123,7 +121,6 @@ struct Param {
 };
 
 Error PS4_SYSV_ABI sceErrorDialogClose() {
-    LOG_DEBUG(Lib_ErrorDialog, "called");
     if (g_status != Status::RUNNING) {
         return Error::NOT_RUNNING;
     }
@@ -132,12 +129,10 @@ Error PS4_SYSV_ABI sceErrorDialogClose() {
 }
 
 Status PS4_SYSV_ABI sceErrorDialogGetStatus() {
-    LOG_TRACE(Lib_ErrorDialog, "called status={}", magic_enum::enum_name(g_status));
     return g_status;
 }
 
 Error PS4_SYSV_ABI sceErrorDialogInitialize() {
-    LOG_DEBUG(Lib_ErrorDialog, "called");
     if (g_status != Status::NONE) {
         return Error::ALREADY_INITIALIZED;
     }
@@ -147,15 +142,12 @@ Error PS4_SYSV_ABI sceErrorDialogInitialize() {
 
 Error PS4_SYSV_ABI sceErrorDialogOpen(const Param* param) {
     if (g_status != Status::INITIALIZED && g_status != Status::FINISHED) {
-        LOG_INFO(Lib_ErrorDialog, "called without initialize");
         return Error::INVALID_STATE;
     }
     if (param == nullptr) {
-        LOG_DEBUG(Lib_ErrorDialog, "called param:(NULL)");
         return Error::ARG_NULL;
     }
     const auto err = static_cast<u32>(param->errorCode);
-    LOG_DEBUG(Lib_ErrorDialog, "called param->errorCode = {:#x}", err);
     ASSERT(param->size == sizeof(Param));
 
     const std::string err_message = fmt::format("An error has occurred. \nCode: {:#X}", err);
@@ -175,7 +167,6 @@ int PS4_SYSV_ABI sceErrorDialogOpenWithReport() {
 }
 
 Error PS4_SYSV_ABI sceErrorDialogTerminate() {
-    LOG_DEBUG(Lib_ErrorDialog, "called");
     if (g_status == Status::RUNNING) {
         sceErrorDialogClose();
     }
@@ -187,7 +178,6 @@ Error PS4_SYSV_ABI sceErrorDialogTerminate() {
 }
 
 Status PS4_SYSV_ABI sceErrorDialogUpdateStatus() {
-    LOG_TRACE(Lib_ErrorDialog, "called status={}", magic_enum::enum_name(g_status));
     return g_status;
 }
 

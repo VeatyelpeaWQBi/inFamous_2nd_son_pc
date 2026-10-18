@@ -245,11 +245,10 @@ u32 AjmMp3Decoder::GetNextFrameSize(const AjmInstanceGapless& gapless) const {
 }
 
 class BitReader {
-public:
+  public:
     BitReader(const u8* data) : m_data(data) {}
 
-    template <class T>
-    T Read(u32 const nbits) {
+    template <class T> T Read(u32 const nbits) {
         T accumulator = 0;
         for (unsigned i = 0; i < nbits; ++i) {
             accumulator = (accumulator << 1) + GetBit();
@@ -257,15 +256,11 @@ public:
         return accumulator;
     }
 
-    void Skip(size_t nbits) {
-        m_bit_offset += nbits;
-    }
+    void Skip(size_t nbits) { m_bit_offset += nbits; }
 
-    size_t GetCurrentOffset() {
-        return m_bit_offset;
-    }
+    size_t GetCurrentOffset() { return m_bit_offset; }
 
-private:
+  private:
     u8 GetBit() {
         const auto bit = (m_data[m_bit_offset / 8] >> (7 - (m_bit_offset % 8))) & 1;
         m_bit_offset += 1;
@@ -278,7 +273,6 @@ private:
 
 int AjmMp3Decoder::ParseMp3Header(const u8* p_begin, u32 stream_size, int parse_ofl,
                                   AjmDecMp3ParseFrame* frame) {
-    LOG_TRACE(Lib_Ajm, "called stream_size = {} parse_ofl = {}", stream_size, parse_ofl);
 
     if (p_begin == nullptr || stream_size < 4 || frame == nullptr) {
         return ORBIS_AJM_ERROR_INVALID_PARAMETER;

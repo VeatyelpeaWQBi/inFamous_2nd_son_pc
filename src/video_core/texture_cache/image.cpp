@@ -1,16 +1,15 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <ranges>
+#include "video_core/texture_cache/image.h"
 #include "common/assert.h"
-#include "common/perf_stats.h"
 #include "common/scope_exit.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/blit_helper.h"
-#include "video_core/texture_cache/image.h"
+#include <ranges>
 
 #include <vk_mem_alloc.h>
 
@@ -40,8 +39,9 @@ static vk::ImageUsageFlags ImageUsageFlags(const Vulkan::Instance& instance,
             // compute clears This sacrifices a bit of performance but is less work. ExtendedUsage
             // flag is also used. The exception here is for multisample images when storage is not
             // supported, where even with ExtendedUsage we may get only one supported sample back.
-            if (info.num_samples == 1 || instance.IsMultisampleStorageImageSupported())
+            if (info.num_samples == 1 || instance.IsMultisampleStorageImageSupported()) {
                 usage |= vk::ImageUsageFlagBits::eStorage;
+            }
         }
     } else {
         // Similarly to above, we specify storage usage. This is typically not supported by
@@ -133,8 +133,7 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
     : runtime{&runtime_}, slot_image_views{&slot_image_views_}, info{info_} {
     if (info.pixel_format == vk::Format::eUndefined) {
         return;
-    }
-    Common::Perf::Add(Common::Perf::ImageCreates);
+    };
 
     image_uid = global_image_uid.Next();
     mip_hashes.resize(info.resources.levels);
@@ -201,11 +200,6 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
     backing->image = UniqueImage{instance.GetDevice(), instance.GetAllocator()};
     backing->image.Create(image_ci);
 
-    Vulkan::SetObjectName(instance.GetDevice(), GetImage(),
-                          "Image {}x{}x{} {} {} {:#x}:{:#x} L:{} M:{} S:{}", info.size.width,
-                          info.size.height, info.size.depth, AmdGpu::NameOf(info.tile_mode),
-                          vk::to_string(info.pixel_format), info.guest_address, info.guest_size,
-                          info.resources.layers, info.resources.levels, info.num_samples);
 }
 
 Image::~Image() = default;
@@ -232,13 +226,6 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
     auto& last_state = backing->state;
     auto& subresource_states = backing->subresource_states;
     auto& dirty = backing->dirty_subresources;
-    Common::Perf::Add(Common::Perf::BarrierCalls);
-    const size_t barriers_before = barriers.size();
-    SCOPE_EXIT {
-        if (barriers.size() != barriers_before) {
-            Common::Perf::Add(Common::Perf::BarriersEmitted, barriers.size() - barriers_before);
-        }
-    };
 
     constexpr auto write_flags = vk::AccessFlagBits2::eTransferWrite |
                                  vk::AccessFlagBits2::eShaderWrite |
@@ -286,7 +273,6 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
         // state needs no barrier, and splitting the state per subresource here would make every
         // later full transition walk all subresources (common when sampling one layer or one mip
         // of an image every draw).
-        Common::Perf::Add(Common::Perf::BarrierFastPath);
         last_state.pl_stage |= dst_stage;
         return;
     }
@@ -298,7 +284,6 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
         if (memo.valid && memo.version == backing->state_version && memo.range == *subres_range &&
             memo.layout == dst_layout && memo.access == dst_mask && memo.stage == dst_stage &&
             !(dst_mask & write_flags)) {
-            Common::Perf::Add(Common::Perf::BarrierMemoHit);
             last_state.layout = dst_layout;
             last_state.access_mask = dst_mask;
             last_state.pl_stage = dst_stage;
@@ -320,7 +305,6 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
             // Full transition of an image whose untouched subresources are already in the
             // requested state: only the subresources changed since the image stopped being
             // uniform can need a barrier.
-            Common::Perf::Add(Common::Perf::BarrierDirtyPath);
             merged_stage |= backing->partial_base_state.pl_stage;
             for (const u32 subres_idx : dirty) {
                 auto& state = subresource_states[subres_idx];
@@ -346,9 +330,6 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
                                                                    subres_range->extent.layers)
                                     : std::views::iota(0u, info.resources.layers);
 
-            Common::Perf::Add(Common::Perf::BarrierSubresources,
-                              static_cast<u64>(std::ranges::distance(mips)) *
-                                  static_cast<u64>(std::ranges::distance(layers)));
             for (u32 mip : mips) {
                 for (u32 layer : layers) {
                     const u32 subres_idx = mip * info.resources.layers + layer;

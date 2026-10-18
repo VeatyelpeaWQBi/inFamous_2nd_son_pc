@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "video_core/renderer_vulkan/vk_shader_hle.h"
 #include "shader_recompiler/info.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
-#include "video_core/renderer_vulkan/vk_shader_hle.h"
 
 extern std::unique_ptr<AmdGpu::Liverpool> liverpool;
 
@@ -93,8 +93,7 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
         }
 
         // Execute buffer copies.
-        LOG_TRACE(Render_Vulkan, "HLE buffer copy: src_size = {}, dst_size = {}",
-                  src_offset_max - src_offset_min, dst_offset_max - dst_offset_min);
+        ;
         runtime.CopyBuffer(src_buf, dst_buf, vk_copies);
         batch_start = batch_end;
     }

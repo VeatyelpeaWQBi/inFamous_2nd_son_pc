@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
-#include <thread>
-#include <unordered_map>
-#include <fmt/format.h>
-#include <pugixml.hpp>
+#include "core/libraries/np/np_trophy.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "common/path_util.h"
@@ -14,10 +10,14 @@
 #include "core/libraries/libs.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_handler.h"
-#include "core/libraries/np/np_trophy.h"
 #include "core/libraries/np/trophy_ui.h"
 #include "core/libraries/system/userservice.h"
 #include "core/memory.h"
+#include <algorithm>
+#include <fmt/format.h>
+#include <pugixml.hpp>
+#include <thread>
+#include <unordered_map>
 
 namespace Libraries::Np::NpTrophy {
 
@@ -117,8 +117,8 @@ static void ApplyUnlockToXmlFile(const std::filesystem::path& xml_path, OrbisNpT
 }
 
 // Reads every unlocked trophy out of a user's save XML as (id, timestamp) pairs.
-static std::vector<std::pair<s32, u64>> ReadUnlockedTrophies(
-    const std::filesystem::path& xml_save_file) {
+static std::vector<std::pair<s32, u64>>
+ReadUnlockedTrophies(const std::filesystem::path& xml_save_file) {
     std::vector<std::pair<s32, u64>> out;
     pugi::xml_document doc;
     if (!doc.load_file(xml_save_file.native().c_str())) {
@@ -192,9 +192,7 @@ static constexpr auto MaxTrophyContexts = 8u;
 
 using ContextKey = std::pair<u32, u32>; // <user_id, service label>
 struct ContextKeyHash {
-    size_t operator()(const ContextKey& key) const {
-        return key.first + (u64(key.second) << 32u);
-    }
+    size_t operator()(const ContextKey& key) const { return key.first + (u64(key.second) << 32u); }
 };
 
 struct TrophyContext {
@@ -295,8 +293,6 @@ s32 PS4_SYSV_ABI sceNpTrophyCreateContext(OrbisNpTrophyContext* context,
     ctx.service_label = service_label;
     ctx.user_id = user_id;
 
-    LOG_INFO(Lib_NpTrophy, "New context = {}, user_id = {} service label = {}", *context, user_id,
-             service_label);
     return ORBIS_OK;
 }
 
@@ -312,12 +308,10 @@ s32 PS4_SYSV_ABI sceNpTrophyCreateHandle(OrbisNpTrophyHandle* handle) {
     const auto handle_id = trophy_handles.insert();
 
     *handle = handle_id.index + 1;
-    LOG_INFO(Lib_NpTrophy, "New handle = {}", *handle);
     return ORBIS_OK;
 }
 
 int PS4_SYSV_ABI sceNpTrophyDestroyContext(OrbisNpTrophyContext context) {
-    LOG_INFO(Lib_NpTrophy, "Destroyed Context {}", context);
 
     if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_CONTEXT;
@@ -342,8 +336,9 @@ int PS4_SYSV_ABI sceNpTrophyDestroyContext(OrbisNpTrophyContext context) {
 }
 
 s32 PS4_SYSV_ABI sceNpTrophyDestroyHandle(OrbisNpTrophyHandle handle) {
-    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE)
+    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_HANDLE;
+    }
 
     s32 handle_index = handle - 1;
     if (handle_index >= trophy_handles.size()) {
@@ -356,7 +351,6 @@ s32 PS4_SYSV_ABI sceNpTrophyDestroyHandle(OrbisNpTrophyHandle handle) {
     }
 
     trophy_handles.erase({static_cast<u32>(handle_index)});
-    LOG_INFO(Lib_NpTrophy, "Handle {} destroyed", handle);
     return ORBIS_OK;
 }
 
@@ -410,19 +404,22 @@ struct GameTrophyInfo {
 int PS4_SYSV_ABI sceNpTrophyGetGameInfo(OrbisNpTrophyContext context, OrbisNpTrophyHandle handle,
                                         OrbisNpTrophyGameDetails* details,
                                         OrbisNpTrophyGameData* data) {
-    LOG_INFO(Lib_NpTrophy, "Getting Game Trophy");
 
-    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT)
+    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_CONTEXT;
+    }
 
-    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE)
+    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_HANDLE;
+    }
 
-    if (details == nullptr || data == nullptr)
+    if (details == nullptr || data == nullptr) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
 
-    if (details->size != 0x4A0 || data->size != 0x20)
+    if (details->size != 0x4A0 || data->size != 0x20) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
 
     Common::SlotId contextId;
     contextId.index = context - 1;
@@ -431,8 +428,9 @@ int PS4_SYSV_ABI sceNpTrophyGetGameInfo(OrbisNpTrophyContext context, OrbisNpTro
     }
     ContextKey contextkey = trophy_contexts[contextId];
     const auto& ctx = contexts_internal[contextkey];
-    if (!ctx.registered)
+    if (!ctx.registered) {
         return ORBIS_NP_TROPHY_ERROR_NOT_REGISTERED;
+    }
     const auto& trophy_file = ctx.trophy_xml_path;
     const auto& trophy_save_file = ctx.xml_save_file;
 
@@ -459,8 +457,9 @@ int PS4_SYSV_ABI sceNpTrophyGetGameInfo(OrbisNpTrophyContext context, OrbisNpTro
                     ORBIS_NP_TROPHY_GAME_DESCR_MAX_SIZE);
         }
 
-        if (node_name == "group")
+        if (node_name == "group") {
             game_info.num_groups++;
+        }
     }
 
     pugi::xml_document save_doc;
@@ -528,19 +527,22 @@ int PS4_SYSV_ABI sceNpTrophyGetGroupInfo(OrbisNpTrophyContext context, OrbisNpTr
                                          OrbisNpTrophyGroupId groupId,
                                          OrbisNpTrophyGroupDetails* details,
                                          OrbisNpTrophyGroupData* data) {
-    LOG_INFO(Lib_NpTrophy, "Getting Trophy Group Info for id {}", groupId);
 
-    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT)
+    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_CONTEXT;
+    }
 
-    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE)
+    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_HANDLE;
+    }
 
-    if (details == nullptr || data == nullptr)
+    if (details == nullptr || data == nullptr) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
 
-    if (details->size != 0x4A0 || data->size != 0x28)
+    if (details->size != 0x4A0 || data->size != 0x28) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
 
     Common::SlotId contextId;
     contextId.index = context - 1;
@@ -549,8 +551,9 @@ int PS4_SYSV_ABI sceNpTrophyGetGroupInfo(OrbisNpTrophyContext context, OrbisNpTr
     }
     ContextKey contextkey = trophy_contexts[contextId];
     const auto& ctx = contexts_internal[contextkey];
-    if (!ctx.registered)
+    if (!ctx.registered) {
         return ORBIS_NP_TROPHY_ERROR_NOT_REGISTERED;
+    }
     const auto& trophy_file = ctx.trophy_xml_path;
 
     pugi::xml_document doc;
@@ -640,17 +643,21 @@ int PS4_SYSV_ABI sceNpTrophyGetGroupInfo(OrbisNpTrophyContext context, OrbisNpTr
 
 int PS4_SYSV_ABI sceNpTrophyGetTrophyIcon(OrbisNpTrophyContext context, OrbisNpTrophyHandle handle,
                                           OrbisNpTrophyId trophyId, void* buffer, u64* size) {
-    if (size == nullptr)
+    if (size == nullptr) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
 
-    if (trophyId < 0 || trophyId >= ORBIS_NP_TROPHY_NUM_MAX)
+    if (trophyId < 0 || trophyId >= ORBIS_NP_TROPHY_NUM_MAX) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_TROPHY_ID;
+    }
 
-    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT)
+    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_CONTEXT;
+    }
 
-    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE)
+    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_HANDLE;
+    }
 
     Common::SlotId contextId;
     contextId.index = context - 1;
@@ -666,8 +673,9 @@ int PS4_SYSV_ABI sceNpTrophyGetTrophyIcon(OrbisNpTrophyContext context, OrbisNpT
 
     ContextKey contextkey = trophy_contexts[contextId];
     const auto& ctx = contexts_internal[contextkey];
-    if (!ctx.registered)
+    if (!ctx.registered) {
         return ORBIS_NP_TROPHY_ERROR_NOT_REGISTERED;
+    }
 
     // Check that the trophy is unlocked and icons are only available for earned trophies.
     pugi::xml_document doc;
@@ -679,8 +687,9 @@ int PS4_SYSV_ABI sceNpTrophyGetTrophyIcon(OrbisNpTrophyContext context, OrbisNpT
     bool unlocked = false;
     bool found = false;
     for (const pugi::xml_node& node : doc.child("trophyconf").children()) {
-        if (std::string_view(node.name()) != "trophy")
+        if (std::string_view(node.name()) != "trophy") {
             continue;
+        }
         if (node.attribute("id").as_int(ORBIS_NP_TROPHY_INVALID_TROPHY_ID) == trophyId) {
             found = true;
             unlocked = node.attribute("unlockstate").as_bool();
@@ -688,11 +697,13 @@ int PS4_SYSV_ABI sceNpTrophyGetTrophyIcon(OrbisNpTrophyContext context, OrbisNpT
         }
     }
 
-    if (!found)
+    if (!found) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_TROPHY_ID;
+    }
 
-    if (!unlocked)
+    if (!unlocked) {
         return ORBIS_NP_TROPHY_ERROR_TROPHY_NOT_UNLOCKED;
+    }
 
     const std::string icon_name = fmt::format("TROP{:03d}.PNG", trophyId);
     const auto icon_path = ctx.icons_dir / icon_name;
@@ -714,22 +725,26 @@ int PS4_SYSV_ABI sceNpTrophyGetTrophyIcon(OrbisNpTrophyContext context, OrbisNpT
 int PS4_SYSV_ABI sceNpTrophyGetTrophyInfo(OrbisNpTrophyContext context, OrbisNpTrophyHandle handle,
                                           OrbisNpTrophyId trophyId, OrbisNpTrophyDetails* details,
                                           OrbisNpTrophyData* data) {
-    LOG_INFO(Lib_NpTrophy, "Getting trophy info for id {}", trophyId);
 
-    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT)
+    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_CONTEXT;
+    }
 
-    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE)
+    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_HANDLE;
+    }
 
-    if (trophyId >= ORBIS_NP_TROPHY_NUM_MAX)
+    if (trophyId >= ORBIS_NP_TROPHY_NUM_MAX) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_TROPHY_ID;
+    }
 
-    if (details == nullptr || data == nullptr)
+    if (details == nullptr || data == nullptr) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
 
-    if (details->size != 0x498 || data->size != 0x18)
+    if (details->size != 0x498 || data->size != 0x18) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
 
     Common::SlotId contextId;
     contextId.index = context - 1;
@@ -738,8 +753,9 @@ int PS4_SYSV_ABI sceNpTrophyGetTrophyInfo(OrbisNpTrophyContext context, OrbisNpT
     }
     ContextKey contextkey = trophy_contexts[contextId];
     const auto& ctx = contexts_internal[contextkey];
-    if (!ctx.registered)
+    if (!ctx.registered) {
         return ORBIS_NP_TROPHY_ERROR_NOT_REGISTERED;
+    }
     const auto& trophy_file = ctx.trophy_xml_path;
 
     pugi::xml_document doc;
@@ -808,16 +824,18 @@ int PS4_SYSV_ABI sceNpTrophyGetTrophyInfo(OrbisNpTrophyContext context, OrbisNpT
 s32 PS4_SYSV_ABI sceNpTrophyGetTrophyUnlockState(OrbisNpTrophyContext context,
                                                  OrbisNpTrophyHandle handle,
                                                  OrbisNpTrophyFlagArray* flags, u32* count) {
-    LOG_INFO(Lib_NpTrophy, "called");
 
-    if (flags == nullptr || count == nullptr)
+    if (flags == nullptr || count == nullptr) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
 
-    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT)
+    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_CONTEXT;
+    }
 
-    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE)
+    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_HANDLE;
+    }
 
     Common::SlotId contextId;
     contextId.index = context - 1;
@@ -833,8 +851,9 @@ s32 PS4_SYSV_ABI sceNpTrophyGetTrophyUnlockState(OrbisNpTrophyContext context,
 
     ContextKey contextkey = trophy_contexts[contextId];
     const auto& ctx = contexts_internal[contextkey];
-    if (!ctx.registered)
+    if (!ctx.registered) {
         return ORBIS_NP_TROPHY_ERROR_NOT_REGISTERED;
+    }
     const auto& trophy_file = ctx.xml_save_file;
 
     ORBIS_NP_TROPHY_FLAG_ZERO(flags);
@@ -870,14 +889,17 @@ s32 PS4_SYSV_ABI sceNpTrophyGetTrophyUnlockState(OrbisNpTrophyContext context,
 
 int PS4_SYSV_ABI sceNpTrophyRegisterContext(OrbisNpTrophyContext context,
                                             OrbisNpTrophyHandle handle, uint64_t options) {
-    if (options != 0ull)
+    if (options != 0ull) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
 
-    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT)
+    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_CONTEXT;
+    }
 
-    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE)
+    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_HANDLE;
+    }
 
     Common::SlotId contextId;
     contextId.index = context - 1;
@@ -925,7 +947,6 @@ int PS4_SYSV_ABI sceNpTrophyRegisterContext(OrbisNpTrophyContext context,
     }
 
     ctx.registered = true;
-    LOG_INFO(Lib_NpTrophy, "Context {} registered", context);
 
     // Sync with shadNet
     {
@@ -934,9 +955,7 @@ int PS4_SYSV_ABI sceNpTrophyRegisterContext(OrbisNpTrophyContext context,
             ctx.user_id, ctx.service_label, ReadUnlockedTrophies(save_file),
             [save_file](const std::vector<std::pair<s32, u64>>& merged) {
                 const u32 applied = ApplyServerTrophies(save_file, merged);
-                if (applied > 0) {
-                    LOG_INFO(Lib_NpTrophy, "Applied {} trophies from shadNet", applied);
-                }
+
             });
     }
 
@@ -945,19 +964,22 @@ int PS4_SYSV_ABI sceNpTrophyRegisterContext(OrbisNpTrophyContext context,
 
 int PS4_SYSV_ABI sceNpTrophyUnlockTrophy(OrbisNpTrophyContext context, OrbisNpTrophyHandle handle,
                                          OrbisNpTrophyId trophyId, OrbisNpTrophyId* platinumId) {
-    LOG_INFO(Lib_NpTrophy, "Unlocking trophy id {}", trophyId);
 
-    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT)
+    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_CONTEXT;
+    }
 
-    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE)
+    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_HANDLE;
+    }
 
-    if (trophyId >= ORBIS_NP_TROPHY_NUM_MAX)
+    if (trophyId >= ORBIS_NP_TROPHY_NUM_MAX) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_TROPHY_ID;
+    }
 
-    if (platinumId == nullptr)
+    if (platinumId == nullptr) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_ARGUMENT;
+    }
 
     Common::SlotId contextId;
     contextId.index = context - 1;
@@ -973,8 +995,9 @@ int PS4_SYSV_ABI sceNpTrophyUnlockTrophy(OrbisNpTrophyContext context, OrbisNpTr
 
     ContextKey contextkey = trophy_contexts[contextId];
     const auto& ctx = contexts_internal[contextkey];
-    if (!ctx.registered)
+    if (!ctx.registered) {
         return ORBIS_NP_TROPHY_ERROR_NOT_REGISTERED;
+    }
     const auto& xml_dir = ctx.xml_dir;
     const auto& trophy_file = ctx.trophy_xml_path;
 
@@ -988,15 +1011,15 @@ int PS4_SYSV_ABI sceNpTrophyUnlockTrophy(OrbisNpTrophyContext context, OrbisNpTr
     auto save_trophyconf = save_doc.child("trophyconf");
     for (const pugi::xml_node& node : save_trophyconf.children()) {
         std::string_view node_name = node.name();
-        if (std::string_view(node.name()) != "trophy")
+        if (std::string_view(node.name()) != "trophy") {
             continue;
+        }
 
         int current_trophy_id = node.attribute("id").as_int(ORBIS_NP_TROPHY_INVALID_TROPHY_ID);
         bool current_trophy_unlockstate = node.attribute("unlockstate").as_bool();
 
         if (current_trophy_id == trophyId) {
             if (current_trophy_unlockstate) {
-                LOG_INFO(Lib_NpTrophy, "Trophy already unlocked");
                 return ORBIS_NP_TROPHY_ERROR_TROPHY_ALREADY_UNLOCKED;
             }
         }
@@ -1047,8 +1070,9 @@ int PS4_SYSV_ABI sceNpTrophyUnlockTrophy(OrbisNpTrophyContext context, OrbisNpTr
     auto trophyconf = doc.child("trophyconf");
 
     for (pugi::xml_node& node : trophyconf.children()) {
-        if (std::string_view(node.name()) != "trophy")
+        if (std::string_view(node.name()) != "trophy") {
             continue;
+        }
 
         int current_trophy_id = node.attribute("id").as_int(ORBIS_NP_TROPHY_INVALID_TROPHY_ID);
         bool current_trophy_unlockstate = node.attribute("unlockstate").as_bool();
@@ -1079,8 +1103,9 @@ int PS4_SYSV_ABI sceNpTrophyUnlockTrophy(OrbisNpTrophyContext context, OrbisNpTr
         }
     }
 
-    if (!trophy_found)
+    if (!trophy_found) {
         return ORBIS_NP_TROPHY_ERROR_INVALID_TROPHY_ID;
+    }
 
     // Capture timestamps once so every file gets the exact same value.
     const auto now_secs = std::chrono::duration_cast<std::chrono::seconds>(
@@ -1122,7 +1147,6 @@ int PS4_SYSV_ABI sceNpTrophyUnlockTrophy(OrbisNpTrophyContext context, OrbisNpTr
 
     ApplyUnlockToXmlFile(ctx.xml_save_file, trophyId, trophy_timestamp, unlock_platinum,
                          platinum_id, platinum_timestamp);
-    LOG_INFO(Lib_NpTrophy, "Trophy {} successfully saved.", trophyId);
     auto& np = NpHandler::GetInstance();
     np.ReportTrophyUnlock(ctx.user_id, ctx.service_label, trophyId, trophy_timestamp);
     if (unlock_platinum) {

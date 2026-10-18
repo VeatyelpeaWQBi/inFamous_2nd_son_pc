@@ -94,7 +94,6 @@ public:
     void SetDriverCache(DriverPipelineCache* cache) { driver_cache = cache; }
 
 protected:
-    [[nodiscard]] std::string GetDebugString() const;
 
     void MarkReady() noexcept {
         readiness.Publish();

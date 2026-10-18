@@ -6,19 +6,17 @@
 #include <bit>
 #include <chrono>
 #include <cstring>
-#include <string>
 #include <magic_enum/magic_enum.hpp>
+#include <string>
 
 #include "common/alignment.h"
 #include "common/elf_info.h"
 #include "common/memory_patcher.h"
-#include "common/perf_stats.h"
-#include "common/path_trace.h"
 #include "common/scope_exit.h"
 #include "common/thread.h"
-#include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
+#include "core/runtime_policy.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
@@ -64,10 +62,9 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
                          Vulkan::Runtime& runtime_, AmdGpu::Liverpool* liverpool_,
                          TextureCache& texture_cache_, PageManager& tracker)
     : instance{instance_}, scheduler{scheduler_}, runtime{runtime_},
-      staging_pool{runtime_.GetStagingPool()},
-      graphics_queue{&scheduler_, &runtime_, nullptr, 0}, active{&graphics_queue},
-      liverpool{liverpool_}, memory{Core::Memory::Instance()}, texture_cache{texture_cache_},
-      memory_tracker{std::make_unique<MemoryTracker>(tracker)},
+      staging_pool{runtime_.GetStagingPool()}, graphics_queue{&scheduler_, &runtime_, nullptr, 0},
+      active{&graphics_queue}, liverpool{liverpool_}, memory{Core::Memory::Instance()},
+      texture_cache{texture_cache_}, memory_tracker{std::make_unique<MemoryTracker>(tracker)},
       stream_buffer{instance, scheduler, MemoryType::Stream, STREAM_BUFFER_SIZE},
       gds_buffer{instance, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
@@ -111,9 +108,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     scheduler.SetSubmitDependency([this](u64 seq) { upload_worker->Wait(seq); });
 }
 
-BufferCache::~BufferCache() {
-    scheduler.SetSubmitDependency({});
-}
+BufferCache::~BufferCache() { scheduler.SetSubmitDependency({}); }
 
 UploadWorker::UploadWorker(PageManager& page_manager_) : page_manager{page_manager_} {
     thread = std::jthread([this](std::stop_token stoken) { Run(stoken); });
@@ -188,9 +183,7 @@ void UploadWorker::ExecuteQueued() {
         batch.swap(queue);
         last_seq = enqueued.load(std::memory_order_acquire);
     }
-    const u64 start_ns = Common::Perf::NowNs();
     // First the protections of all the jobs, merged (fewer system calls)...
-    const bool profile_upload = Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed);
     ranges.clear();
     for (const Job& job : batch) {
         ranges.insert(ranges.end(), job.pages.begin(), job.pages.end());
@@ -206,9 +199,6 @@ void UploadWorker::ExecuteQueued() {
         num_pages += page_manager.RefreshDeferredProtect(first, end);
     }
     // ... then the copies: a guest write to these pages from now on faults.
-    const u64 copy_start_ns = profile_upload ? Common::Perf::NowNs() : 0;
-    if (profile_upload)
-        Common::Perf::Add(Common::Perf::UploadProtectionNs, copy_start_ns - start_ns);
     auto* const memory = Core::Memory::Instance();
     u64 num_bytes = 0;
     for (const Job& job : batch) {
@@ -219,15 +209,9 @@ void UploadWorker::ExecuteQueued() {
         if (job.flush_buffer) {
             job.flush_buffer->Flush(job.flush_offset, job.flush_size);
         }
-    }
-    Common::Perf::Add(Common::Perf::AsyncUploadJobs, batch.size());
-    Common::Perf::Add(Common::Perf::AsyncUploadBytes, num_bytes);
-    if (profile_upload)
-        Common::Perf::Add(Common::Perf::UploadCopyNs, Common::Perf::NowNs() - copy_start_ns);
-    Common::Perf::Add(Common::Perf::AsyncUploadPages, num_pages);
+    };
     batch.clear();
     completed.store(last_seq, std::memory_order_release);
-    Common::Perf::Add(Common::Perf::AsyncUploadBusyNs, Common::Perf::NowNs() - start_ns);
 }
 
 BufferCache::ReadbackQueue::ReadbackQueue(const Vulkan::Instance& instance_)
@@ -294,17 +278,14 @@ u64 BufferCache::ReadbackQueue::Submit(std::span<const Job> jobs, std::span<cons
     };
     const auto result = instance.GetReadbackQueue().submit(submit_info);
     if (result == vk::Result::eErrorDeviceLost) {
-        Vulkan::GpuCrashDiag::ReportDeviceLost(instance, "readback submit");
+        Vulkan::;
     }
-    ASSERT_MSG(result == vk::Result::eSuccess, "Readback submit failed: {}",
-               vk::to_string(result));
-    Common::Perf::Add(Common::Perf::ReadbackQueueSubmits);
+    ASSERT_MSG(result == vk::Result::eSuccess, "Readback submit failed: {}", vk::to_string(result));
     return signal_tick;
 }
 
 bool BufferCache::UseReadbackQueue() const {
-    return readback_queue &&
-           Common::Perf::GetTuning().readback_queue.load(std::memory_order_relaxed);
+    return readback_queue && Core::Runtime::GetPolicy().readback_queue;
 }
 
 Vulkan::StagingBufferPool& BufferCache::Staging() const noexcept {
@@ -360,11 +341,12 @@ BufferCache::WindowWriters BufferCache::ClassifyWriters(std::array<u64, 2> ticks
     return writers;
 }
 
-boost::container::static_vector<BufferCache::ReadbackQueue::Wait, 2> BufferCache::ReadbackWaits(
-    const WindowWriters& writers) {
+boost::container::static_vector<BufferCache::ReadbackQueue::Wait, 2>
+BufferCache::ReadbackWaits(const WindowWriters& writers) {
     boost::container::static_vector<ReadbackQueue::Wait, 2> waits;
     if (writers.ticks[0] != 0) {
-        waits.push_back(ReadbackQueue::Wait{scheduler.GetWorkSemaphore()->Handle(), writers.ticks[0]});
+        waits.push_back(
+            ReadbackQueue::Wait{scheduler.GetWorkSemaphore()->Handle(), writers.ticks[0]});
     }
     if (writers.ticks[1] != 0 && compute_queue != nullptr) {
         waits.push_back(ReadbackQueue::Wait{compute_queue->scheduler->GetWorkSemaphore()->Handle(),
@@ -382,7 +364,6 @@ void BufferCache::WaitComputeWriter(const WindowWriters& writers) {
         FlushComputeQueue();
     }
     scheduler.AddCrossWait(compute_queue->scheduler->GetWorkSemaphore()->Handle(), tick);
-    Common::Perf::Add(Common::Perf::CrossWaitsGraphics);
 }
 
 void BufferCache::FinishAllQueues() {
@@ -407,7 +388,6 @@ void BufferCache::FlushComputeQueue() {
         graphics_queue.scheduler->WaitSubmitted(graphics_tick);
     }
     compute_queue->scheduler->Flush();
-    Common::Perf::Add(Common::Perf::ComputeQueueSubmits);
 }
 
 void BufferCache::NoteGdsAccess(bool is_written) {
@@ -430,12 +410,9 @@ void BufferCache::NoteGdsAccess(bool is_written) {
                     graphics_queue.scheduler->Flush();
                 } else {
                     FlushComputeQueue();
-                }
-                Common::Perf::Add(Common::Perf::CrossQueueFlushes);
+                };
             }
             Sched().AddCrossWait(other_queue.scheduler->GetWorkSemaphore()->Handle(), dependency);
-            Common::Perf::Add(queue == 0 ? Common::Perf::CrossWaitsGraphics
-                                         : Common::Perf::CrossWaitsCompute);
         }
     }
     (is_written ? gds_write_tick : gds_read_tick)[queue] = Sched().CurrentTick();
@@ -456,12 +433,9 @@ void BufferCache::NoteBdaAccess() {
             graphics_queue.scheduler->Flush();
         } else {
             FlushComputeQueue();
-        }
-        Common::Perf::Add(Common::Perf::CrossQueueFlushes);
+        };
     }
     Sched().AddCrossWait(other_queue.scheduler->GetWorkSemaphore()->Handle(), tick);
-    Common::Perf::Add(active->index == 0 ? Common::Perf::CrossWaitsGraphics
-                                         : Common::Perf::CrossWaitsCompute);
 }
 
 void BufferCache::NoteQueueAccess(VAddr device_addr, u64 size, bool is_written) {
@@ -483,7 +457,6 @@ void BufferCache::NoteQueueAccess(VAddr device_addr, u64 size, bool is_written) 
         // Graphics reads of these words are unknown: everything recorded so far on the graphics
         // queue comes first.
         dependency = std::max(dependency, graphics_queue.scheduler->CurrentTick());
-        Common::Perf::Add(Common::Perf::CrossQueueFirstTouches);
     }
     if (dependency == 0 || other_queue.scheduler->IsFree(dependency)) {
         return;
@@ -495,12 +468,9 @@ void BufferCache::NoteQueueAccess(VAddr device_addr, u64 size, bool is_written) 
             graphics_queue.scheduler->Flush();
         } else {
             FlushComputeQueue();
-        }
-        Common::Perf::Add(Common::Perf::CrossQueueFlushes);
+        };
     }
     Sched().AddCrossWait(other_queue.scheduler->GetWorkSemaphore()->Handle(), dependency);
-    Common::Perf::Add(queue == 0 ? Common::Perf::CrossWaitsGraphics
-                                 : Common::Perf::CrossWaitsCompute);
 }
 
 bool BufferCache::IsReadbackDone(bool on_readback_queue, u64 tick) {
@@ -512,7 +482,6 @@ bool BufferCache::IsReadbackDone(bool on_readback_queue, u64 tick) {
 
 void NextUploadEpoch() noexcept {
     g_upload_epoch.fetch_add(1, std::memory_order_acq_rel);
-    Common::Perf::Add(Common::Perf::UploadEpochs);
 }
 
 void BufferCache::TickFrame() {
@@ -530,11 +499,9 @@ void BufferCache::TickFrame() {
     if (frame % 64 == 0) {
         memory_tracker->PrunePageSnapshots(frame, 240);
     }
-    const u32 cooldown =
-        Common::Perf::GetTuning().hot_page_cooldown_frames.load(std::memory_order_relaxed);
+    const u32 cooldown = Core::Runtime::GetPolicy().hot_page_cooldown_frames;
     if (cooldown != 0 && frame % cooldown == 0) {
         const u32 cooled = memory_tracker->CoolHotPages();
-        Common::Perf::Add(Common::Perf::HotPageDemotions, cooled);
     }
 }
 
@@ -551,21 +518,12 @@ void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_lock
         device_addr, size, is_fault, assume_locks, [this, device_addr, size, assume_locks] {
             ReadMemory(device_addr, size, true, assume_locks);
         });
-    if (discarded) {
-        Common::Perf::Add(Common::Perf::ReadbackDiscards);
-        if (Common::Perf::FrameDumpActive().load(std::memory_order_relaxed)) [[unlikely]] {
-            // Frame x-ray: the GPU data of the page is forgotten (write discard), or kept on
-            // the GPU (write merge). Any thread.
-            LOG_INFO(Render_Vulkan, "DUMPX discard {:x} size {} {}", device_addr, size,
-                     assume_locks ? "gpu-thread" : "guest");
-        }
-    }
+
 }
 
 std::pair<VAddr, VAddr> BufferCache::GetReadbackWindow(const Buffer* arena, VAddr device_addr,
                                                        u64 size) {
-    const u64 window_size =
-        Common::Perf::GetTuning().readback_window_bytes.load(std::memory_order_relaxed);
+    const u64 window_size = Core::Runtime::GetPolicy().readback_window_bytes;
     const VAddr arena_end = arena->cpu_addr + arena->size_bytes;
     const VAddr window_start =
         std::max<VAddr>(Common::AlignDown(device_addr, window_size), arena->cpu_addr);
@@ -577,164 +535,21 @@ std::pair<VAddr, VAddr> BufferCache::GetReadbackWindow(const Buffer* arena, VAdd
     return {window_start, window_end};
 }
 
-bool BufferCache::IsRelaxedSite(u64 guest_rip) const {
-    if (guest_rip == 0) {
-        return false;
-    }
-    const auto& tuning = Common::Perf::GetTuning();
-    if (tuning.relaxed_all.load(std::memory_order_relaxed)) {
-        return true;
-    }
-    const u32 count = tuning.num_relaxed_sites.load(std::memory_order_acquire);
-    const u64 base = MemoryPatcher::g_eboot_address;
-    if (count == 0 || base == 0 || guest_rip < base) {
-        return false;
-    }
-    const u64 block = (guest_rip - base) & ~u64{0xFF};
-    for (u32 i = 0; i < count; ++i) {
-        if (tuning.relaxed_sites[i].load(std::memory_order_relaxed) == block) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void BufferCache::BeginRelaxedReadback(VAddr device_addr, u64 size) {
-    // Readbacks the GPU has finished are written first: the page may be up to date already.
-    CompleteReadbacks(false);
-    const VAddr page_start = Common::AlignDown(device_addr, BYTES_PER_PAGE);
-    const VAddr page_end = Common::AlignUp(device_addr + size, BYTES_PER_PAGE);
-    if (!memory_tracker->IsRegionGpuModified(page_start, page_end - page_start)) {
-        return;
-    }
-    const u32 first_block = device_addr >> block_shift;
-    const u32 last_block = (device_addr + size - 1) >> block_shift;
-    const auto* arena = GetArena(first_block, last_block);
-    const auto [window_start, window_end] = GetReadbackWindow(arena, device_addr, size);
-    // Downloaded again at the next fences while the guest keeps reading it.
-    NoteHotWindow(window_start, window_end);
-
-    // The GPU data of the window no pending readback covers is downloaded now, as for a read
-    // that waits (nobody waits for it).
-    PendingReadback readback{
-        .arena_base = arena->cpu_addr,
-        .window_start = window_start,
-        .window_end = window_end,
-    };
-    const WindowWriters writers = WindowWritersOf(window_start, window_end - window_start);
-    const bool use_queue = UseReadbackQueue() && writers.submitted;
-    if (use_queue ? CollectReadback(arena, readback) : RecordReadback(arena, readback)) {
-        if (use_queue) {
-            const ReadbackQueue::Job job{
-                .src = readback.arena_handle,
-                .dst = readback.download.buffer->Handle(),
-                .copies = readback.copies,
-            };
-            readback.tick = readback_queue->Submit(std::span{&job, 1}, ReadbackWaits(writers));
-            readback.on_readback_queue = true;
-        } else {
-            WaitComputeWriter(writers);
-            readback.tick = scheduler.CurrentTick();
-            scheduler.MarkReadbackSession();
-            scheduler.Flush();
-        }
-        pending_readbacks.push_back(std::move(readback));
-        Common::Perf::Add(Common::Perf::ReadbackAsync);
-    } else {
-        memory_tracker->RemovePendingReadback(window_start, window_end);
-    }
-    // Every readback in flight for these pages gives them its data when it lands, unless the
-    // guest or the GPU changed them meanwhile.
-    for (VAddr page = page_start; page < page_end; page += BYTES_PER_PAGE) {
-        for (auto& pending : pending_readbacks) {
-            if (pending.window_start <= page && page < pending.window_end &&
-                std::ranges::find(pending.relaxed_pages, page) == pending.relaxed_pages.end()) {
-                pending.relaxed_pages.push_back(page);
-            }
-        }
-    }
-    // Readable at once: the guest reads what guest memory holds (the previous download).
-    memory_tracker->UnmarkRegionAsGpuModified(page_start, page_end - page_start, false);
-    Common::Perf::Add(Common::Perf::ReadbackRelaxed);
-}
-
 void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool assume_locks,
                              u64 guest_rip) {
-    const u64 request_ns = Common::Perf::NowNs();
-    using Common::PathTrace::Emit;
-    using Common::PathTrace::Kind;
-    const u64 path_id = Common::PathTrace::NextId();
-    u64 path_mode = 0; // synchronous, asynchronous, relaxed
-    bool path_retry = false;
-    bool path_nothing = false;
-    Emit(Kind::ReadRequest, path_id, device_addr, size, guest_rip,
-         (is_write ? 1 : 0) | (assume_locks ? 2 : 0));
-    SCOPE_EXIT { Emit(Kind::ReadReturn, path_id, path_mode, path_retry, path_nothing); };
-    // Particle trace (Tuning::trace_reads): what the guest gets when it reads GPU written memory
-    // in the traced range, logged once the read is complete.
-    const auto& trace_tuning = Common::Perf::GetTuning();
-    const u64 trace_lo = trace_tuning.trace_reads_lo.load(std::memory_order_relaxed);
-    const bool traced = trace_lo != 0 && device_addr + size > trace_lo &&
-                        device_addr < trace_tuning.trace_reads_hi.load(std::memory_order_relaxed);
-    bool trace_retry = false;
-    bool trace_nothing = false;
-    SCOPE_EXIT {
-        if (!traced) [[likely]] {
-            return;
-        }
-        std::array<u32, 4> words{};
-        const u64 n = std::min<u64>(size, sizeof(words));
-        memory->CopySparseMemory(device_addr, reinterpret_cast<u8*>(words.data()), n);
-        std::string bytes;
-        for (u64 i = 0; i < (n + 3) / 4; ++i) {
-            bytes += fmt::format("{}{:08x}", i ? "," : "", words[i]);
-        }
-        LOG_INFO(Render_Vulkan, "PTRACE read f{} {:x}+{} {} {} {} wait {}us{}{}",
-                 Common::Perf::GuestFrameCounter().load(std::memory_order_relaxed), device_addr,
-                 size, is_write ? "write" : "read", assume_locks ? "gpu-thread" : "guest", bytes,
-                 (Common::Perf::NowNs() - request_ns) / 1000, trace_retry ? " retry" : "",
-                 trace_nothing ? " nothing" : "");
-    };
-    if (Common::Perf::FrameDumpActive().load(std::memory_order_relaxed)) [[unlikely]] {
-        // Frame x-ray: a guest access to GPU written memory (precise readback). Any thread.
-        LOG_INFO(Render_Vulkan, "DUMPX readback {:x} size {} {} {}", device_addr, size,
-                 is_write ? "write" : "read", assume_locks ? "gpu-thread" : "guest");
-    }
-    Common::Perf::ScopedTimer stall_timer{is_write ? Common::Perf::ReadbackWrites
-                                                   : Common::Perf::ReadbackReads,
-                                          Common::Perf::ReadbackStallNs};
-    if (!assume_locks && !is_write && IsRelaxedSite(guest_rip)) {
-        // readback_relaxed_sites: this code reads GPU results without waiting for the GPU (the
-        // previous ones, the new ones land in guest memory once the GPU is done).
-        path_mode = 2;
-        liverpool->SendCommand<true>([&] {
-            Emit(Kind::ReadCpBegin, path_id, 3);
-            SCOPE_EXIT { Emit(Kind::ReadCpEnd, path_id, 3); };
-            Common::Perf::Add(Common::Perf::ReadbackQueueNs, Common::Perf::NowNs() - request_ns);
-            BeginRelaxedReadback(device_addr, size);
-        });
-        return;
-    }
-    if (!assume_locks &&
-        Common::Perf::GetTuning().async_readbacks.load(std::memory_order_relaxed)) {
+    if (!assume_locks && Core::Runtime::GetPolicy().async_readbacks) {
         // The command processor records and submits the download, then goes on with its work
         // while this (guest) thread waits for the GPU. Previously the command processor itself
         // waited for the GPU to become idle, hundreds of times per second in busy scenes.
-        path_mode = 1;
         u64 wait_tick = 0;
         Vulkan::Semaphore* wait_semaphore = nullptr;
         liverpool->SendCommand<true>([&] {
-            Common::Perf::Add(Common::Perf::ReadbackQueueNs, Common::Perf::NowNs() - request_ns);
-            Emit(Kind::ReadCpBegin, path_id, 0);
-            wait_tick = BeginReadback(device_addr, size, is_write, wait_semaphore, path_id);
-            Emit(Kind::ReadCpEnd, path_id, 0, 0, wait_tick);
+            wait_tick = BeginReadback(device_addr, size, is_write, wait_semaphore);
         });
         if (wait_tick == 0) {
-            trace_nothing = true;
-            path_nothing = true;
             return;
         }
-        WaitReadback(device_addr, wait_semaphore, wait_tick, path_id, 0);
+        WaitReadback(device_addr, wait_semaphore, wait_tick);
         for (u32 round = 0;; ++round) {
             // An earlier readback of the window (another queue) may still be in flight: its data
             // must land first, then this one's. The guest thread waits for it (a few times at
@@ -742,18 +557,8 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
             Vulkan::Semaphore* next_semaphore = nullptr;
             u64 next_tick = 0;
             const bool may_wait = round < 4;
-            const bool time_completion =
-                Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed);
-            const u64 completion_request_ns = time_completion ? Common::Perf::NowNs() : 0;
-            Emit(Kind::ReadCompletionRequest, path_id, round);
             liverpool->SendCommand<true>([&] {
-                Emit(Kind::ReadCpBegin, path_id, 1, round);
-                SCOPE_EXIT { Emit(Kind::ReadCpEnd, path_id, 1, round, next_tick, path_retry); };
-                Common::Perf::Add(Common::Perf::ReadbackCompletionRequests);
-                if (completion_request_ns != 0) {
-                    Common::Perf::Add(Common::Perf::ReadbackCompletionQueueNs,
-                                      Common::Perf::NowNs() - completion_request_ns);
-                }
+                
                 CompleteReadbacks(false);
                 if (!memory_tracker->IsRegionGpuModified(device_addr, size)) {
                     if (is_write) {
@@ -766,31 +571,23 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
                     next_semaphore = pending->on_readback_queue ? &readback_queue->Semaphore()
                                                                 : scheduler.GetWorkSemaphore();
                     next_tick = pending->tick;
-                    Emit(Kind::ReadCopy, path_id, pending->tick, pending->on_readback_queue,
-                         pending->record_seq, pending->trace_id);
                     return;
                 }
                 // The GPU wrote this memory again while the download was in flight. Download it
                 // synchronously so the request completes instead of faulting again.
-                trace_retry = true;
-                path_retry = true;
-                Common::Perf::Add(Common::Perf::ReadbackAsyncRetries);
-                Emit(Kind::ReadFallbackBegin, path_id, round);
+                ;
                 ReadbackSync(device_addr, size, is_write);
-                Emit(Kind::ReadFallbackEnd, path_id, round);
             });
             if (next_tick == 0) {
                 break;
             }
-            WaitReadback(device_addr, next_semaphore, next_tick, path_id, round + 1);
+            WaitReadback(device_addr, next_semaphore, next_tick);
         }
         return;
     }
-    const auto flush_request = [this, device_addr, size, is_write, request_ns, path_id] {
-        Emit(Kind::ReadCpBegin, path_id, 2);
-        SCOPE_EXIT { Emit(Kind::ReadCpEnd, path_id, 2); };
+    const auto flush_request = [this, device_addr, size, is_write] {
+        
         // Time spent waiting for the command processor thread to pick up the request.
-        Common::Perf::Add(Common::Perf::ReadbackQueueNs, Common::Perf::NowNs() - request_ns);
         ReadbackSync(device_addr, size, is_write);
     };
     if (assume_locks) {
@@ -800,12 +597,8 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
     }
 }
 
-void BufferCache::WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, u64 tick,
-                              u64 trace_id, u32 round) {
+void BufferCache::WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, u64 tick) {
     const bool on_readback_queue = readback_queue && semaphore == &readback_queue->Semaphore();
-    Common::PathTrace::Emit(Common::PathTrace::Kind::ReadWaitBegin, trace_id, round,
-                            on_readback_queue, tick);
-    const u64 wait_start = Common::Perf::NowNs();
     // A readback takes milliseconds: one still waiting after seconds is reported once (hang
     // diagnostics), then the wait goes on.
     if (!semaphore->WaitFor(tick, 2'000'000'000ULL)) {
@@ -817,11 +610,8 @@ void BufferCache::WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, 
                     semaphore->KnownGpuTick(), scheduler.SubmittedTick(), scheduler.CurrentTick(),
                     scheduler.GetWorkSemaphore()->KnownGpuTick());
         semaphore->Wait(tick);
-    }
-    Common::Perf::Add(Common::Perf::ReadbackAsyncWaitNs, Common::Perf::NowNs() - wait_start);
+    };
     // CPU observation of readiness; this includes scheduling and is not GPU execution time.
-    Common::PathTrace::Emit(Common::PathTrace::Kind::ReadWaitEnd, trace_id, round,
-                            on_readback_queue, tick);
 }
 
 const BufferCache::PendingReadback* BufferCache::FirstUnfinishedReadback(VAddr device_addr,
@@ -873,9 +663,7 @@ bool BufferCache::RecordReadback(const Buffer* arena, PendingReadback& readback)
     return true;
 }
 
-bool BufferCache::KeepRanges() const {
-    return Common::Perf::GetTuning().readback_keep_ranges.load(std::memory_order_relaxed);
-}
+bool BufferCache::KeepRanges() const { return Core::Runtime::GetPolicy().readback_keep_ranges; }
 
 bool BufferCache::CollectReadback(const Buffer* arena, PendingReadback& readback) {
     // Registered before looking at the pages: from now on CPU writes to the window flush instead
@@ -926,17 +714,12 @@ bool BufferCache::CollectReadback(const Buffer* arena, PendingReadback& readback
     readback.download = staging_pool.Request(request_size, MemoryType::HostCached, 0, true);
     for (auto& copy : readback.copies) {
         copy.dstOffset += readback.download.offset;
-    }
-    Common::Perf::Add(Common::Perf::ReadbackBytes, total_size_bytes);
-    readback.trace_id = Common::PathTrace::NextId();
-    Common::PathTrace::Emit(Common::PathTrace::Kind::CopyRecord, readback.trace_id,
-                            readback.window_start, readback.window_end, readback.record_seq,
-                            total_size_bytes);
+    };
     return true;
 }
 
 bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback,
-                                   WindowWriters& writers, bool queue_enabled, bool& on_queue) {
+                                  WindowWriters& writers, bool queue_enabled, bool& on_queue) {
     on_queue = queue_enabled && writers.submitted;
     // Precise downloads always refine the conservative window dependency using actual
     // copied ranges. Unknown writers or a changed version still keep whole-window waits.
@@ -946,24 +729,18 @@ bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback
         return false;
     }
     if (refine) {
-        Common::Perf::Add(Common::Perf::ReadbackDependencyChecks);
         const auto ticks = SelectReadbackDependencies(
             readback.arena_base, readback.window_start, readback.window_end, readback.copies,
             writers.ticks, sequence, BYTES_PER_WORD,
             [this](u64 start, u64 size) { return memory_tracker->GetWriteTicks(start, size); },
             [this] { return memory_tracker->CurrentWriteSeq(); });
         if (ticks) {
-            if (*ticks != writers.ticks) {
-                Common::Perf::Add(Common::Perf::ReadbackDependenciesReduced);
-            }
+
             writers = ClassifyWriters(*ticks);
             const bool refined_queue = queue_enabled && writers.submitted;
-            if (refined_queue && !on_queue) {
-                Common::Perf::Add(Common::Perf::ReadbackQueuePromotions);
-            }
+
             on_queue = refined_queue;
         } else {
-            Common::Perf::Add(Common::Perf::ReadbackDependencyFallbacks);
             // A changed version must not leave us waiting on the old window snapshot. Keep
             // every old dependency and include any newly observed writer before copying.
             const auto fresh = memory_tracker->GetWriteTicks(
@@ -982,7 +759,7 @@ bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback
 }
 
 void BufferCache::NoteHotWindow(VAddr start, VAddr end, bool demand_pages) {
-    const u64 now = Common::Perf::NowNs();
+    const u64 now = Core::Runtime::NowNs();
     for (auto& window : hot_windows) {
         if (window.start == start && window.end == end && window.demand_pages == demand_pages) {
             window.last_read_ns = now;
@@ -1004,7 +781,7 @@ void BufferCache::NoteHotWindow(VAddr start, VAddr end, bool demand_pages) {
 }
 
 u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
-                               Vulkan::Semaphore*& wait_semaphore, u64 trace_id) {
+                               Vulkan::Semaphore*& wait_semaphore) {
     // Readbacks the GPU has finished are written first, the requested data may be among them.
     CompleteReadbacks(false);
 
@@ -1034,13 +811,8 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     WindowWriters writers = WindowWritersOf(window_start, window_end - window_start);
     if (!is_write && size <= BYTES_PER_PAGE) {
         if (writers.done) {
-            Common::Perf::Add(Common::Perf::ReadbackProducerDone);
         } else if (writers.submitted) {
-            Common::Perf::Add(Common::Perf::ReadbackProducerSubmitted);
         } else if (!writers.current) {
-            Common::Perf::Add(Common::Perf::ReadbackProducerQueued);
-        } else {
-            Common::Perf::Add(Common::Perf::ReadbackProducerCurrent);
         }
     }
     // readback_queue: the copy runs on the readback queue, waiting only for the command buffers
@@ -1080,28 +852,13 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
             return 0;
         }
         if (overlapping->prefetch) {
-            Common::Perf::Add(Common::Perf::ReadbackPrefetchHits);
-            if (overlapping->demand_page_prefetch && overlapping->window_start <= device_addr &&
-                device_addr + size <= overlapping->window_end) {
-                Common::Perf::Add(Common::Perf::ReadbackPagePrefetchHits);
-            }
+
         }
         wait_semaphore = overlapping->on_readback_queue ? &readback_queue->Semaphore()
                                                         : scheduler.GetWorkSemaphore();
-        Common::PathTrace::Emit(Common::PathTrace::Kind::ReadCopy, trace_id,
-                                overlapping->tick, overlapping->on_readback_queue,
-                                overlapping->record_seq, overlapping->trace_id);
         return overlapping->tick;
-    }
-    Common::PathTrace::Emit(Common::PathTrace::Kind::ReadDependencies, trace_id,
-                            writers.ticks[0], writers.ticks[1], readback.record_seq,
-                            (writers.done ? 1 : 0) | (writers.submitted ? 2 : 0) |
-                                (writers.current ? 4 : 0) | (use_queue ? 8 : 0));
-    const u64 submit_start = Common::Perf::NowNs();
-    if (queue_enabled) {
-        Common::Perf::Add(use_queue ? Common::Perf::ReadbackQueueReads
-                                    : Common::Perf::ReadbackQueueFallbacks);
-    }
+    };
+
     if (use_queue) {
         const ReadbackQueue::Job job{
             .src = readback.arena_handle,
@@ -1114,16 +871,11 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     } else {
         WaitComputeWriter(writers);
         readback.tick = scheduler.CurrentTick();
-        scheduler.MarkReadbackSession();
         scheduler.Flush();
         wait_semaphore = scheduler.GetWorkSemaphore();
-    }
-    Common::Perf::Add(Common::Perf::ReadbackSyncNs, Common::Perf::NowNs() - submit_start);
+    };
     const u64 wait_tick = readback.tick;
-    Common::PathTrace::Emit(Common::PathTrace::Kind::ReadCopy, trace_id, wait_tick,
-                            readback.on_readback_queue, readback.record_seq, readback.trace_id);
     pending_readbacks.push_back(std::move(readback));
-    Common::Perf::Add(Common::Perf::ReadbackAsync);
     return wait_tick;
 }
 
@@ -1161,10 +913,9 @@ void BufferCache::PrefetchReadbacks() {
     if (hot_windows.empty()) {
         return;
     }
-    const auto& tuning = Common::Perf::GetTuning();
+    const auto& tuning = Core::Runtime::GetPolicy();
     // Only precise readbacks keep the pages protected until the data is written.
-    if (!tuning.async_readbacks.load(std::memory_order_relaxed) ||
-        !tuning.readback_prefetch.load(std::memory_order_relaxed) ||
+    if (!tuning.async_readbacks || !tuning.readback_prefetch ||
         EmulatorSettings.GetReadbacksMode() != GpuReadbacksMode::Precise) {
         return;
     }
@@ -1175,7 +926,7 @@ void BufferCache::PrefetchReadbacks() {
     // Completed copies are published by the existing version-checked retirement path.
     constexpr u64 HotWindowLifetimeNs = 1'000'000'000ULL;
     constexpr u64 MaxPrefetchBytes = 8_MB;
-    const u64 now = Common::Perf::NowNs();
+    const u64 now = Core::Runtime::NowNs();
     const u64 tick = scheduler.CurrentTick();
     // With the readback queue, a window whose writer is already submitted to the driver is
     // copied there, waiting only for that writer. The others (written by commands not submitted
@@ -1220,7 +971,8 @@ void BufferCache::PrefetchReadbacks() {
         const auto* arena = GetArena(start >> block_shift, (end - 1) >> block_shift);
         const auto [dependency_start, dependency_end] =
             GetReadbackWindow(arena, start, end - start);
-        WindowWriters writers = WindowWritersOf(dependency_start, dependency_end - dependency_start);
+        WindowWriters writers =
+            WindowWritersOf(dependency_start, dependency_end - dependency_start);
         bool on_queue = queue_enabled && writers.submitted;
         PendingReadback readback{
             .tick = tick,
@@ -1248,16 +1000,11 @@ void BufferCache::PrefetchReadbacks() {
             recorded_on_graphics = true;
         }
         pending_readbacks.push_back(std::move(readback));
-        Common::Perf::Add(Common::Perf::ReadbackPrefetches);
-        Common::Perf::Add(Common::Perf::ReadbackPagePrefetches);
         for (const auto& copy : pending_readbacks.back().copies) {
-            Common::Perf::Add(Common::Perf::ReadbackPagePrefetchBytes, copy.size);
         }
     }
     if (recorded_on_graphics) {
-        scheduler.MarkReadbackSession();
         scheduler.Flush();
-        Common::Perf::Add(Common::Perf::ReadbackPrefetchFlushes);
     }
     if (!recorded_on_queue) {
         return;
@@ -1300,14 +1047,11 @@ void BufferCache::CompleteReadbacks(bool wait) {
         while (!pending_readbacks.empty()) {
             PendingReadback& readback = pending_readbacks.front();
             if (!IsReadbackDone(readback.on_readback_queue, readback.tick)) {
-                const u64 sync_start = Common::Perf::NowNs();
                 if (readback.on_readback_queue) {
                     readback_queue->Semaphore().Wait(readback.tick);
                 } else {
                     scheduler.Wait(readback.tick);
-                }
-                Common::Perf::Add(Common::Perf::ReadbackSyncNs,
-                                  Common::Perf::NowNs() - sync_start);
+                };
             }
             FinishReadback(0);
             pending_readbacks.pop_front();
@@ -1341,9 +1085,7 @@ void BufferCache::CompleteReadbacks(bool wait) {
             ++i;
             continue;
         }
-        if (i != 0) {
-            Common::Perf::Add(Common::Perf::ReadbackOutOfOrder);
-        }
+
         FinishReadback(i);
         pending_readbacks.erase(pending_readbacks.begin() + static_cast<std::ptrdiff_t>(i));
     }
@@ -1351,17 +1093,8 @@ void BufferCache::CompleteReadbacks(bool wait) {
 
 void BufferCache::FinishReadback(size_t index) {
     PendingReadback& readback = pending_readbacks[index];
-    Common::PathTrace::Emit(Common::PathTrace::Kind::CopyPublishBegin, readback.trace_id,
-                            readback.tick, readback.on_readback_queue, readback.record_seq,
-                            readback.copies.size());
-    SCOPE_EXIT {
-        Common::PathTrace::Emit(Common::PathTrace::Kind::CopyPublishEnd, readback.trace_id,
-                                readback.tick, readback.on_readback_queue, readback.record_seq);
-    };
-    const u64 finish_start = Common::Perf::NowNs();
-    if (readback.demand_page_prefetch) {
-        Common::Perf::Add(Common::Perf::ReadbackPagePrefetchFinished);
-    }
+    
+
     if (KeepRanges()) {
         for (const auto& copy : readback.copies) {
             pending_download_ranges.Subtract(readback.arena_base + copy.srcOffset, copy.size);
@@ -1456,8 +1189,6 @@ void BufferCache::FinishReadback(size_t index) {
                 }
             });
             refreshed_any |= refreshed;
-            Common::Perf::Add(refreshed ? Common::Perf::ReadbackRelaxedRefreshes
-                                        : Common::Perf::ReadbackRelaxedSkips);
         }
         if (refreshed_any) {
             NoteHostWrite();
@@ -1468,8 +1199,7 @@ void BufferCache::FinishReadback(size_t index) {
     memory_tracker->RemovePendingReadback(readback.window_start, readback.window_end);
     if (readback.download.buffer) {
         staging_pool.FreeDeferred(readback.download);
-    }
-    Common::Perf::Add(Common::Perf::ReadbackSyncNs, Common::Perf::NowNs() - finish_start);
+    };
 }
 
 void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {
@@ -1503,11 +1233,7 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     runtime.CopyBuffer(arena, download.buffer, copies);
     {
         // Submits all recorded GPU work and waits for the GPU to become idle.
-        const u64 sync_start = Common::Perf::NowNs();
-        scheduler.MarkReadbackSession();
         FinishAllQueues();
-        Common::Perf::Add(Common::Perf::ReadbackSyncNs, Common::Perf::NowNs() - sync_start);
-        Common::Perf::Add(Common::Perf::ReadbackBytes, total_size_bytes);
     }
 
     download.buffer->Invalidate(download.offset, download.size);
@@ -1541,9 +1267,9 @@ void BufferCache::PrefetchStreamSource(VAddr device_addr, u64 size) noexcept {
     if (size == 0 || size > STREAM_THRESHOLD) {
         return;
     }
-    const auto& tuning = Common::Perf::GetTuning();
+    const auto& tuning = Core::Runtime::GetPolicy();
     // As ObtainBuffer: a copy reused, or pages bound in place, read nothing.
-    if (tuning.stream_dedup.load(std::memory_order_relaxed)) {
+    if (tuning.stream_dedup) {
         const u64 key = device_addr ^ (size << 40);
         const auto& reuse = stream_copies[(key * 0x9E3779B97F4A7C15ULL) >> (64 - 12)];
         if (reuse.address == device_addr && reuse.size == size &&
@@ -1552,9 +1278,8 @@ void BufferCache::PrefetchStreamSource(VAddr device_addr, u64 size) noexcept {
             return;
         }
     }
-    if (tuning.stream_static.load(std::memory_order_relaxed) &&
-        memory_tracker->IsRegionCpuClean(
-            device_addr, size, tuning.stream_static_frames.load(std::memory_order_relaxed))) {
+    if (tuning.stream_static &&
+        memory_tracker->IsRegionCpuClean(device_addr, size, tuning.stream_static_frames)) {
         return;
     }
     constexpr u64 MaxLines = 16;
@@ -1569,12 +1294,12 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                                                         bool is_written, bool is_texel_buffer) {
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
     if (!is_written && size <= STREAM_THRESHOLD && !HasGpuData(device_addr, size)) {
-        const auto& tuning = Common::Perf::GetTuning();
-        const u32 stable_frames = tuning.stream_static_frames.load(std::memory_order_relaxed);
+        const auto& tuning = Core::Runtime::GetPolicy();
+        const u32 stable_frames = tuning.stream_static_frames;
         StreamCopy* reuse = nullptr;
         u64 epoch = 0;
         u64 host_write_gen = 0;
-        if (tuning.stream_dedup.load(std::memory_order_relaxed)) {
+        if (tuning.stream_dedup) {
             // A copy of this range made in this command buffer and epoch is reused first: the
             // cheapest answer (checking the GPU copy below reads the page tracking tables).
             // Read before copying: a change while copying makes the entry unusable.
@@ -1585,12 +1310,10 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             if (reuse->address == device_addr && reuse->size == size &&
                 reuse->queue == active->index && reuse->tick == Sched().CurrentTick() &&
                 reuse->epoch == epoch && reuse->host_write_gen == host_write_gen) {
-                Common::Perf::Add(Common::Perf::StreamReuses);
-                Common::Perf::Add(Common::Perf::StreamReuseBytes, size);
                 return {&Stream(), reuse->offset};
             }
         }
-        if (tuning.stream_static.load(std::memory_order_relaxed)) {
+        if (tuning.stream_static) {
             if (!is_texel_buffer &&
                 memory_tracker->IsRegionCpuClean(device_addr, size, stable_frames)) {
                 // The GPU copy of these pages is up to date: no copy or upload is needed to read
@@ -1602,24 +1325,16 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                 // Unless the range was written since the last barrier (an upload): reading it in
                 // place would need a full pipeline barrier, a copy needs none.
                 if (!Rt().IsBufferAccessed(arena, arena_offset, size)) {
-                    Common::Perf::Add(Common::Perf::StreamArenaBinds);
                     EnsureResident(arena, first_block, last_block);
                     NoteQueueAccess(device_addr, size, false);
                     return {arena, arena_offset};
-                }
-                Common::Perf::Add(Common::Perf::StreamBarrierAvoided);
+                };
             }
-        } else if ((++stream_clean_sample & 15) == 0 && !is_texel_buffer &&
-                   memory_tracker->IsRegionCpuClean(device_addr, size, stable_frames)) {
-            // Statistics only (one binding in 16): copies stream_static would avoid.
-            Common::Perf::Add(Common::Perf::StreamCleanCopies, 16);
         }
         StreamBuffer& stream = Stream();
         const auto [data, offset] = stream.Map(size, instance.UniformMinAlignment());
         memory->CopySparseMemory(device_addr, data, size);
         stream.Commit();
-        Common::Perf::Add(Common::Perf::StreamCopies);
-        Common::Perf::Add(Common::Perf::StreamCopyBytes, size);
         if (reuse) {
             // The copy stays valid until the command buffer it was committed in completes.
             *reuse = StreamCopy{
@@ -1633,22 +1348,13 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             };
         }
         return {&stream, offset};
-    }
-    if (const u32 probe = Common::Perf::GetTuning().probe_host_import.load(
-            std::memory_order_relaxed);
-        probe != probed_host_import) [[unlikely]] {
-        probed_host_import = probe;
-        if (probe != 0) {
-            ProbeHostImport(device_addr);
-        }
-    }
+    };
     // Sync memo: a read only range bound again while no guest write touched its regions since
     // it was last found up to date needs no synchronization (large vertex and index buffers
     // bound by most draws; the checks walk the page tracking tables of the whole range).
-    const auto& tuning = Common::Perf::GetTuning();
-    const bool memo_candidate = !is_written && !is_texel_buffer &&
-                                tuning.sync_memo.load(std::memory_order_relaxed) &&
-                                tuning.hot_page_faults.load(std::memory_order_relaxed) == 0;
+    const auto& tuning = Core::Runtime::GetPolicy();
+    const bool memo_candidate =
+        !is_written && !is_texel_buffer && tuning.sync_memo && tuning.hot_page_faults == 0;
     SyncMemo* memo = nullptr;
     std::array<u64, 2> versions{};
     bool have_versions = false;
@@ -1658,7 +1364,6 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         have_versions = memory_tracker->GetCpuVersions(device_addr, size, versions);
         if (have_versions && memo->address == device_addr && memo->size == size &&
             memo->versions == versions) {
-            Common::Perf::Add(Common::Perf::SyncMemoHits);
             NoteQueueAccess(device_addr, size, false);
             return {memo->arena, memo->arena->Offset(device_addr)};
         }
@@ -1679,7 +1384,6 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         memory_tracker->SetWriteTick(device_addr, size, Sched().CurrentTick(), active->index);
     } else if (memo && have_versions) {
         // Versions read before the synchronization: a write during it changes them.
-        Common::Perf::Add(Common::Perf::SyncMemoMisses);
         *memo = SyncMemo{
             .address = device_addr,
             .arena = arena,
@@ -1709,38 +1413,6 @@ bool BufferCache::IsRegionGpuModified(VAddr addr, size_t size) {
     return memory_tracker->IsRegionGpuModified(addr, size);
 }
 
-std::pair<const Buffer*, u64> BufferCache::PeekArena(VAddr device_addr, u32 size) {
-    if (size == 0 || device_addr == 0) {
-        return {nullptr, 0};
-    }
-    const u64 first_block = device_addr >> block_shift;
-    const u64 last_block = (device_addr + size - 1) >> block_shift;
-    if (!IsResident(first_block, last_block)) {
-        return {nullptr, 0};
-    }
-    const u64 first_page = first_block >> blocks_per_arena_page_shift;
-    const u64 last_page = last_block >> blocks_per_arena_page_shift;
-    const auto* arena = address_space[first_page];
-    if (!arena || address_space[last_page] != arena) {
-        return {nullptr, 0};
-    }
-    return {arena, arena->Offset(device_addr)};
-}
-
-std::string BufferCache::DescribePages(VAddr device_addr, u32 size) {
-    if (size == 0 || device_addr == 0) {
-        return "none";
-    }
-    const bool merge =
-        Common::Perf::GetTuning().readback_write_merge.load(std::memory_order_relaxed);
-    return fmt::format("cpu{} gpu{} ranges{} owned{} pending{} tick{}",
-                       memory_tracker->IsRegionCpuModified(device_addr, size) ? 1 : 0,
-                       memory_tracker->IsRegionGpuModified(device_addr, size) ? 1 : 0,
-                       gpu_modified_ranges.Intersects(device_addr, size) ? 1 : 0,
-                       merge && memory_tracker->IsGpuOwned(device_addr, size) ? 1 : 0,
-                       memory_tracker->IsReadbackPending(device_addr, size) ? 1 : 0,
-                       memory_tracker->GetWriteTick(device_addr, size));
-}
 
 bool BufferCache::HasGpuData(VAddr addr, size_t size) {
     if (memory_tracker->IsRegionGpuModified(addr, size)) {
@@ -1749,7 +1421,7 @@ bool BufferCache::HasGpuData(VAddr addr, size_t size) {
     // Write merge: bytes the GPU wrote in pages whose GPU state a guest write discarded are only
     // on the GPU (whether or not their ranges are still known: a page stays owned until an
     // upload finds nothing of the GPU's to keep in it).
-    return Common::Perf::GetTuning().readback_write_merge.load(std::memory_order_relaxed) &&
+    return Core::Runtime::GetPolicy().readback_write_merge &&
            memory_tracker->IsGpuOwned(addr, size);
 }
 
@@ -1906,7 +1578,6 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
         backing.offset = memory_offset >> block_shift;
         resident_ranges.Add(backing);
 
-        LOG_INFO(Render, "Making range start={}, end={} resident", backing.start, backing.end);
 
         const auto& bind = binds->binds.emplace_back(vk::SparseMemoryBind{
             .resourceOffset = (range.start << block_shift) - arena->cpu_addr,
@@ -1935,9 +1606,8 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
 
 bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size,
                                     bool is_written, bool is_texel_buffer) {
-    const auto& tuning = Common::Perf::GetTuning();
-    const bool hash_hot_pages = tuning.hot_page_faults.load(std::memory_order_relaxed) != 0 &&
-                                tuning.hot_page_hash.load(std::memory_order_relaxed);
+    const auto& tuning = Core::Runtime::GetPolicy();
+    const bool hash_hot_pages = tuning.hot_page_faults != 0 && tuning.hot_page_hash;
     const auto hash_page = [this](VAddr page_addr) {
         return memory->HashSparseMemory(page_addr, BYTES_PER_PAGE);
     };
@@ -1954,24 +1624,23 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
     // Write merge: pages whose GPU data a guest write discarded only upload the bytes outside
     // those the GPU wrote, and those the guest changed since (compared with the content they
     // had before that write).
-    const bool merge = tuning.readback_write_merge.load(std::memory_order_relaxed) &&
-                       memory_tracker->HasPageSnapshots();
+    const bool merge = tuning.readback_write_merge && memory_tracker->HasPageSnapshots();
     boost::container::small_vector<std::pair<VAddr, VAddr>, 4> guest_owned;
     // Upload worker: the pages uploaded here are protected again by the worker, which copies
     // them only afterwards (no write merge or hot pages). Ranges the GPU writes too
     // (async_written_uploads): HK must apply read protection now. Translated fences can let
     // the guest read particle feedback before the worker applies a deferred protection;
     // that read would see stale CPU bytes and never request the required GPU readback.
-    const bool async_upload =
-        !merge && !hash_hot_pages && tuning.hot_page_faults.load(std::memory_order_relaxed) == 0 &&
-        tuning.async_uploads.load(std::memory_order_relaxed) &&
-        (!is_written || tuning.async_written_uploads.load(std::memory_order_relaxed));
+    const bool async_upload = !merge && !hash_hot_pages && tuning.hot_page_faults == 0 &&
+                              tuning.async_uploads && (!is_written || tuning.async_written_uploads);
     // Keep the original policy for other regions; staging copies still run on the worker.
-    const bool defer_protection = async_upload &&
-        !(is_written && Common::ElfInfo::Instance().GameSerial() == "CUSA00309");
+    const bool defer_protection =
+        async_upload && !(is_written && Common::ElfInfo::Instance().GameSerial() == "CUSA00309");
     if (async_upload) {
         deferred_pages.clear();
-        if (defer_protection) PageManager::DeferProtect(&deferred_pages);
+        if (defer_protection) {
+            PageManager::DeferProtect(&deferred_pages);
+        }
     }
     memory_tracker->ForEachUploadRange(
         device_addr, size, is_written, [&](u64 addr, u64 size, auto&& keep_gpu_owned) {
@@ -1997,7 +1666,6 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
                     add_copy(run_start, page - run_start);
                 }
                 run_start = page + BYTES_PER_PAGE;
-                Common::Perf::Add(Common::Perf::MergePages);
                 PageSnapshot now;
                 CopyGuestPage(page, now.data());
                 VAddr cursor = page;
@@ -2022,7 +1690,6 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
                         if (i != changed_start) {
                             add_copy(page + changed_start, i - changed_start);
                             guest_owned.emplace_back(page + changed_start, page + i);
-                            Common::Perf::Add(Common::Perf::MergeGuestBytes, i - changed_start);
                         }
                     }
                     cursor = hi;
@@ -2031,7 +1698,6 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
                     add_copy(cursor, page + BYTES_PER_PAGE - cursor);
                 }
                 if (kept != 0) {
-                    Common::Perf::Add(Common::Perf::MergeKeptBytes, kept);
                     keep_gpu_owned(page);
                 }
             }
@@ -2047,9 +1713,6 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
         gpu_modified_ranges.Subtract(lo, hi - lo);
     }
     if (async_upload && (!copies.empty() || !deferred_pages.empty())) {
-        Common::Perf::ScopedTimer upload_timer{Common::Perf::BufferUploads,
-                                               Common::Perf::BufferUploadNs};
-        Common::Perf::Add(Common::Perf::BufferUploadBytes, total_size_bytes);
         UploadWorker::Job job;
         job.pages = deferred_pages;
         if (!copies.empty()) {
@@ -2073,9 +1736,6 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
         }
         Sched().RequireBeforeSubmit(upload_worker->Enqueue(std::move(job)));
     } else if (!copies.empty()) {
-        Common::Perf::ScopedTimer upload_timer{Common::Perf::BufferUploads,
-                                               Common::Perf::BufferUploadNs};
-        Common::Perf::Add(Common::Perf::BufferUploadBytes, total_size_bytes);
         const auto staging = Staging().Request(total_size_bytes, MemoryType::HostUncached);
         for (auto& copy : copies) {
             memory->CopySparseMemory(copy.dstOffset, staging.mapped + copy.srcOffset, copy.size);
@@ -2101,78 +1761,6 @@ void BufferCache::NoteQueueUpload(VAddr device_addr, u64 size) {
     // changed the data once its own fences told it the GPU was done; those fences are signaled
     // when the commands are translated, before the GPU runs them).
     NoteQueueAccess(device_addr, size, true);
-}
-
-void BufferCache::ProbeHostImport(VAddr address) {
-    if (!instance.HasExternalMemoryHost()) {
-        LOG_INFO(Render_Vulkan, "Host import probe: VK_EXT_external_memory_host not available");
-        return;
-    }
-    const auto device = instance.GetDevice();
-    const auto properties =
-        instance.GetPhysicalDevice()
-            .getProperties2<vk::PhysicalDeviceProperties2,
-                            vk::PhysicalDeviceExternalMemoryHostPropertiesEXT>();
-    const u64 alignment = std::max<u64>(
-        properties.get<vk::PhysicalDeviceExternalMemoryHostPropertiesEXT>()
-            .minImportedHostPointerAlignment,
-        4_KB);
-    const u64 size = Common::AlignUp(64_KB, alignment);
-    const VAddr base = Common::AlignDown(address, alignment);
-    // The guest mapping of the memory (protected pages included), and its backing (the same
-    // physical memory, never protected), which a GPU copy in place would use.
-    u8* backing = nullptr;
-    if (const auto* entry = memory->GetAddressSpace().BackingPages().find(base >> 14);
-        entry && *entry) {
-        backing = *entry + (base & (16_KB - 1));
-    }
-    const auto memory_properties = instance.GetPhysicalDevice().getMemoryProperties();
-    const auto probe = [&](const char* what, void* pointer) {
-        if (pointer == nullptr) {
-            LOG_INFO(Render_Vulkan, "Host import probe {}: no address", what);
-            return;
-        }
-        vk::MemoryHostPointerPropertiesEXT host_properties{};
-        const vk::Result result = device.getMemoryHostPointerPropertiesEXT(
-            vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT, pointer, &host_properties);
-        LOG_INFO(Render_Vulkan,
-                 "Host import probe {}: {} at {} (alignment {:#x}): properties {}, memory types "
-                 "{:#x}",
-                 what, size, fmt::ptr(pointer), alignment, vk::to_string(result),
-                 host_properties.memoryTypeBits);
-        if (result != vk::Result::eSuccess || host_properties.memoryTypeBits == 0) {
-            return;
-        }
-        u32 type_index = std::countr_zero(host_properties.memoryTypeBits);
-        for (u32 i = 0; i < memory_properties.memoryTypeCount; ++i) {
-            const auto flags = memory_properties.memoryTypes[i].propertyFlags;
-            if ((host_properties.memoryTypeBits >> i & 1) != 0 &&
-                (flags & vk::MemoryPropertyFlagBits::eHostCoherent)) {
-                type_index = i;
-                break;
-            }
-        }
-        const vk::ImportMemoryHostPointerInfoEXT import_info = {
-            .handleType = vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT,
-            .pHostPointer = pointer,
-        };
-        const vk::MemoryAllocateInfo alloc_info = {
-            .pNext = &import_info,
-            .allocationSize = size,
-            .memoryTypeIndex = type_index,
-        };
-        vk::DeviceMemory imported{};
-        const vk::Result alloc_result = device.allocateMemory(&alloc_info, nullptr, &imported);
-        LOG_INFO(Render_Vulkan, "Host import probe {}: import into memory type {} ({}): {}",
-                 what, type_index,
-                 vk::to_string(memory_properties.memoryTypes[type_index].propertyFlags),
-                 vk::to_string(alloc_result));
-        if (alloc_result == vk::Result::eSuccess) {
-            device.freeMemory(imported);
-        }
-    };
-    probe("guest mapping", reinterpret_cast<void*>(base));
-    probe("backing", backing);
 }
 
 bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_addr, u32 size) {
@@ -2260,7 +1848,7 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
     info.AddWait(signal_sema, signal_tick);
     auto submit_result = instance.GetGraphicsQueue().bindSparse(sparse_info);
     if (submit_result == vk::Result::eErrorDeviceLost) {
-        Vulkan::GpuCrashDiag::ReportDeviceLost(instance, "sparse binding");
+        Vulkan::;
     }
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");
 

@@ -25,7 +25,7 @@ constexpr int ORBIS_KERNEL_EVF_WAITMODE_CLEAR_ALL = 0x10;
 constexpr int ORBIS_KERNEL_EVF_WAITMODE_CLEAR_PAT = 0x20;
 
 class EventFlagInternal {
-public:
+  public:
     enum class ClearMode { None, All, Bits };
     enum class WaitMode { And, Or };
     enum class ThreadMode { Single, Multi };
@@ -123,8 +123,9 @@ public:
         };
 
         if (ConditionMet(waiter)) {
-            if (result)
+            if (result) {
                 *result = m_bits;
+            }
 
             ApplyClear(waiter);
             return ORBIS_OK;
@@ -135,8 +136,9 @@ public:
         u32 timeout = 0;
         bool infinite = ptr_micros == nullptr;
 
-        if (!infinite)
+        if (!infinite) {
             timeout = *ptr_micros;
+        }
 
         auto wake = [&] {
             return waiter.ready || waiter.canceled || waiter.deleted || waiter.timed_out;
@@ -149,8 +151,9 @@ public:
 
                 RemoveWaiter(waiter);
 
-                if (result)
+                if (result) {
                     *result = m_bits;
+                }
 
                 *ptr_micros = 0;
                 return ORBIS_KERNEL_ERROR_ETIMEDOUT;
@@ -159,17 +162,21 @@ public:
 
         RemoveWaiter(waiter);
 
-        if (result)
+        if (result) {
             *result = waiter.result;
+        }
 
-        if (waiter.canceled)
+        if (waiter.canceled) {
             return ORBIS_KERNEL_ERROR_ECANCELED;
+        }
 
-        if (waiter.deleted)
+        if (waiter.deleted) {
             return ORBIS_KERNEL_ERROR_EACCES;
+        }
 
-        if (waiter.timed_out)
+        if (waiter.timed_out) {
             return ORBIS_KERNEL_ERROR_ETIMEDOUT;
+        }
 
         return ORBIS_OK;
     }
@@ -212,8 +219,9 @@ public:
     void Cancel(u64 pattern, int* num_waiters) {
         std::scoped_lock lock(m_mutex);
 
-        if (num_waiters)
+        if (num_waiters) {
             *num_waiters = static_cast<int>(m_waiters.size());
+        }
 
         m_bits = pattern;
 
@@ -224,7 +232,7 @@ public:
         }
     }
 
-private:
+  private:
     std::mutex m_mutex;
 
     std::list<Waiter*> m_waiters;
@@ -249,8 +257,6 @@ struct OrbisKernelEventFlagOptParam {
 int PS4_SYSV_ABI sceKernelCreateEventFlag(OrbisKernelEventFlag* ef, const char* pName, u32 attr,
                                           u64 initPattern,
                                           const OrbisKernelEventFlagOptParam* pOptParam) {
-    LOG_TRACE(Kernel_Event, "called name = {} attr = {:#x} initPattern = {:#x}", pName, attr,
-              initPattern);
     if (ef == nullptr || pName == nullptr) {
         return ORBIS_KERNEL_ERROR_EINVAL;
     }
@@ -314,7 +320,6 @@ int PS4_SYSV_ABI sceKernelCloseEventFlag() {
 }
 
 int PS4_SYSV_ABI sceKernelClearEventFlag(OrbisKernelEventFlag ef, u64 bitPattern) {
-    LOG_DEBUG(Kernel_Event, "called");
     if (ef == nullptr) {
         return ORBIS_KERNEL_ERROR_ESRCH;
     }
@@ -324,7 +329,6 @@ int PS4_SYSV_ABI sceKernelClearEventFlag(OrbisKernelEventFlag ef, u64 bitPattern
 
 int PS4_SYSV_ABI sceKernelCancelEventFlag(OrbisKernelEventFlag ef, u64 setPattern,
                                           int* pNumWaitThreads) {
-    LOG_DEBUG(Kernel_Event, "called");
     if (ef == nullptr) {
         return ORBIS_KERNEL_ERROR_ESRCH;
     }
@@ -333,7 +337,6 @@ int PS4_SYSV_ABI sceKernelCancelEventFlag(OrbisKernelEventFlag ef, u64 setPatter
 }
 
 int PS4_SYSV_ABI sceKernelSetEventFlag(OrbisKernelEventFlag ef, u64 bitPattern) {
-    LOG_TRACE(Kernel_Event, "called");
     if (ef == nullptr) {
         return ORBIS_KERNEL_ERROR_ESRCH;
     }
@@ -343,7 +346,6 @@ int PS4_SYSV_ABI sceKernelSetEventFlag(OrbisKernelEventFlag ef, u64 bitPattern) 
 
 int PS4_SYSV_ABI sceKernelPollEventFlag(OrbisKernelEventFlag ef, u64 bitPattern, u32 waitMode,
                                         u64* pResultPat) {
-    LOG_DEBUG(Kernel_Event, "called bitPattern = {:#x} waitMode = {:#x}", bitPattern, waitMode);
 
     if (ef == nullptr) {
         return ORBIS_KERNEL_ERROR_ESRCH;
@@ -382,15 +384,12 @@ int PS4_SYSV_ABI sceKernelPollEventFlag(OrbisKernelEventFlag ef, u64 bitPattern,
 
     auto result = ef->Poll(bitPattern, wait, clear, pResultPat);
 
-    if (result != ORBIS_OK && result != ORBIS_KERNEL_ERROR_EBUSY) {
-        LOG_DEBUG(Kernel_Event, "returned {:#x}", result);
-    }
+
 
     return result;
 }
 int PS4_SYSV_ABI sceKernelWaitEventFlag(OrbisKernelEventFlag ef, u64 bitPattern, u32 waitMode,
                                         u64* pResultPat, OrbisKernelUseconds* pTimeout) {
-    LOG_DEBUG(Kernel_Event, "called bitPattern = {:#x} waitMode = {:#x}", bitPattern, waitMode);
     if (ef == nullptr) {
         return ORBIS_KERNEL_ERROR_ESRCH;
     }
@@ -427,9 +426,7 @@ int PS4_SYSV_ABI sceKernelWaitEventFlag(OrbisKernelEventFlag ef, u64 bitPattern,
     }
 
     const int result = ef->Wait(bitPattern, wait, clear, pResultPat, pTimeout);
-    if (result != ORBIS_OK && result != ORBIS_KERNEL_ERROR_ETIMEDOUT) {
-        LOG_DEBUG(Kernel_Event, "returned {:#x}", result);
-    }
+
 
     return result;
 }

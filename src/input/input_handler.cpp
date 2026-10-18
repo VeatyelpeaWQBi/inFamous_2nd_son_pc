@@ -22,9 +22,9 @@
 #include "common/io_file.h"
 #include "common/path_util.h"
 #include "common/singleton.h"
-#include "core/devtools/layer.h"
 #include "core/emulator_settings.h"
 #include "core/emulator_state.h"
+#include "core/game_ui.h"
 #include "imgui/big_picture/settings_dialog_layer.h"
 #include "input/controller.h"
 #include "input/input_mouse.h"
@@ -180,7 +180,7 @@ std::filesystem::path GetInputConfigFile(const std::string& game_id) {
             {"hotkey_toggle_mouse_to_touchpad", "delete"},
             {"hotkey_center_mouse_emulation", "home"},
             {"hotkey_release_mouse_emulation", "escape"},
-            {"hotkey_quit", "lctrl, lshift, end"},
+            {"hotkey_quit", "f1"},
             {"hotkey_volume_up", "kpplus"},
             {"hotkey_volume_down", "kpminus"},
             {"hotkey_emulator_settings", "f3"},
@@ -334,7 +334,6 @@ InputBinding GetBindingFromString(std::string& line) {
             input = InputID(InputType::Controller, string_to_hotkey_map.at(t));
         } else {
             // Invalid token found; return default binding
-            LOG_DEBUG(Input, "Invalid token found: {}", t);
             return InputBinding();
         }
 
@@ -345,8 +344,7 @@ InputBinding GetBindingFromString(std::string& line) {
                 break;
             }
         }
-    }
-    LOG_DEBUG(Input, "Parsed line: {}", InputBinding(keys[0], keys[1], keys[2]).ToString());
+    };
     return InputBinding(keys[0], keys[1], keys[2]);
 }
 
@@ -520,8 +518,6 @@ void ParseInputConfig(const std::string game_id = "") {
 
             if (auto it = deadzone_map.find(device); it != deadzone_map.end()) {
                 it->second[output_gamepad_id - 1] = deadzone;
-                LOG_DEBUG(Input, "Parsed deadzone: {} {} {}", device, inner_deadzone_str,
-                          outer_deadzone_str);
             } else {
                 LOG_WARNING(Input, "Invalid axis name at line {}: \"{}\", skipping line.",
                             lineCount, line);
@@ -549,9 +545,7 @@ void ParseInputConfig(const std::string game_id = "") {
             if (enable == "true") {
                 ControllerOutput::controllers.SetControllerCustomColor(output_gamepad_id - 1, *r,
                                                                        *g, *b);
-            }
-            LOG_DEBUG(Input, "Parsed color settings: {} {} - {} {} {}",
-                      enable == "true" ? "override" : "no override", output_gamepad_id, *r, *b, *g);
+            };
             return;
         }
 
@@ -601,8 +595,7 @@ void ParseInputConfig(const std::string game_id = "") {
             }
         } else {
             connections.push_back(connection);
-        }
-        LOG_DEBUG(Input, "Succesfully parsed line {}", lineCount);
+        };
     };
     while (std::getline(global_config_stream, line)) {
         ProcessLine();
@@ -614,9 +607,7 @@ void ParseInputConfig(const std::string game_id = "") {
     config_stream.close();
     std::sort(connections.begin(), connections.end());
     for (auto& c : connections) {
-        LOG_DEBUG(Input, "Binding: {} : {}", c.output->ToString(), c.binding.ToString());
-    }
-    LOG_DEBUG(Input, "Done parsing the input config!");
+    };
 }
 
 BindingConnection BindingConnection::CopyWithChangedGamepadId(u8 gamepad) {
@@ -681,10 +672,8 @@ void ToggleKeyInList(InputID input) {
     auto it = std::find(toggled_keys.begin(), toggled_keys.end(), input);
     if (it == toggled_keys.end()) {
         toggled_keys.insert(toggled_keys.end(), input);
-        LOG_DEBUG(Input, "Added {} to toggled keys", input.ToString());
     } else {
         toggled_keys.erase(it);
-        LOG_DEBUG(Input, "Removed {} from toggled keys", input.ToString());
     }
 }
 
@@ -705,11 +694,8 @@ void ControllerOutput::AddUpdate(InputEvent event) {
     }
     if (button != SDL_GAMEPAD_BUTTON_INVALID) {
         if (event.input.type == InputType::Axis) {
-            bool temp = event.axis_value * (positive_axis ? 1 : -1) > 0x40;
             new_button_state |= event.active && event.axis_value * (positive_axis ? 1 : -1) > 0x40;
-            if (temp) {
-                LOG_DEBUG(Input, "Toggled a button from an axis");
-            }
+
         } else {
             new_button_state |= event.active;
         }
@@ -735,10 +721,11 @@ void ControllerOutput::FinalizeUpdate(u8 gamepad_index) {
     old_button_state = new_button_state;
     old_param = *new_param;
     GameController* controller;
-    if (gamepad_index < 5)
+    if (gamepad_index < 5) {
         controller = controllers[gamepad_index];
-    else
+    } else {
         UNREACHABLE();
+    }
     if (button != SDL_GAMEPAD_BUTTON_INVALID) {
         switch (button) {
         case SDL_GAMEPAD_BUTTON_TOUCHPAD_LEFT:
@@ -893,7 +880,6 @@ bool UpdatePressedKeys(InputEvent event) {
             [](const std::pair<InputEvent, bool>& e, InputID i) { return e.first.input < i; });
         if (it == pressed_keys.end() || it->first.input != input) {
             pressed_keys.insert(it, {event, false});
-            LOG_DEBUG(Input, "Added axis {} to the input list", event.input.sdl_id);
         } else {
             // noise filter
             if (std::abs(it->first.axis_value - event.axis_value) <= 1) {
@@ -924,8 +910,7 @@ bool UpdatePressedKeys(InputEvent event) {
             pressed_keys.erase(it);
             return true;
         }
-    }
-    LOG_DEBUG(Input, "No change was made!");
+    };
     return false;
 }
 // Check if the binding's all keys are currently active.
@@ -958,7 +943,6 @@ InputEvent BindingConnection::ProcessBinding() {
         }
     }
     if (input_keys.empty()) {
-        LOG_DEBUG(Input, "No actual inputs to check, returning true");
         event.active = true;
         return event;
     }
@@ -995,9 +979,7 @@ InputEvent BindingConnection::ProcessBinding() {
     for (bool* flag : flags_to_set) {
         *flag = true;
     }
-    if (binding.keys[0].type != InputType::Axis) { // the axes spam inputs, making this unreadable
-        LOG_DEBUG(Input, "Input found: {}", binding.ToString());
-    }
+
     event.active = true;
     return event; // All keys are active
 }

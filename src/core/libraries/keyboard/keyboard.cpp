@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/keyboard/keyboard.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
-#include "core/libraries/keyboard/keyboard.h"
 #include "core/libraries/libs.h"
 
 #include "SDL3/SDL_keyboard.h"
@@ -78,7 +78,6 @@ s32 PS4_SYSV_ABI sceKeyboardRead() {
 }
 
 s32 PS4_SYSV_ABI sceKeyboardReadState(s32 handle, OrbisKeyboardData* data) {
-    LOG_DEBUG(Lib_Keyboard, "(DUMMY) called");
     if (handle != 1) {
         return ORBIS_KEYBOARD_ERROR_INVALID_HANDLE;
     }

@@ -36,7 +36,6 @@ s32 PS4_SYSV_ABI sceCoredumpRegisterCoredumpHandler(OrbisCoredumpHandler handler
 }
 
 s32 PS4_SYSV_ABI sceCoredumpUnregisterCoredumpHandler() {
-    LOG_INFO(Lib_Kernel, "called");
     if (!g_coredump_handler) {
         LOG_ERROR(Lib_Kernel, "No coredump handler to unregister");
         return ORBIS_COREDUMP_ERROR_NOT_REGISTERED;

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/linker.h"
 #include "common/alignment.h"
 #include "common/arch.h"
 #include "common/assert.h"
@@ -13,7 +14,6 @@
 #include "common/thread.h"
 #include "core/aerolib/aerolib.h"
 #include "core/aerolib/stubs.h"
-#include "core/devtools/widget/module_list.h"
 #include "core/emulator_settings.h"
 #include "core/file_sys/backends/host_fs.h"
 #include "core/file_sys/fs.h"
@@ -23,10 +23,8 @@
 #include "core/libraries/libc_internal/libc_internal.h"
 #include "core/libraries/sysmodule/sysmodule.h"
 #include "core/libraries/sysmodule/sysmodule_internal.h"
-#include "core/linker.h"
 #include "core/memory.h"
 #include "core/tls.h"
-#include "ipc/ipc.h"
 
 #ifndef _WIN32
 #include <signal.h>
@@ -34,9 +32,7 @@
 
 namespace Core {
 
-static PS4_SYSV_ABI void ProgramExitFunc() {
-    LOG_ERROR(Core_Linker, "Exit function called");
-}
+static PS4_SYSV_ABI void ProgramExitFunc() { LOG_ERROR(Core_Linker, "Exit function called"); }
 
 static PS4_SYSV_ABI void* RunMainEntry [[noreturn]] (EntryParams* params) {
 #ifdef ARCH_X86_64
@@ -86,7 +82,6 @@ void Linker::Execute(const std::vector<std::string>& args) {
         has_libcinternal = true;
     } else {
         // Need to load HLE, LLE isn't present
-        LOG_INFO(Core_Linker, "Can't Load libSceLibcInternal.sprx switching to HLE");
         Libraries::LibcInternal::RegisterLib(&GetHLESymbols());
     }
 
@@ -154,9 +149,7 @@ void Linker::Execute(const std::vector<std::string>& args) {
         sigemptyset(&emptyset);
         pthread_sigmask(SIG_SETMASK, &emptyset, nullptr);
 #endif
-        if (auto& ipc = IPC::Instance()) {
-            ipc.WaitForStart();
-        }
+        ;
 
         // Load libSceLibcInternal, run malloc_init.
         if (has_libcinternal) {
@@ -182,8 +175,6 @@ void Linker::Execute(const std::vector<std::string>& args) {
         }
         for (const auto& entry : std::filesystem::directory_iterator(custom_mod_directory)) {
             if (entry.is_regular_file()) {
-                LOG_INFO(Core_Linker, "Loading custom module: {}",
-                         fmt::UTF(entry.path().u8string()));
                 if (LoadAndStartModule(entry.path(), 0, nullptr, nullptr) == -1) {
                     LOG_ERROR(Core_Linker, "Failed to load custom module: {}",
                               fmt::UTF(entry.path().u8string()));
@@ -249,7 +240,6 @@ s32 Linker::LoadModule(const std::filesystem::path& elf_name, bool is_dynamic) {
     num_static_modules += !is_dynamic;
     m_modules.emplace_back(std::move(module));
 
-    Core::Devtools::Widget::ModuleList::AddModule(elf_name.filename().string(), elf_name);
 
     return mod_id;
 }
@@ -349,9 +339,7 @@ void Linker::Relocate(Module* module) {
                 ASSERT_MSG(0, "unknown symbol type {}", sym_type);
             }
 
-            if (sym_visibility != 0) {
-                LOG_INFO(Core_Linker, "symbol visibility !=0");
-            }
+
 
             switch (sym_bind) {
             case STB_LOCAL:
@@ -376,14 +364,11 @@ void Linker::Relocate(Module* module) {
             rel_name = symrec.symbol.name;
             break;
         }
-        default:
-            LOG_INFO(Core_Linker, "UNK type {:#010x} rel symbol : {:#010x}", type, symbol);
+        default:;
         }
 
         if (rel_is_resolved) {
             std::memcpy(reinterpret_cast<void*>(rel_virtual_addr), &rel_value, sizeof(rel_value));
-        } else if (rel_sym_type == Loader::SymbolType::Function) {
-            LOG_INFO(Core_Linker, "Function not patched! {}", rel_name);
         }
     });
 }
@@ -399,7 +384,6 @@ bool Linker::Resolve(const std::string& name, Loader::SymbolType sym_type, Modul
         LOG_ERROR(Core_Linker, "Not Resolved {}", name);
         return false;
     } else if (ids.size() == 1 && sym_type == Loader::SymbolType::NoType) {
-        LOG_DEBUG(Core_Linker, "NoType export {}", name);
         library = m->FindLibrary("");
         module = m->FindModule("");
     } else {
@@ -419,7 +403,6 @@ bool Linker::Resolve(const std::string& name, Loader::SymbolType sym_type, Modul
     const auto* record = m_hle_symbols.FindSymbol(sr);
     if (record) {
         *return_info = *record;
-        Core::Devtools::Widget::ModuleList::AddModule(sr.library);
         return true;
     }
 

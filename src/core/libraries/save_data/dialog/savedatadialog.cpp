@@ -22,7 +22,6 @@ static SaveDialogResult g_result{};
 static SaveDialogUi g_save_dialog_ui;
 
 Error PS4_SYSV_ABI sceSaveDataDialogClose() {
-    LOG_DEBUG(Lib_SaveDataDialog, "called");
     if (g_status != Status::RUNNING) {
         return Error::NOT_RUNNING;
     }
@@ -32,7 +31,6 @@ Error PS4_SYSV_ABI sceSaveDataDialogClose() {
 }
 
 Error PS4_SYSV_ABI sceSaveDataDialogGetResult(OrbisSaveDataDialogResult* result) {
-    LOG_DEBUG(Lib_SaveDataDialog, "called");
     if (g_status != Status::FINISHED) {
         return Error::NOT_FINISHED;
     }
@@ -44,12 +42,10 @@ Error PS4_SYSV_ABI sceSaveDataDialogGetResult(OrbisSaveDataDialogResult* result)
 }
 
 Status PS4_SYSV_ABI sceSaveDataDialogGetStatus() {
-    LOG_TRACE(Lib_SaveDataDialog, "called status={}", magic_enum::enum_name(g_status));
     return g_status;
 }
 
 Error PS4_SYSV_ABI sceSaveDataDialogInitialize() {
-    LOG_DEBUG(Lib_SaveDataDialog, "called");
     if (!CommonDialog::g_isInitialized) {
         return Error::NOT_SYSTEM_INITIALIZED;
     }
@@ -65,20 +61,15 @@ Error PS4_SYSV_ABI sceSaveDataDialogInitialize() {
     return Error::OK;
 }
 
-s32 PS4_SYSV_ABI sceSaveDataDialogIsReadyToDisplay() {
-    return 1;
-}
+s32 PS4_SYSV_ABI sceSaveDataDialogIsReadyToDisplay() { return 1; }
 
 Error PS4_SYSV_ABI sceSaveDataDialogOpen(const OrbisSaveDataDialogParam* param) {
     if (g_status != Status::INITIALIZED && g_status != Status::FINISHED) {
-        LOG_INFO(Lib_SaveDataDialog, "called without initialize");
         return Error::INVALID_STATE;
     }
     if (param == nullptr) {
-        LOG_DEBUG(Lib_SaveDataDialog, "called param:(NULL)");
         return Error::ARG_NULL;
-    }
-    LOG_DEBUG(Lib_SaveDataDialog, "called param->mode: {}", magic_enum::enum_name(param->mode));
+    };
     ASSERT(param->size == sizeof(OrbisSaveDataDialogParam));
     ASSERT(param->baseParam.size == sizeof(CommonDialog::BaseParam));
     g_result = {};
@@ -90,7 +81,6 @@ Error PS4_SYSV_ABI sceSaveDataDialogOpen(const OrbisSaveDataDialogParam* param) 
 
 Error PS4_SYSV_ABI sceSaveDataDialogProgressBarInc(OrbisSaveDataDialogProgressBarTarget target,
                                                    u32 delta) {
-    LOG_DEBUG(Lib_SaveDataDialog, "called");
     if (g_status != Status::RUNNING) {
         return Error::NOT_RUNNING;
     }
@@ -106,7 +96,6 @@ Error PS4_SYSV_ABI sceSaveDataDialogProgressBarInc(OrbisSaveDataDialogProgressBa
 
 Error PS4_SYSV_ABI sceSaveDataDialogProgressBarSetValue(OrbisSaveDataDialogProgressBarTarget target,
                                                         u32 rate) {
-    LOG_DEBUG(Lib_SaveDataDialog, "called");
     if (g_status != Status::RUNNING) {
         return Error::NOT_RUNNING;
     }
@@ -121,7 +110,6 @@ Error PS4_SYSV_ABI sceSaveDataDialogProgressBarSetValue(OrbisSaveDataDialogProgr
 }
 
 Error PS4_SYSV_ABI sceSaveDataDialogTerminate() {
-    LOG_DEBUG(Lib_SaveDataDialog, "called");
     if (g_status == Status::RUNNING) {
         sceSaveDataDialogClose();
     }
@@ -135,7 +123,6 @@ Error PS4_SYSV_ABI sceSaveDataDialogTerminate() {
 }
 
 Status PS4_SYSV_ABI sceSaveDataDialogUpdateStatus() {
-    LOG_TRACE(Lib_SaveDataDialog, "called status={}", magic_enum::enum_name(g_status));
     return g_status;
 }
 

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <thread>
 #include <magic_enum/magic_enum.hpp>
+#include <thread>
 
 #include "common/assert.h"
 #include "common/debug.h"
@@ -147,7 +147,6 @@ bool EqueueInternal::ScheduleEvent(u64 id, s16 filter,
                     LOG_ERROR(Kernel_Event, "Timer callback error: {}", ec.message());
                 } else {
                     // Timer was cancelled (removed) before it triggered
-                    LOG_DEBUG(Kernel_Event, "Timer cancelled");
                 }
                 return;
             }
@@ -295,8 +294,9 @@ int EqueueInternal::WaitForSmallTimer(OrbisKernelEvent* ev, int num, u32 micros)
                 }
             }
 
-            if (count > 0)
+            if (count > 0) {
                 return count;
+            }
         }
         std::this_thread::yield();
     } while (curr_clock < wait_end_us);
@@ -329,7 +329,6 @@ s32 PS4_SYSV_ABI posix_kqueue() {
 
     // Create the queue
     kqueues[kqueue_handle] = new EqueueInternal(kqueue_handle, name);
-    LOG_INFO(Kernel_Event, "kqueue created with name {}", name);
 
     // Return handle.
     return kqueue_handle;
@@ -347,8 +346,6 @@ bool SupportedEqueueFilter(OrbisKernelEvent::Filter filter) {
 s32 PS4_SYSV_ABI posix_kevent(s32 handle, OrbisKernelEvent* changelist, u64 nchanges,
                               OrbisKernelEvent* eventlist, u64 nevents,
                               OrbisKernelTimespec* timeout) {
-    LOG_INFO(Kernel_Event, "called, eq = {}, nchanges = {}, nevents = {}", handle, nchanges,
-             nevents);
 
     // Get the equeue
     if (!kqueues.contains(handle)) {
@@ -432,7 +429,7 @@ int PS4_SYSV_ABI sceKernelCreateEqueue(OrbisKernelEqueue* eq, const char* name) 
         return ORBIS_KERNEL_ERROR_ENAMETOOLONG;
     }
 
-    LOG_INFO(Kernel_Event, "name = {}", name);
+    ;
 
     // Reserve a file handle for the kqueue
     auto* handles = Common::Singleton<Core::FileSys::HandleTable>::Instance();
@@ -469,7 +466,6 @@ int PS4_SYSV_ABI sceKernelWaitEqueue(OrbisKernelEqueue eq, OrbisKernelEvent* ev,
     auto& equeue = kqueues[eq];
 
     TRACE_HINT(equeue->GetName());
-    LOG_TRACE(Kernel_Event, "equeue = {} num = {}", equeue->GetName(), num);
 
     if (ev == nullptr) {
         return ORBIS_KERNEL_ERROR_EFAULT;
@@ -608,9 +604,7 @@ void* PS4_SYSV_ABI sceKernelGetEventUserData(const OrbisKernelEvent* ev) {
     return ev->udata;
 }
 
-u64 PS4_SYSV_ABI sceKernelGetEventId(const OrbisKernelEvent* ev) {
-    return ev->ident;
-}
+u64 PS4_SYSV_ABI sceKernelGetEventId(const OrbisKernelEvent* ev) { return ev->ident; }
 
 int PS4_SYSV_ABI sceKernelTriggerUserEvent(OrbisKernelEqueue eq, int id, void* udata) {
     if (!kqueues.contains(eq)) {
@@ -634,13 +628,9 @@ int PS4_SYSV_ABI sceKernelDeleteUserEvent(OrbisKernelEqueue eq, int id) {
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceKernelGetEventFilter(const OrbisKernelEvent* ev) {
-    return ev->filter;
-}
+int PS4_SYSV_ABI sceKernelGetEventFilter(const OrbisKernelEvent* ev) { return ev->filter; }
 
-u64 PS4_SYSV_ABI sceKernelGetEventData(const OrbisKernelEvent* ev) {
-    return ev->data;
-}
+u64 PS4_SYSV_ABI sceKernelGetEventData(const OrbisKernelEvent* ev) { return ev->data; }
 
 void RegisterEventQueue(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("nh2IFMgKTv8", "libScePosix", 1, "libkernel", posix_kqueue);

@@ -14,8 +14,8 @@
 #include "core/libraries/libs.h"
 
 #ifdef _WIN64
-#include <windows.h>
 #include "common/ntapi.h"
+#include <windows.h>
 #else
 #if defined(__APPLE__) || defined(__FreeBSD__)
 #include <date/tz.h>
@@ -31,26 +31,18 @@ namespace Libraries::Kernel {
 static u64 initial_ptc;
 static std::unique_ptr<Common::NativeClock> clock;
 
-u64 PS4_SYSV_ABI sceKernelGetTscFrequency() {
-    return clock->GetTscFrequency();
-}
+u64 PS4_SYSV_ABI sceKernelGetTscFrequency() { return clock->GetTscFrequency(); }
 
 u64 PS4_SYSV_ABI sceKernelGetProcessTime() {
     // TODO: this timer should support suspends, so initial ptc needs to be updated on wake up
     return clock->GetTimeUS(initial_ptc);
 }
 
-u64 PS4_SYSV_ABI sceKernelGetProcessTimeCounter() {
-    return clock->GetUptime() - initial_ptc;
-}
+u64 PS4_SYSV_ABI sceKernelGetProcessTimeCounter() { return clock->GetUptime() - initial_ptc; }
 
-u64 PS4_SYSV_ABI sceKernelGetProcessTimeCounterFrequency() {
-    return clock->GetTscFrequency();
-}
+u64 PS4_SYSV_ABI sceKernelGetProcessTimeCounterFrequency() { return clock->GetTscFrequency(); }
 
-u64 PS4_SYSV_ABI sceKernelReadTsc() {
-    return clock->GetUptime();
-}
+u64 PS4_SYSV_ABI sceKernelReadTsc() { return clock->GetUptime(); }
 
 static s32 posix_nanosleep_impl(const OrbisKernelTimespec* rqtp, OrbisKernelTimespec* rmtp,
                                 const bool interruptible) {
@@ -111,9 +103,7 @@ u32 PS4_SYSV_ABI posix_sleep(u32 seconds) {
     return 0;
 }
 
-s32 PS4_SYSV_ABI sceKernelSleep(u32 seconds) {
-    return sceKernelUsleep(seconds * 1'000'000);
-}
+s32 PS4_SYSV_ABI sceKernelSleep(u32 seconds) { return sceKernelUsleep(seconds * 1'000'000); }
 
 s32 PS4_SYSV_ABI posix_clock_gettime(u32 clock_id, OrbisKernelTimespec* ts) {
     if (ts == nullptr) {
@@ -456,7 +446,6 @@ s32 PS4_SYSV_ABI sceKernelGettimezone(OrbisKernelTimezone* tz) {
 
 s32 PS4_SYSV_ABI sceKernelConvertLocaltimeToUtc(time_t param_1, int64_t param_2, time_t* seconds,
                                                 OrbisKernelTimezone* timezone, s32* dst_seconds) {
-    LOG_INFO(Kernel, "called");
     if (timezone) {
         sceKernelGettimezone(timezone);
         param_1 -= (timezone->tz_minuteswest + timezone->tz_dsttime) * 60;
@@ -473,19 +462,14 @@ s32 PS4_SYSV_ABI sceKernelConvertLocaltimeToUtc(time_t param_1, int64_t param_2,
 }
 
 namespace Dev {
-u64& GetInitialPtc() {
-    return initial_ptc;
-}
+u64& GetInitialPtc() { return initial_ptc; }
 
-Common::NativeClock* GetClock() {
-    return clock.get();
-}
+Common::NativeClock* GetClock() { return clock.get(); }
 
 } // namespace Dev
 
 s32 PS4_SYSV_ABI sceKernelConvertUtcToLocaltime(time_t time, time_t* local_time,
                                                 struct OrbisTimesec* st, u64* dst_sec) {
-    LOG_TRACE(Kernel, "Called");
 #ifdef _WIN32
     TIME_ZONE_INFORMATION tz{};
     DWORD res = GetTimeZoneInformation(&tz);

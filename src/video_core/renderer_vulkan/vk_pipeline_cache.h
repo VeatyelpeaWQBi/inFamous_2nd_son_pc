@@ -3,28 +3,27 @@
 
 #pragma once
 
-#include <atomic>
-#include <functional>
-#include <shared_mutex>
-#include <unordered_map>
-#include <variant>
-#include <tsl/robin_map.h>
-#include <unordered_set>
-#include <xxhash.h>
-#include "video_core/amdgpu/scout.h"
-#include "video_core/amdgpu/regs_shader.h"
-#include "video_core/runtime_memo.h"
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/recompiler.h"
 #include "shader_recompiler/specialization.h"
+#include "video_core/amdgpu/regs_shader.h"
+#include "video_core/amdgpu/scout.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
-#include "video_core/renderer_vulkan/vk_resource_pool.h"
 #include "video_core/renderer_vulkan/vk_prewarm_budget.h"
+#include "video_core/renderer_vulkan/vk_resource_pool.h"
+#include "video_core/runtime_memo.h"
 #include "vulkan/vulkan.hpp"
+#include <atomic>
+#include <functional>
+#include <shared_mutex>
+#include <tsl/robin_map.h>
+#include <unordered_map>
+#include <unordered_set>
+#include <variant>
+#include <xxhash.h>
 
-template <>
-struct std::hash<vk::ShaderModule> {
+template <> struct std::hash<vk::ShaderModule> {
     std::size_t operator()(const vk::ShaderModule& module) const noexcept {
         return std::hash<size_t>{}(reinterpret_cast<size_t>((VkShaderModule)module));
     }
@@ -120,8 +119,7 @@ struct Program {
     bool ReadMemo(u64 key, u32& perm_idx) const noexcept {
         for (size_t n = 0; n < NumMemoEntries; ++n) {
             // memo_next is the command processor's: a stale value only changes the order.
-            const auto& entry =
-                memo[(NumMemoEntries + memo_next - 1 - n) % NumMemoEntries];
+            const auto& entry = memo[(NumMemoEntries + memo_next - 1 - n) % NumMemoEntries];
             const u32 seq = entry.seq.load(std::memory_order_acquire);
             if ((seq & 1) != 0) {
                 continue;
@@ -162,7 +160,7 @@ struct DrawIndirectParams {
 };
 
 class PipelineCache : public AmdGpu::ScoutClient {
-public:
+  public:
     explicit PipelineCache(const Instance& instance, Scheduler& scheduler,
                            AmdGpu::Liverpool* liverpool, u32 sparse_page_shift);
     ~PipelineCache() override;
@@ -202,12 +200,8 @@ public:
     std::optional<vk::ShaderModule> ReplaceShader(vk::ShaderModule module,
                                                   std::span<const u32> spv_code);
 
-    static std::string GetShaderName(Shader::HwStage stage, u64 hash,
-                                     std::optional<size_t> perm = {});
 
-    auto& GetProfile() const {
-        return profile;
-    }
+    auto& GetProfile() const { return profile; }
 
     /// The scout stage taken as is (scout_fast) for this stage info in the current draw, null
     /// when the stage was looked up by the command processor: the scout's precomputed resource
@@ -221,15 +215,14 @@ public:
         return nullptr;
     }
 
-private:
+  private:
     bool RefreshGraphicsKey();
     bool RefreshGraphicsStages();
     bool RefreshComputeKey();
 
     /// AmdGpu::GetParams of a stage program, through the params memo (shader_params_memo,
     /// command processor thread only).
-    template <typename ProgramRegs>
-    Shader::ShaderParams GetStageParams(const ProgramRegs& pgm);
+    template <typename ProgramRegs> Shader::ShaderParams GetStageParams(const ProgramRegs& pgm);
 
     /// Tuning::scout_fast: the stage lookup the scout thread resolved for this draw, taken as
     /// is when its inputs are the command processor's (fills infos, modules, the key's stage
@@ -238,31 +231,25 @@ private:
     bool TakeScoutedStage(Shader::HwStage stage_in, Shader::SwStage stage_out,
                           const ProgramRegs& pgm, Shader::Backend::Bindings& binding);
 
-    void DumpShader(std::span<const u32> code, u64 hash, Shader::HwStage stage, size_t perm_idx,
-                    std::string_view ext);
-    std::optional<std::vector<u32>> GetShaderPatch(u64 hash, Shader::HwStage stage, size_t perm_idx,
-                                                   std::string_view ext);
     vk::ShaderModule CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
                                    const std::span<const u32>& code, size_t perm_idx,
                                    Shader::Backend::Bindings& binding);
     const Shader::RuntimeInfo& BuildRuntimeInfo(Shader::HwStage stage, Shader::SwStage l_stage);
     /// The part of the runtime info that only depends on the registers (any thread). Returns
     /// false for the stages that read more (tessellation).
-    bool BuildRuntimeInfoFrom(Shader::RuntimeInfo& info, const AmdGpu::Regs& regs,
-                              Shader::HwStage stage, Shader::SwStage l_stage,
-                              const std::array<Shader::PsColorBuffer, Shader::MaxColorBuffers>&
-                                  color_buffers,
-                              const DrawIndirectParams& indirect_params) const;
+    bool BuildRuntimeInfoFrom(
+        Shader::RuntimeInfo& info, const AmdGpu::Regs& regs, Shader::HwStage stage,
+        Shader::SwStage l_stage,
+        const std::array<Shader::PsColorBuffer, Shader::MaxColorBuffers>& color_buffers,
+        const DrawIndirectParams& indirect_params) const;
     /// The color targets of the graphics key, from the registers.
-    static void FillColorBuffers(
-        const AmdGpu::Regs& regs,
-        std::array<Shader::PsColorBuffer, Shader::MaxColorBuffers>& color_buffers);
+    static void
+    FillColorBuffers(const AmdGpu::Regs& regs,
+                     std::array<Shader::PsColorBuffer, Shader::MaxColorBuffers>& color_buffers);
     /// The program of a shader, null when not compiled yet (any thread).
     Program* FindProgram(u64 hash);
 
-    [[nodiscard]] bool IsPipelineCacheDirty() const {
-        return num_new_pipelines > 0;
-    }
+    [[nodiscard]] bool IsPipelineCacheDirty() const { return num_new_pipelines > 0; }
 
     /// Hands a pipeline created with a deferred compilation to the worker threads, then waits
     /// for it at most async_pipeline_wait_ms. Callers skip their work while it is not ready.
@@ -271,7 +258,7 @@ private:
     void FinishPreloaded();
     bool CanPrewarm(u64 bytes);
 
-private:
+  private:
     const Instance& instance;
     // Proof follows the exact bytes used to create this module, never a later disk file.
     Scheduler& scheduler;

@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <png.h>
+#include "core/libraries/libpng/pngdec.h"
 #include "common/assert.h"
 #include "common/logging/log.h"
-#include "core/libraries/libpng/pngdec.h"
 #include "core/libraries/libpng/pngdec_error.h"
 #include "core/libraries/libs.h"
+#include <png.h>
 
 namespace Libraries::PngDec {
 
@@ -64,8 +64,9 @@ s32 PS4_SYSV_ABI scePngDecCreate(const OrbisPngDecCreateParam* param, void* memo
     pngh->png_ptr =
         png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, PngDecError, PngDecWarning);
 
-    if (pngh->png_ptr == nullptr)
+    if (pngh->png_ptr == nullptr) {
         return ORBIS_PNG_DEC_ERROR_FATAL;
+    }
 
     pngh->info_ptr = png_create_info_struct(pngh->png_ptr);
     if (pngh->info_ptr == nullptr) {
@@ -90,12 +91,7 @@ s32 PS4_SYSV_ABI scePngDecDecode(OrbisPngDecHandle handle, const OrbisPngDecDeco
     if (param->png_mem_addr == nullptr || param->image_mem_addr == nullptr) {
         LOG_ERROR(Lib_Png, "invalid image address!");
         return ORBIS_PNG_DEC_ERROR_INVALID_ADDR;
-    }
-    LOG_TRACE(Lib_Png,
-              "pngMemSize = {} , imageMemSize = {} , pixelFormat = {} , alphaValue = {} , "
-              "imagePitch = {}",
-              param->png_mem_size, param->image_mem_size, int(param->pixel_format),
-              param->alpha_value, param->image_pitch);
+    };
 
     auto pngh = (PngHandler*)handle;
 
@@ -106,8 +102,9 @@ s32 PS4_SYSV_ABI scePngDecDecode(OrbisPngDecHandle handle, const OrbisPngDecDeco
     };
     png_set_read_fn(pngh->png_ptr, (void*)&pngdata,
                     [](png_structp ps, png_bytep data, png_size_t len) {
-                        if (len == 0)
+                        if (len == 0) {
                             return;
+                        }
                         auto pngdata = (PngStruct*)png_get_io_ptr(ps);
                         ::memcpy(data, pngdata->data + pngdata->offset, len);
                         pngdata->offset += len;
@@ -237,11 +234,6 @@ s32 PS4_SYSV_ABI scePngDecParseHeader(const OrbisPngDecParseParam* param,
     }
 
     png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
-    LOG_TRACE(
-        Lib_Png,
-        "imageWidth = {} , imageHeight = {} , colorSpace = {} , bitDepth = {} , imageFlag = {}",
-        imageInfo->image_width, imageInfo->image_height, int(imageInfo->color_space),
-        imageInfo->bit_depth, int(imageInfo->image_flag));
     return ORBIS_OK;
 }
 

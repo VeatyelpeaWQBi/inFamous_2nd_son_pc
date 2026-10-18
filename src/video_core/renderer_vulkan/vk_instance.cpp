@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <cstdlib>
 #include <boost/container/static_vector.hpp>
+#include <cstdlib>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
@@ -60,8 +60,8 @@ vk::FormatProperties3 GetFormatProperties(vk::PhysicalDevice physical, vk::Forma
     return properties3;
 }
 
-std::unordered_map<vk::Format, vk::FormatProperties3> GetFormatProperties(
-    vk::PhysicalDevice physical) {
+std::unordered_map<vk::Format, vk::FormatProperties3>
+GetFormatProperties(vk::PhysicalDevice physical) {
     std::unordered_map<vk::Format, vk::FormatProperties3> format_properties;
     for (const auto& format_info : LiverpoolToVK::SurfaceFormats()) {
         const auto format = format_info.vk_format;
@@ -98,21 +98,15 @@ std::string GetReadableVersion(u32 version) {
 } // Anonymous namespace
 
 Instance::Instance(bool enable_validation, bool enable_crash_diagnostic)
-    : instance{CreateInstance(Frontend::WindowSystemType::Headless, enable_validation,
-                              enable_crash_diagnostic)},
+    : instance{CreateInstance(Frontend::WindowSystemType::Headless, false, false)},
       physical_devices{EnumeratePhysicalDevices(instance)} {}
 
 Instance::Instance(Frontend::WindowSDL& window, s32 physical_device_index,
                    bool enable_validation /*= false*/, bool enable_crash_diagnostic /*= false*/)
-    : instance{CreateInstance(window.GetWindowInfo().type, enable_validation,
-                              enable_crash_diagnostic)},
+    : instance{CreateInstance(window.GetWindowInfo().type, false, false)},
       physical_devices{EnumeratePhysicalDevices(instance)} {
-    if (enable_validation) {
-        debug_callback = CreateDebugCallback(*instance);
-    }
     const std::size_t num_physical_devices = static_cast<u16>(physical_devices.size());
     ASSERT_MSG(num_physical_devices > 0, "No physical devices found");
-    LOG_INFO(Render_Vulkan, "Found {} physical devices", num_physical_devices);
 
     if (physical_device_index < 0) {
         std::vector<
@@ -231,7 +225,6 @@ bool Instance::CreateDevice() {
     vk12_props = properties_chain.get<vk::PhysicalDeviceVulkan12Properties>();
     vk13_props = properties_chain.get<vk::PhysicalDeviceVulkan13Properties>();
     push_descriptor_props = properties_chain.get<vk::PhysicalDevicePushDescriptorPropertiesKHR>();
-    LOG_INFO(Render_Vulkan, "Physical device subgroup size {}", vk11_props.subgroupSize);
 
     if (available_extensions.empty()) {
         LOG_CRITICAL(Render_Vulkan, "No extensions supported by device.");
@@ -245,7 +238,6 @@ bool Instance::CreateDevice() {
                          [&](const std::string& name) { return name == extension; });
 
         if (result != available_extensions.end()) {
-            LOG_INFO(Render_Vulkan, "Enabling extension: {}", extension);
             enabled_extensions.push_back(extension.data());
             return true;
         }
@@ -290,8 +282,6 @@ bool Instance::CreateDevice() {
     if (dynamic_state_3) {
         dynamic_state_3_features =
             feature_chain.get<vk::PhysicalDeviceExtendedDynamicState3FeaturesEXT>();
-        LOG_INFO(Render_Vulkan, "- extendedDynamicState3ColorWriteMask: {}",
-                 dynamic_state_3_features.extendedDynamicState3ColorWriteMask);
     }
     custom_border_color = add_extension(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
     depth_clip_control = add_extension(VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
@@ -304,10 +294,6 @@ bool Instance::CreateDevice() {
     if (list_restart) {
         list_restart_features =
             feature_chain.get<vk::PhysicalDevicePrimitiveTopologyListRestartFeaturesEXT>();
-        LOG_INFO(Render_Vulkan, "- primitiveTopologyListRestart: {}",
-                 list_restart_features.primitiveTopologyListRestart);
-        LOG_INFO(Render_Vulkan, "- primitiveTopologyPatchListRestart: {}",
-                 list_restart_features.primitiveTopologyPatchListRestart);
     }
     amd_shader_explicit_vertex_parameter =
         add_extension(VK_AMD_SHADER_EXPLICIT_VERTEX_PARAMETER_EXTENSION_NAME);
@@ -327,64 +313,44 @@ bool Instance::CreateDevice() {
     if (shader_atomic_float2) {
         shader_atomic_float2_features =
             feature_chain.get<vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT>();
-        LOG_INFO(Render_Vulkan, "- shaderBufferFloat32AtomicMinMax: {}",
-                 shader_atomic_float2_features.shaderBufferFloat32AtomicMinMax);
-        LOG_INFO(Render_Vulkan, "- shaderImageFloat32AtomicMinMax: {}",
-                 shader_atomic_float2_features.shaderImageFloat32AtomicMinMax);
     }
     workgroup_memory_explicit_layout =
         add_extension(VK_KHR_WORKGROUP_MEMORY_EXPLICIT_LAYOUT_EXTENSION_NAME);
     if (workgroup_memory_explicit_layout) {
         workgroup_memory_explicit_layout_features =
             feature_chain.get<vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR>();
-        LOG_INFO(Render_Vulkan, "- workgroupMemoryExplicitLayout: {}",
-                 workgroup_memory_explicit_layout_features.workgroupMemoryExplicitLayout);
-        LOG_INFO(Render_Vulkan, "- workgroupMemoryExplicitLayoutScalarBlockLayout: {}",
-                 workgroup_memory_explicit_layout_features
-                     .workgroupMemoryExplicitLayoutScalarBlockLayout);
-        LOG_INFO(
-            Render_Vulkan, "- workgroupMemoryExplicitLayout16BitAccess: {}",
-            workgroup_memory_explicit_layout_features.workgroupMemoryExplicitLayout16BitAccess);
     }
     image_2d_view_of_3d = add_extension(VK_EXT_IMAGE_2D_VIEW_OF_3D_EXTENSION_NAME);
     if (image_2d_view_of_3d) {
         image_2d_view_of_3d_features =
             feature_chain.get<vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT>();
-        LOG_INFO(Render_Vulkan, "- image2DViewOf3D: {}",
-                 image_2d_view_of_3d_features.image2DViewOf3D);
-        LOG_INFO(Render_Vulkan, "- sampler2DViewOf3D: {}",
-                 image_2d_view_of_3d_features.sampler2DViewOf3D);
     }
     image_view_min_lod = add_extension(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
     supports_memory_budget = add_extension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
     shader_clock = add_extension(VK_KHR_SHADER_CLOCK_EXTENSION_NAME);
     if (shader_clock) {
         shader_clock_features = feature_chain.get<vk::PhysicalDeviceShaderClockFeaturesKHR>();
-        LOG_INFO(Render_Vulkan, "- shaderSubgroupClock: {}",
-                 shader_clock_features.shaderSubgroupClock);
     }
     // GPU crash diagnostics, both cost nothing until used.
-    diagnostic_checkpoints = add_extension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+    diagnostic_checkpoints = false;
     const auto fault_features = feature_chain.get<vk::PhysicalDeviceFaultFeaturesEXT>();
-    device_fault = fault_features.deviceFault && add_extension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+    device_fault = false;
     // Only probed (BufferCache::ProbeHostImport): can the GPU use guest memory in place?
     external_memory_host = add_extension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
-    const bool calibrated_timestamps =
-        TRACY_GPU_ENABLED ? add_extension(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) : false;
 
     PrivateDataBaseHandleFeatures private_handle_features;
     bool private_handle_enabled = false;
     constexpr std::string_view private_handle_extension = "VK_NV_private_data_base_handle";
     const char* nsight = std::getenv("IFSS_NSIGHT_ACTIVE");
     if (nsight && std::string_view{nsight} == "1" &&
-        std::ranges::find(available_extensions, private_handle_extension) != available_extensions.end()) {
+        std::ranges::find(available_extensions, private_handle_extension) !=
+            available_extensions.end()) {
         vk::PhysicalDeviceFeatures2 query{.pNext = &private_handle_features};
         physical_device.getFeatures2(&query);
         private_handle_enabled =
             private_handle_features.privateDataBaseHandle &&
             feature_chain.get<vk::PhysicalDeviceVulkan13Features>().privateData &&
             add_extension(private_handle_extension);
-        LOG_INFO(Render_Vulkan, "Nsight private base-handle feature: {}", private_handle_enabled);
     }
 
     const auto family_properties = physical_device.getQueueFamilyProperties();
@@ -646,40 +612,8 @@ bool Instance::CreateDevice() {
     }
     if (has_compute_queue) {
         compute_queue = device->getQueue(queue_family_index, 2);
-    }
-    LOG_INFO(Render_Vulkan, "Readback queue: {}, compute queue: {}",
-             has_readback_queue ? "available" : "none", has_compute_queue ? "available" : "none");
+    };
 
-    if (calibrated_timestamps) {
-        const auto [time_domains_result, time_domains] =
-            physical_device.getCalibrateableTimeDomainsEXT();
-        if (time_domains_result == vk::Result::eSuccess) {
-#if _WIN64
-            const bool has_host_time_domain =
-                std::find(time_domains.cbegin(), time_domains.cend(),
-                          vk::TimeDomainEXT::eQueryPerformanceCounter) != time_domains.cend();
-#elif __linux__
-            const bool has_host_time_domain =
-                std::find(time_domains.cbegin(), time_domains.cend(),
-                          vk::TimeDomainEXT::eClockMonotonicRaw) != time_domains.cend();
-#else
-            // Tracy limitation means only Windows and Linux can use host time domain.
-            // https://github.com/shadps4-emu/tracy/blob/c6d779d78508514102fbe1b8eb28bda10d95bb2a/public/tracy/TracyVulkan.hpp#L384-L389
-            const bool has_host_time_domain = false;
-#endif
-            if (has_host_time_domain) {
-                static constexpr std::string_view context_name{"vk_rasterizer"};
-                profiler_context = TracyVkContextHostCalibrated(
-                    *instance, physical_device, *device,
-                    VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr,
-                    VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr);
-                TracyVkContextName(profiler_context, context_name.data(), context_name.size());
-            }
-        } else {
-            LOG_WARNING(Render_Vulkan, "Could not query calibrated time domains for profiling: {}",
-                        vk::to_string(time_domains_result));
-        }
-    }
 
     CreateAllocator();
     return true;
@@ -723,12 +657,6 @@ void Instance::CollectDeviceParameters() {
     const std::string api_version = GetReadableVersion(properties.apiVersion);
     const std::string extensions = fmt::format("{}", fmt::join(available_extensions, ", "));
 
-    LOG_INFO(Render_Vulkan, "GPU_Vendor: {}", vendor_name);
-    LOG_INFO(Render_Vulkan, "GPU_Model: {}", model_name);
-    LOG_INFO(Render_Vulkan, "GPU_Integrated: {}", IsIntegrated() ? "Yes" : "No");
-    LOG_INFO(Render_Vulkan, "GPU_Vulkan_Driver: {}", driver_name);
-    LOG_INFO(Render_Vulkan, "GPU_Vulkan_Version: {}", api_version);
-    LOG_INFO(Render_Vulkan, "GPU_Vulkan_Extensions: {}", extensions);
 }
 
 void Instance::CollectPhysicalMemoryInfo() {
@@ -786,8 +714,6 @@ void Instance::CollectImageFormatInfo() {
     const auto block_texel_view_props =
         physical_device.getImageFormatProperties2(block_texel_view_info);
     supports_block_texel_view = block_texel_view_props.result == vk::Result::eSuccess;
-    LOG_INFO(Render_Vulkan, "Block Texel View support: {}",
-             supports_block_texel_view ? "Yes" : "No");
 
     // Check and log format support details.
     for (const auto& format : LiverpoolToVK::SurfaceFormats()) {
@@ -827,7 +753,6 @@ void Instance::CollectToolingInfo() const {
     }
     for (const vk::PhysicalDeviceToolProperties& tool : tools) {
         const std::string_view name = tool.name;
-        LOG_INFO(Render_Vulkan, "Attached debugging tool: {}", name);
     }
 }
 

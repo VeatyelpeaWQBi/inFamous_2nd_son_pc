@@ -3,17 +3,17 @@
 
 #pragma once
 
+#include "common/logging/log.h"
+#include "common/types.h"
 #include <atomic>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
-#include <nlohmann/json.hpp>
-#include "common/logging/log.h"
-#include "common/types.h"
 
 #define EmulatorSettings (*EmulatorSettingsImpl::GetInstance())
 
@@ -62,8 +62,7 @@ enum OpenALOutputMode : int {
     OutputSurround71, // Force 7.1 surround output
 };
 
-template <typename T>
-struct Setting {
+template <typename T> struct Setting {
     T default_value{};
     T value{};
     std::optional<T> game_specific_value{};
@@ -98,18 +97,12 @@ struct Setting {
 
     /// Discard the game-specific override; subsequent get(Default) will
     /// fall back to the base value.
-    void reset_game_specific() {
-        game_specific_value = std::nullopt;
-    }
+    void reset_game_specific() { game_specific_value = std::nullopt; }
 };
 
-template <typename T>
-void to_json(nlohmann::json& j, const Setting<T>& s) {
-    j = s.value;
-}
+template <typename T> void to_json(nlohmann::json& j, const Setting<T>& s) { j = s.value; }
 
-template <typename T>
-void from_json(const nlohmann::json& j, Setting<T>& s) {
+template <typename T> void from_json(const nlohmann::json& j, Setting<T>& s) {
     s.value = j.get<T>();
 }
 
@@ -503,7 +496,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VulkanSettings, gpu_id, renderdoc_enabled, vk
 // Main manager
 // -------------------------------
 class EmulatorSettingsImpl {
-public:
+  public:
     EmulatorSettingsImpl();
     ~EmulatorSettingsImpl();
 
@@ -516,12 +509,8 @@ public:
     bool TransferSettings();
 
     // Config mode
-    ConfigMode GetConfigMode() const {
-        return m_configMode;
-    }
-    void SetConfigMode(ConfigMode mode) {
-        m_configMode = mode;
-    }
+    ConfigMode GetConfigMode() const { return m_configMode; }
+    void SetConfigMode(ConfigMode mode) { m_configMode = mode; }
 
     //
     // Game-specific override management
@@ -548,7 +537,7 @@ public:
     std::filesystem::path GetAddonInstallDir();
     void SetAddonInstallDir(const std::filesystem::path& dir);
 
-private:
+  private:
     GeneralSettings m_general{};
     LogSettings m_log{};
     DebugSettings m_debug{};
@@ -570,8 +559,9 @@ private:
     void ApplyGroupOverrides(Group& group, const nlohmann::json& groupJson,
                              std::vector<std::string>& changed) {
         for (auto& item : group.GetOverrideableFields()) {
-            if (!groupJson.contains(item.key))
+            if (!groupJson.contains(item.key)) {
                 continue;
+            }
             item.apply(&group, groupJson.at(item.key), changed);
         }
     }
@@ -579,20 +569,20 @@ private:
     // Write all overrideable fields from group into out (for game-specific save).
     template <typename Group>
     static void SaveGroupGameSpecific(const Group& group, nlohmann::json& out) {
-        for (auto& item : group.GetOverrideableFields())
+        for (auto& item : group.GetOverrideableFields()) {
             out[item.key] = item.get_for_save(&group);
+        }
     }
 
     // Discard every game-specific override in group.
-    template <typename Group>
-    static void ClearGroupOverrides(Group& group) {
-        for (auto& item : group.GetOverrideableFields())
+    template <typename Group> static void ClearGroupOverrides(Group& group) {
+        for (auto& item : group.GetOverrideableFields()) {
             item.reset_game_specific(&group);
+        }
     }
 
-    static void PrintChangedSummary(const std::vector<std::string>& changed);
 
-public:
+  public:
     // Add these getters to access overrideable fields
     std::vector<OverrideItem> GetGeneralOverrideableFields() const {
         return m_general.GetOverrideableFields();
@@ -615,23 +605,15 @@ public:
     std::vector<std::string> GetAllOverrideableKeys() const;
 
 #define SETTING_FORWARD(group, Name, field)                                                        \
-    auto Get##Name() const {                                                                       \
-        return (group).field.get(m_configMode);                                                    \
-    }                                                                                              \
+    auto Get##Name() const { return (group).field.get(m_configMode); }                             \
     void Set##Name(const decltype((group).field.value)& v, bool specific = false) {                \
         (group).field.set(v, specific);                                                            \
     }
 #define SETTING_FORWARD_BOOL(group, Name, field)                                                   \
-    bool Is##Name() const {                                                                        \
-        return (group).field.get(m_configMode);                                                    \
-    }                                                                                              \
-    void Set##Name(bool v, bool specific = false) {                                                \
-        (group).field.set(v, specific);                                                            \
-    }
+    bool Is##Name() const { return (group).field.get(m_configMode); }                              \
+    void Set##Name(bool v, bool specific = false) { (group).field.set(v, specific); }
 #define SETTING_FORWARD_BOOL_READONLY(group, Name, field)                                          \
-    bool Is##Name() const {                                                                        \
-        return (group).field.get(m_configMode);                                                    \
-    }
+    bool Is##Name() const { return (group).field.get(m_configMode); }
 
     // General settings
     SETTING_FORWARD(m_general, VolumeSlider, volume_slider)
@@ -646,9 +628,7 @@ public:
     void SetShadNetEnabled(bool v, bool specific = false) {
         m_general.shad_net_enabled.set(v, specific);
     }
-    bool IsShadNetEnabledSetting() const {
-        return m_general.shad_net_enabled.get(m_configMode);
-    }
+    bool IsShadNetEnabledSetting() const { return m_general.shad_net_enabled.get(m_configMode); }
     void SetShadNetSessionDisabled(bool v) {
         m_shadnet_session_disabled.store(v, std::memory_order_relaxed);
     }
@@ -661,7 +641,8 @@ public:
     SETTING_FORWARD_BOOL(m_general, ShowSplash, show_splash)
     SETTING_FORWARD_BOOL(m_general, ConnectedToNetwork, connected_to_network)
     SETTING_FORWARD_BOOL(m_general, DiscordRPCEnabled, discord_rpc_enabled)
-    SETTING_FORWARD_BOOL(m_general, ShowFpsCounter, show_fps_counter)
+    constexpr bool IsShowFpsCounter() const { return false; }
+    void SetShowFpsCounter(bool, bool = false) {}
     SETTING_FORWARD(m_general, ConsoleLanguage, console_language)
     SETTING_FORWARD(m_general, BigPictureScale, big_picture_scale)
     SETTING_FORWARD(m_general, ShadNetServer, shadnet_server)
@@ -696,13 +677,17 @@ public:
     SETTING_FORWARD(m_audio, OpenALOutputMode, openal_output_mode)
 
     // Debug settings
-    SETTING_FORWARD_BOOL(m_debug, DebugDump, debug_dump)
-    SETTING_FORWARD_BOOL(m_debug, ShaderCollect, shader_collect)
+    constexpr bool IsDebugDump() const { return false; }
+    void SetDebugDump(bool, bool = false) {}
+    constexpr bool IsShaderCollect() const { return false; }
+    void SetShaderCollect(bool, bool = false) {}
     SETTING_FORWARD(m_debug, ConfigVersion, config_version)
 
     // GPU Settings
-    SETTING_FORWARD_BOOL(m_gpu, NullGPU, null_gpu)
-    SETTING_FORWARD_BOOL(m_gpu, DumpShaders, dump_shaders)
+    constexpr bool IsNullGPU() const { return false; }
+    void SetNullGPU(bool, bool = false) {}
+    constexpr bool IsDumpShaders() const { return false; }
+    void SetDumpShaders(bool, bool = false) {}
     SETTING_FORWARD_BOOL(m_gpu, CopyGpuBuffers, copy_gpu_buffers)
     SETTING_FORWARD_BOOL(m_gpu, FullScreen, full_screen)
     SETTING_FORWARD(m_gpu, FullScreenMode, full_screen_mode)
@@ -719,7 +704,7 @@ public:
     SETTING_FORWARD_BOOL(m_gpu, ReadbackLinearImagesEnabled, readback_linear_images_enabled)
     SETTING_FORWARD_BOOL(m_gpu, ReadbacksWriteDiscard, readbacks_write_discard)
     SETTING_FORWARD_BOOL(m_gpu, DirectMemoryAccessEnabled, direct_memory_access_enabled)
-    SETTING_FORWARD_BOOL_READONLY(m_gpu, PatchShaders, patch_shaders)
+    constexpr bool IsPatchShaders() const { return false; }
     SETTING_FORWARD_BOOL(m_gpu, UserfaultfdTracking, userfaultfd)
     SETTING_FORWARD_BOOL_READONLY(m_gpu, InlineFetchShader, inline_fetch_shader)
 
@@ -757,14 +742,22 @@ public:
 
     // Vulkan settings
     SETTING_FORWARD(m_vulkan, GpuId, gpu_id)
-    SETTING_FORWARD_BOOL(m_vulkan, RenderdocEnabled, renderdoc_enabled)
-    SETTING_FORWARD_BOOL(m_vulkan, VkValidationEnabled, vkvalidation_enabled)
-    SETTING_FORWARD_BOOL(m_vulkan, VkValidationCoreEnabled, vkvalidation_core_enabled)
-    SETTING_FORWARD_BOOL(m_vulkan, VkValidationSyncEnabled, vkvalidation_sync_enabled)
-    SETTING_FORWARD_BOOL(m_vulkan, VkValidationGpuEnabled, vkvalidation_gpu_enabled)
-    SETTING_FORWARD_BOOL(m_vulkan, VkCrashDiagnosticEnabled, vkcrash_diagnostic_enabled)
-    SETTING_FORWARD_BOOL(m_vulkan, VkHostMarkersEnabled, vkhost_markers)
-    SETTING_FORWARD_BOOL(m_vulkan, VkGuestMarkersEnabled, vkguest_markers)
+    constexpr bool IsRenderdocEnabled() const { return false; }
+    void SetRenderdocEnabled(bool, bool = false) {}
+    constexpr bool IsVkValidationEnabled() const { return false; }
+    void SetVkValidationEnabled(bool, bool = false) {}
+    constexpr bool IsVkValidationCoreEnabled() const { return false; }
+    void SetVkValidationCoreEnabled(bool, bool = false) {}
+    constexpr bool IsVkValidationSyncEnabled() const { return false; }
+    void SetVkValidationSyncEnabled(bool, bool = false) {}
+    constexpr bool IsVkValidationGpuEnabled() const { return false; }
+    void SetVkValidationGpuEnabled(bool, bool = false) {}
+    constexpr bool IsVkCrashDiagnosticEnabled() const { return false; }
+    void SetVkCrashDiagnosticEnabled(bool, bool = false) {}
+    constexpr bool IsVkHostMarkersEnabled() const { return false; }
+    void SetVkHostMarkersEnabled(bool, bool = false) {}
+    constexpr bool IsVkGuestMarkersEnabled() const { return false; }
+    void SetVkGuestMarkersEnabled(bool, bool = false) {}
     SETTING_FORWARD_BOOL(m_vulkan, PipelineCacheEnabled, pipeline_cache_enabled)
     SETTING_FORWARD_BOOL(m_vulkan, PipelineCacheArchived, pipeline_cache_archived)
 

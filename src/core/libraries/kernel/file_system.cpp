@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <magic_enum/magic_enum.hpp>
 #include <map>
 #include <ranges>
-#include <magic_enum/magic_enum.hpp>
 
 #include "common/assert.h"
 #include "common/error.h"
 #include "common/logging/log.h"
-#include "common/perf_stats.h"
 #include "common/scope_exit.h"
 #include "common/singleton.h"
 #include "core/file_sys/devices/console_device.h"
@@ -29,6 +28,7 @@
 #include "core/libraries/libs.h"
 #include "core/libraries/network/sockets.h"
 #include "core/memory.h"
+#include "core/runtime_policy.h"
 #include "kernel.h"
 
 #ifdef _WIN32
@@ -79,7 +79,6 @@ static std::map<std::string, FactoryDevice> available_device = {
 namespace Libraries::Kernel {
 
 s32 PS4_SYSV_ABI open(const char* raw_path, s32 flags, u16 mode) {
-    LOG_INFO(Kernel_Fs, "path = {} flags = {:#x} mode = {:#o}", raw_path, flags, mode);
 
     auto* h = Common::Singleton<Core::FileSys::HandleTable>::Instance();
     auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
@@ -286,15 +285,12 @@ s32 PS4_SYSV_ABI close(s32 fd) {
         file->socket->Close();
     }
     file->is_opened = false;
-    LOG_INFO(Kernel_Fs, "Closing {}", file->m_guest_name);
     // FIXME: Lock file mutex before deleting it?
     h->DeleteHandle(fd);
     return ORBIS_OK;
 }
 
-s32 PS4_SYSV_ABI posix_close(s32 fd) {
-    return close(fd);
-}
+s32 PS4_SYSV_ABI posix_close(s32 fd) { return close(fd); }
 
 s32 PS4_SYSV_ABI sceKernelClose(s32 fd) {
     s32 result = close(fd);
@@ -332,9 +328,7 @@ s64 PS4_SYSV_ABI write(s32 fd, const void* buf, u64 nbytes) {
     return file->Write(buf, nbytes);
 }
 
-s64 PS4_SYSV_ABI posix_write(s32 fd, const void* buf, u64 nbytes) {
-    return write(fd, buf, nbytes);
-}
+s64 PS4_SYSV_ABI posix_write(s32 fd, const void* buf, u64 nbytes) { return write(fd, buf, nbytes); }
 
 s64 PS4_SYSV_ABI sceKernelWrite(s32 fd, const void* buf, u64 nbytes) {
     s64 result = write(fd, buf, nbytes);
@@ -348,32 +342,21 @@ s64 PS4_SYSV_ABI sceKernelWrite(s32 fd, const void* buf, u64 nbytes) {
 static thread_local std::vector<u8> file_buf{};
 
 s64 ReadFile(Core::FileSys::File* file, void* buf, u64 nbytes) {
-    using namespace Common::Perf;
-    const bool profile = GetTuning().perf_log.load(std::memory_order_relaxed);
-    const u64 prepare_start = profile ? NowNs() : 0;
+    if (nbytes == 0) {
+        return 0;
+    }
     const auto* memory = Core::Memory::Instance();
-    // Invalidate up to the actual number of bytes that could be read.
-    const auto remaining = file->GetSize() - file->Tell();
+    const auto length = file->GetSize();
+    const auto position = file->Tell();
+    const auto remaining = position < length ? length - position : 0;
     memory->InvalidateMemory(reinterpret_cast<VAddr>(buf), std::min<u64>(nbytes, remaining));
-    if (file_buf.capacity() < nbytes) {
-        file_buf.reserve(nbytes);
-    }
-    const u64 io_start = profile ? NowNs() : 0;
-    if (profile)
-        Add(GuestFilePrepareNs, io_start - prepare_start);
-    s64 bytes = file->Read(file_buf.data(), nbytes);
-    const u64 copy_start = profile ? NowNs() : 0;
-    if (profile) {
-        Add(GuestFileReads);
-        Add(GuestFileReadNs, copy_start - io_start);
-    }
+    file_buf.resize(nbytes);
+    const s64 bytes = file->Read(file_buf.data(), nbytes);
     if (bytes < 0) {
         return bytes;
     }
-    std::memcpy(buf, file_buf.data(), bytes);
-    if (profile) {
-        Add(GuestFileBytes, bytes);
-        Add(GuestFileCopyNs, NowNs() - copy_start);
+    if (bytes > 0) {
+        std::memcpy(buf, file_buf.data(), bytes);
     }
     return bytes;
 }
@@ -576,9 +559,7 @@ s64 PS4_SYSV_ABI read(s32 fd, void* buf, u64 nbytes) {
     return ReadFile(file, buf, nbytes);
 }
 
-s64 PS4_SYSV_ABI posix_read(s32 fd, void* buf, u64 nbytes) {
-    return read(fd, buf, nbytes);
-}
+s64 PS4_SYSV_ABI posix_read(s32 fd, void* buf, u64 nbytes) { return read(fd, buf, nbytes); }
 
 s64 PS4_SYSV_ABI sceKernelRead(s32 fd, void* buf, u64 nbytes) {
     s64 result = read(fd, buf, nbytes);
@@ -590,7 +571,6 @@ s64 PS4_SYSV_ABI sceKernelRead(s32 fd, void* buf, u64 nbytes) {
 }
 
 s32 PS4_SYSV_ABI posix_mkdir(const char* path, u16 mode) {
-    LOG_INFO(Kernel_Fs, "path = {} mode = {:#o}", path, mode);
     if (strlen(path) > 255) {
         *__Error() = POSIX_ENAMETOOLONG;
         return -1;
@@ -682,7 +662,6 @@ s32 PS4_SYSV_ABI sceKernelRmdir(const char* path) {
 }
 
 s32 PS4_SYSV_ABI posix_access(const char* path, s32 mode) {
-    LOG_INFO(Kernel_Fs, "(PARTIAL) path = {}, mode = {}", path, mode);
     if (strlen(path) > 255) {
         *__Error() = POSIX_ENAMETOOLONG;
         return -1;
@@ -703,7 +682,6 @@ s32 PS4_SYSV_ABI posix_access(const char* path, s32 mode) {
 }
 
 s32 PS4_SYSV_ABI posix_stat(const char* path, OrbisKernelStat* sb) {
-    LOG_DEBUG(Kernel_Fs, "(PARTIAL) path = {}", path);
     if (strlen(path) > 255) {
         *__Error() = POSIX_ENAMETOOLONG;
         return -1;
@@ -807,7 +785,6 @@ s32 PS4_SYSV_ABI sceKernelCheckReachability(const char* path) {
 }
 
 s32 PS4_SYSV_ABI fstat(s32 fd, OrbisKernelStat* sb) {
-    LOG_DEBUG(Kernel_Fs, "(PARTIAL) fd = {}", fd);
     if (sb == nullptr) {
         *__Error() = POSIX_EFAULT;
         return -1;
@@ -871,9 +848,7 @@ s32 PS4_SYSV_ABI fstat(s32 fd, OrbisKernelStat* sb) {
     return ORBIS_OK;
 }
 
-s32 PS4_SYSV_ABI posix_fstat(s32 fd, OrbisKernelStat* sb) {
-    return fstat(fd, sb);
-}
+s32 PS4_SYSV_ABI posix_fstat(s32 fd, OrbisKernelStat* sb) { return fstat(fd, sb); }
 
 s32 PS4_SYSV_ABI sceKernelFstat(s32 fd, OrbisKernelStat* sb) {
     s32 result = fstat(fd, sb);
@@ -1034,9 +1009,7 @@ s64 PS4_SYSV_ABI posix_preadv(s32 fd, OrbisKernelIovec* iov, s32 iovcnt, s64 off
     }
 
     const s64 pos = file->Tell();
-    SCOPE_EXIT {
-        file->Seek(pos);
-    };
+    SCOPE_EXIT { file->Seek(pos); };
     if (!file->Seek(offset)) {
         *__Error() = POSIX_EIO;
         return -1;
@@ -1198,9 +1171,7 @@ s64 PS4_SYSV_ABI posix_pwritev(s32 fd, const OrbisKernelIovec* iov, s32 iovcnt, 
     }
 
     const s64 pos = file->Tell();
-    SCOPE_EXIT {
-        file->Seek(pos);
-    };
+    SCOPE_EXIT { file->Seek(pos); };
     if (!file->Seek(offset)) {
         *__Error() = POSIX_EIO;
         return -1;
@@ -1274,7 +1245,7 @@ s32 PS4_SYSV_ABI posix_unlink(const char* path) {
         host->Unlink();
     }
 
-    LOG_INFO(Kernel_Fs, "Unlinked {}", path);
+    ;
     return ORBIS_OK;
 }
 
@@ -1305,14 +1276,10 @@ static bool FD_ISSET_POSIX(s32 fd, fd_set_posix* set) {
     return (set->fds_bits[fd / (8 * sizeof(u64))] & (1ULL << (fd % (8 * sizeof(u64))))) != 0;
 }
 
-static void FD_ZERO_POSIX(fd_set_posix* set) {
-    std::memset(set, 0, sizeof(fd_set_posix));
-}
+static void FD_ZERO_POSIX(fd_set_posix* set) { std::memset(set, 0, sizeof(fd_set_posix)); }
 
 s32 PS4_SYSV_ABI posix_select(s32 nfds, fd_set_posix* readfds, fd_set_posix* writefds,
                               fd_set_posix* exceptfds, OrbisKernelTimeval* timeout) {
-    LOG_DEBUG(Kernel_Fs, "nfds = {}, readfds = {}, writefds = {}, exceptfds = {}, timeout = {}",
-              nfds, fmt::ptr(readfds), fmt::ptr(writefds), fmt::ptr(exceptfds), fmt::ptr(timeout));
 
     auto* h = Common::Singleton<Core::FileSys::HandleTable>::Instance();
 
@@ -1397,10 +1364,7 @@ s32 PS4_SYSV_ABI posix_select(s32 nfds, fd_set_posix* readfds, fd_set_posix* wri
         host_to_guest[native_fd] = i;
     }
 
-    LOG_DEBUG(Kernel_Fs,
-              "Before select(): read_host.fd_count = {}, write_host.fd_count = {}, "
-              "except_host.fd_count = {}",
-              read_host.fd_count, write_host.fd_count, except_host.fd_count);
+    ;
 
     if (read_host.fd_count == 0 && write_host.fd_count == 0 && except_host.fd_count == 0) {
         LOG_WARNING(Kernel_Fs, "No sockets in fd_sets, select() will return immediately");
@@ -1480,8 +1444,6 @@ s32 PS4_SYSV_ABI posix_select(s32 nfds, fd_set_posix* readfds, fd_set_posix* wri
 #else
 s32 PS4_SYSV_ABI posix_select(s32 nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds,
                               OrbisKernelTimeval* timeout) {
-    LOG_DEBUG(Kernel_Fs, "nfds = {}, readfds = {}, writefds = {}, exceptfds = {}, timeout = {}",
-              nfds, fmt::ptr(readfds), fmt::ptr(writefds), fmt::ptr(exceptfds), fmt::ptr(timeout));
 
     auto* h = Common::Singleton<Core::FileSys::HandleTable>::Instance();
     fd_set read_host, write_host, except_host;

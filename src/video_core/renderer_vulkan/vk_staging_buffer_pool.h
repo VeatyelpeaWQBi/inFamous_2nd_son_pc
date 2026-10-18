@@ -25,17 +25,13 @@ struct StagingBufferRef {
     u8* mapped{};
     VideoCore::MemoryType type{};
 
-    void Flush() const noexcept {
-        buffer->Flush(offset, size);
-    }
+    void Flush() const noexcept { buffer->Flush(offset, size); }
 
-    void Invalidate() const noexcept {
-        buffer->Invalidate(offset, size);
-    }
+    void Invalidate() const noexcept { buffer->Invalidate(offset, size); }
 };
 
 class StagingBufferPool {
-public:
+  public:
     explicit StagingBufferPool(const Instance& instance, Scheduler& scheduler);
     ~StagingBufferPool();
 
@@ -52,7 +48,7 @@ public:
     /// Releases idle memory.
     void TickFrame();
 
-private:
+  private:
     struct Block {
         std::unique_ptr<VideoCore::StreamBuffer> buffer;
         u64 last_used_frame;
@@ -79,8 +75,6 @@ private:
 
     void TrimRing(Ring& ring);
     void TrimLarge(std::vector<LargeBuffer>& cache);
-
-    void PublishStats() const;
 
     const Instance& instance;
     Scheduler& scheduler;

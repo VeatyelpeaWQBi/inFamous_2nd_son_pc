@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <cstring>
-#include <fmt/format.h>
-#include <magic_enum/magic_enum.hpp>
+#include "np_profile_dialog.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
 #include "core/libraries/system/commondialog.h"
-#include "np_profile_dialog.h"
 #include "np_profile_dialog_ui.h"
+#include <cstring>
+#include <fmt/format.h>
+#include <magic_enum/magic_enum.hpp>
 
 namespace Libraries::Np::NpProfileDialog {
 
@@ -29,10 +29,7 @@ Libraries::CommonDialog::Error sceNpProfileDialogOpen(OrbisNpProfileDialogParam*
         return Libraries::CommonDialog::Error::ARG_NULL;
     }
 
-    LOG_DEBUG(Lib_NpProfileDialog,
-              "param details: mode={}, userId={}, targetOnlineId='{}', userData={}",
-              static_cast<int>(param->mode), param->userId, param->targetOnlineId.data,
-              fmt::ptr(param->userData));
+    ;
 
     NpProfileDialogState state{};
     state.onlineId = std::string(param->targetOnlineId.data);
@@ -44,17 +41,13 @@ Libraries::CommonDialog::Error sceNpProfileDialogOpen(OrbisNpProfileDialogParam*
     g_result.userData = param->userData;
     g_status = Libraries::CommonDialog::Status::RUNNING;
 
-    LOG_DEBUG(Lib_NpProfileDialog, "creating UI with onlineId='{}', mode={}, userId={}",
-              state.onlineId, static_cast<int>(state.mode), state.userId);
 
     g_profile_dialog_ui = NpProfileDialogUi(&g_state, &g_status, &g_result);
 
-    LOG_INFO(Lib_NpProfileDialog, "dialog opened successfully for user {}", param->userId);
     return Libraries::CommonDialog::Error::OK;
 }
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI sceNpProfileDialogClose() {
-    LOG_DEBUG(Lib_NpProfileDialog, "called");
     if (g_status == Libraries::CommonDialog::Status::NONE) {
         return Libraries::CommonDialog::Error::NOT_INITIALIZED;
     }
@@ -67,7 +60,6 @@ Libraries::CommonDialog::Error PS4_SYSV_ABI sceNpProfileDialogClose() {
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI
 sceNpProfileDialogGetResult(OrbisNpProfileDialogResult* result) {
-    LOG_DEBUG(Lib_NpProfileDialog, "called");
 
     if (g_status == Libraries::CommonDialog::Status::NONE) {
         LOG_ERROR(Lib_NpProfileDialog, "failed: not initialized (g_status=NONE)");
@@ -85,13 +77,10 @@ sceNpProfileDialogGetResult(OrbisNpProfileDialogResult* result) {
 
     *result = g_result;
 
-    LOG_DEBUG(Lib_NpProfileDialog, "result details: resultCode={}, userAction={}, userData={}",
-              g_result.result, static_cast<int>(g_result.userAction), fmt::ptr(g_result.userData));
     return Libraries::CommonDialog::Error::OK;
 }
 
 Libraries::CommonDialog::Status PS4_SYSV_ABI sceNpProfileDialogGetStatus() {
-    LOG_TRACE(Lib_NpProfileDialog, "called status={}", magic_enum::enum_name(g_status));
     return g_status;
 }
 
@@ -112,7 +101,6 @@ Libraries::CommonDialog::Error PS4_SYSV_ABI sceNpProfileDialogInitialize() {
 
     g_status = Libraries::CommonDialog::Status::INITIALIZED;
     CommonDialog::g_isUsed = true;
-    LOG_INFO(Lib_NpProfileDialog, "initialized successfully");
     return Libraries::CommonDialog::Error::OK;
 }
 
@@ -128,10 +116,7 @@ sceNpProfileDialogOpenA(OrbisNpProfileDialogParamA* param) {
         return Libraries::CommonDialog::Error::ARG_NULL;
     }
 
-    LOG_DEBUG(Lib_NpProfileDialog,
-              "param details: mode={}, userId={}, targetAccountId='{}', userData={}",
-              static_cast<int>(param->mode), param->userId, param->targetAccountId,
-              fmt::ptr(param->userData));
+    ;
     LOG_ERROR(Lib_NpProfileDialog, "(STUBBED) called");
 
     NpProfileDialogState state{};
@@ -144,18 +129,13 @@ sceNpProfileDialogOpenA(OrbisNpProfileDialogParamA* param) {
     g_result.userData = param->userData;
     g_status = Libraries::CommonDialog::Status::RUNNING;
 
-    LOG_DEBUG(Lib_NpProfileDialog, "creating UI with accountId='{}', mode={}, userId={}",
-              state.accountId, static_cast<int>(state.mode), state.userId);
 
     g_profile_dialog_ui = NpProfileDialogUi(&g_state, &g_status, &g_result);
 
-    LOG_INFO(Lib_NpProfileDialog, "dialog opened successfully for user {} (account ID variant)",
-             param->userId);
     return Libraries::CommonDialog::Error::OK;
 }
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI sceNpProfileDialogTerminate() {
-    LOG_DEBUG(Lib_NpProfileDialog, "called (g_status={})", static_cast<int>(g_status));
 
     if (g_status == Libraries::CommonDialog::Status::RUNNING) {
         LOG_ERROR(Lib_NpProfileDialog, "dialog is running, closing it first");
@@ -169,12 +149,10 @@ Libraries::CommonDialog::Error PS4_SYSV_ABI sceNpProfileDialogTerminate() {
     g_status = Libraries::CommonDialog::Status::NONE;
     CommonDialog::g_isUsed = false;
 
-    LOG_INFO(Lib_NpProfileDialog, "terminated successfully");
     return Libraries::CommonDialog::Error::OK;
 }
 
 Libraries::CommonDialog::Status PS4_SYSV_ABI sceNpProfileDialogUpdateStatus() {
-    LOG_TRACE(Lib_NpProfileDialog, "called status={}", magic_enum::enum_name(g_status));
     return g_status;
 }
 

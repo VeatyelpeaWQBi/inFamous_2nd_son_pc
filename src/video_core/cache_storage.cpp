@@ -6,8 +6,8 @@
 #include <array>
 #include <atomic>
 #include <cstring>
-#include <set>
 #include <miniz.h>
+#include <set>
 
 #include "common/elf_info.h"
 #include "common/logging/log.h"
@@ -54,17 +54,20 @@ struct DataBase::Impl {
 
     bool Enqueue(const std::string& name, std::vector<u8>&& data) {
         if (!opened.load(std::memory_order_acquire) || data.empty() ||
-            data.size() > CacheFile::MaxBlobBytes)
+            data.size() > CacheFile::MaxBlobBytes) {
             return false;
+        }
         return writer->Enqueue(name, std::move(data));
     }
 
     bool Read(const std::string& name, std::vector<u8>& data) {
         data.clear();
-        if (CacheFile::Read(path / name, data))
+        if (CacheFile::Read(path / name, data)) {
             return true;
-        if (!allow_legacy)
+        }
+        if (!allow_legacy) {
             return false;
+        }
         bool found = CacheFile::Read(legacy / name, data, CacheFile::MaxBlobBytes, true);
         if (!found && zip_open) {
             const int index = mz_zip_reader_locate_file(&legacy_zip, name.c_str(), nullptr, 0);
@@ -74,32 +77,32 @@ struct DataBase::Impl {
                 data.resize(stat.m_uncomp_size);
                 found =
                     mz_zip_reader_extract_to_mem(&legacy_zip, index, data.data(), data.size(), 0);
-                if (!found)
+                if (!found) {
                     data.clear();
+                }
             }
         }
-        if (found)
+        if (found) {
             Enqueue(name, std::vector<u8>{data}); // One-time, read-only legacy import.
+        }
         return found;
     }
 };
 
 DataBase::DataBase() : impl{std::make_unique<Impl>()} {}
-DataBase::~DataBase() {
-    Close();
-}
-bool DataBase::IsOpened() const {
-    return impl->opened.load(std::memory_order_acquire);
-}
+DataBase::~DataBase() { Close(); }
+bool DataBase::IsOpened() const { return impl->opened.load(std::memory_order_acquire); }
 void DataBase::SetWriteBudget(u64 bytes) {
     impl->write_budget = std::clamp<u64>(bytes, 16ULL * 1024 * 1024, 512ULL * 1024 * 1024);
-    if (impl->writer)
+    if (impl->writer) {
         impl->writer->SetBudget(impl->write_budget);
+    }
 }
 
 void DataBase::Open() {
-    if (IsOpened())
+    if (IsOpened()) {
         return;
+    }
     impl->legacy = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) /
                    Common::ElfInfo::Instance().GameSerial();
     impl->path = impl->legacy / "pipeline-v2";
@@ -122,8 +125,9 @@ void DataBase::Open() {
         [this](const std::string& name, std::span<const u8> data) {
             if (name == "legacy-import-complete") {
                 const auto counts = impl->writer->Statistics();
-                if (counts.failed || counts.deferred)
+                if (counts.failed || counts.deferred) {
                     return false;
+                }
             }
             return CacheFile::Write(impl->path / name, data);
         },
@@ -133,23 +137,21 @@ void DataBase::Open() {
         });
     impl->writer->SetBudget(impl->write_budget);
     impl->opened.store(true, std::memory_order_release);
-    LOG_INFO(Render, "Pipeline cache opened: {} (legacy import: {})", impl->path.string(),
-             impl->allow_legacy);
 }
 
 void DataBase::Close() {
-    if (!impl->opened.exchange(false, std::memory_order_acq_rel))
+    if (!impl->opened.exchange(false, std::memory_order_acq_rel)) {
         return;
+    }
     impl->writer->Close();
     impl->CloseLegacy();
     const auto counts = impl->writer->Statistics();
-    LOG_INFO(Render, "Cache drained: {} blobs saved, {} writes failed, {} budget deferrals",
-             counts.written, counts.failed, counts.deferred);
 }
 
 void DataBase::Reset() {
-    if (!IsOpened())
+    if (!IsOpened()) {
         return;
+    }
     Close();
     // Reset only this build's namespace. Original/other-emulator caches are preserved.
     auto old = impl->path;
@@ -165,7 +167,6 @@ void DataBase::Reset() {
     Open();
     impl->CloseLegacy();
     impl->Enqueue("legacy-import-complete", std::vector<u8>{1});
-    LOG_INFO(Render, "Incompatible cache moved to {}", old.string());
 }
 
 bool DataBase::Save(BlobType type, const std::string& name, std::vector<u8>&& data) {
@@ -178,60 +179,70 @@ bool DataBase::Save(BlobType type, const std::string& name, std::vector<u32>&& d
 }
 void DataBase::Load(BlobType type, const std::string& name, std::vector<u8>& data) {
     data.clear();
-    if (IsOpened())
+    if (IsOpened()) {
         impl->Read(BlobName(type, name), data);
+    }
 }
 void DataBase::Load(BlobType type, const std::string& name, std::vector<u32>& data) {
     std::vector<u8> bytes;
     Load(type, name, bytes);
     data.clear();
-    if (bytes.size() % sizeof(u32) != 0)
+    if (bytes.size() % sizeof(u32) != 0) {
         return;
+    }
     data.resize(bytes.size() / sizeof(u32));
-    if (!bytes.empty())
+    if (!bytes.empty()) {
         std::memcpy(data.data(), bytes.data(), bytes.size());
+    }
 }
 
 void DataBase::ForEachBlob(BlobType type, const std::function<void(std::vector<u8>&& data)>& func) {
-    if (!IsOpened())
+    if (!IsOpened()) {
         return;
+    }
     std::set<std::string> names;
     const auto collect = [&](const std::filesystem::path& directory) {
         std::error_code ec;
         for (std::filesystem::directory_iterator it{directory, ec}, end; !ec && it != end;
              it.increment(ec)) {
-            if (it->is_regular_file(ec) && it->path().extension() == Extension(type))
+            if (it->is_regular_file(ec) && it->path().extension() == Extension(type)) {
                 names.emplace(it->path().filename().string());
+            }
         }
     };
     collect(impl->path);
-    if (impl->allow_legacy)
+    if (impl->allow_legacy) {
         collect(impl->legacy);
+    }
     if (impl->allow_legacy && impl->zip_open) {
         for (mz_uint index = 0; index < mz_zip_reader_get_num_files(&impl->legacy_zip); ++index) {
             std::array<char, MZ_ZIP_MAX_ARCHIVE_FILENAME_SIZE> name{};
             mz_zip_reader_get_filename(&impl->legacy_zip, index, name.data(), name.size());
             const std::filesystem::path entry{name.data()};
-            if (entry.filename() == entry && entry.extension() == Extension(type))
+            if (entry.filename() == entry && entry.extension() == Extension(type)) {
                 names.emplace(name.data());
+            }
         }
     }
     for (const auto& name : names) {
         std::vector<u8> data;
-        if (impl->Read(name, data))
+        if (impl->Read(name, data)) {
             func(std::move(data));
+        }
     }
 }
 
 void DataBase::FinishPreload() {
-    if (!IsOpened())
+    if (!IsOpened()) {
         return;
+    }
     if (impl->allow_legacy) {
         // Import all existing SPIR-V, including orphan stages not referenced by a
         // pipeline key. A marker is queued last and only after every import was accepted.
         ForEachBlob(BlobType::ShaderBinary, [](std::vector<u8>&&) {});
-        if (impl->writer->Statistics().deferred == 0)
+        if (impl->writer->Statistics().deferred == 0) {
             impl->Enqueue("legacy-import-complete", std::vector<u8>{1});
+        }
     }
     impl->CloseLegacy();
 }

@@ -1,18 +1,18 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
-#include <fstream>
-#include <iomanip>
-#include <map>
-#include <common/path_util.h>
-#include <common/scm_rev.h>
-#include <toml.hpp>
+#include "emulator_settings.h"
 #include "common/assert.h"
 #include "common/logging/formatter.h"
 #include "common/logging/log.h"
-#include "emulator_settings.h"
 #include "emulator_state.h"
+#include <algorithm>
+#include <common/path_util.h>
+#include <common/scm_rev.h>
+#include <fstream>
+#include <iomanip>
+#include <map>
+#include <toml.hpp>
 
 #include <SDL3/SDL_messagebox.h>
 
@@ -24,8 +24,7 @@ std::mutex EmulatorSettingsImpl::s_mutex;
 
 // ── nlohmann helpers for std::filesystem::path ───────────────────────
 namespace nlohmann {
-template <>
-struct adl_serializer<std::filesystem::path> {
+template <> struct adl_serializer<std::filesystem::path> {
     static void to_json(json& j, const std::filesystem::path& p) {
         const auto u8 = p.u8string();
         j = std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
@@ -40,14 +39,15 @@ struct adl_serializer<std::filesystem::path> {
 
 namespace toml {
 // why is it so hard to avoid exceptions with this library
-template <typename T>
-std::optional<T> get_optional(const toml::value& v, const std::string& key) {
-    if (!v.is_table())
+template <typename T> std::optional<T> get_optional(const toml::value& v, const std::string& key) {
+    if (!v.is_table()) {
         return std::nullopt;
+    }
     const auto& tbl = v.as_table();
     auto it = tbl.find(key);
-    if (it == tbl.end())
+    if (it == tbl.end()) {
         return std::nullopt;
+    }
 
     if constexpr (std::is_same_v<T, int>) {
         if (it->second.is_integer()) {
@@ -88,14 +88,7 @@ std::optional<T> get_optional(const toml::value& v, const std::string& key) {
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-void EmulatorSettingsImpl::PrintChangedSummary(const std::vector<std::string>& changed) {
-    if (changed.empty()) {
-        return;
-    }
-    LOG_DEBUG(Config, "Game-specific overrides applied:");
-    for (const auto& k : changed)
-        LOG_DEBUG(Config, "    * {}", k);
-}
+
 
 // ── Singleton ────────────────────────────────────────────────────────
 EmulatorSettingsImpl::EmulatorSettingsImpl() = default;
@@ -104,8 +97,9 @@ EmulatorSettingsImpl::~EmulatorSettingsImpl() {}
 
 std::shared_ptr<EmulatorSettingsImpl> EmulatorSettingsImpl::GetInstance() {
     std::lock_guard lock(s_mutex);
-    if (!s_instance)
+    if (!s_instance) {
         s_instance = std::make_shared<EmulatorSettingsImpl>();
+    }
     return s_instance;
 }
 
@@ -118,18 +112,22 @@ void EmulatorSettingsImpl::SetInstance(std::shared_ptr<EmulatorSettingsImpl> ins
 // General helpers
 // --------------------
 bool EmulatorSettingsImpl::AddGameInstallDir(const std::filesystem::path& dir, bool enabled) {
-    for (const auto& d : m_general.install_dirs.value)
-        if (d.path == dir)
+    for (const auto& d : m_general.install_dirs.value) {
+        if (d.path == dir) {
             return false;
+        }
+    }
     m_general.install_dirs.value.push_back({dir, enabled});
     return true;
 }
 
 std::vector<std::filesystem::path> EmulatorSettingsImpl::GetGameInstallDirs() const {
     std::vector<std::filesystem::path> out;
-    for (const auto& d : m_general.install_dirs.value)
-        if (d.enabled)
+    for (const auto& d : m_general.install_dirs.value) {
+        if (d.enabled) {
             out.push_back(d.path);
+        }
+    }
     return out;
 }
 
@@ -304,10 +302,12 @@ bool EmulatorSettingsImpl::Save(const std::string& serial) {
 
             // Merge: update each section's known keys, but leave unknown keys intact
             for (auto& [section, val] : j.items()) {
-                if (existing.contains(section) && existing[section].is_object() && val.is_object())
+                if (existing.contains(section) && existing[section].is_object() &&
+                    val.is_object()) {
                     existing[section].update(val); // overwrites known keys, keeps unknown ones
-                else
+                } else {
                     existing[section] = val;
+                }
             }
 
             std::ofstream out(path);
@@ -341,8 +341,9 @@ bool EmulatorSettingsImpl::Load(const std::string& serial) {
                 in >> gj;
 
                 auto mergeGroup = [&gj](auto& group, const char* section) {
-                    if (!gj.contains(section))
+                    if (!gj.contains(section)) {
                         return;
+                    }
                     json current = group;
                     current.update(gj.at(section));
                     group = current.get<std::remove_reference_t<decltype(group)>>();
@@ -416,20 +417,27 @@ bool EmulatorSettingsImpl::Load(const std::string& serial) {
 
             std::vector<std::string> changed;
 
-            if (gj.contains("General"))
+            if (gj.contains("General")) {
                 ApplyGroupOverrides(m_general, gj.at("General"), changed);
-            if (gj.contains("Log"))
+            }
+            if (gj.contains("Log")) {
                 ApplyGroupOverrides(m_log, gj.at("Log"), changed);
-            if (gj.contains("Debug"))
+            }
+            if (gj.contains("Debug")) {
                 ApplyGroupOverrides(m_debug, gj.at("Debug"), changed);
-            if (gj.contains("Input"))
+            }
+            if (gj.contains("Input")) {
                 ApplyGroupOverrides(m_input, gj.at("Input"), changed);
-            if (gj.contains("Audio"))
+            }
+            if (gj.contains("Audio")) {
                 ApplyGroupOverrides(m_audio, gj.at("Audio"), changed);
-            if (gj.contains("GPU"))
+            }
+            if (gj.contains("GPU")) {
                 ApplyGroupOverrides(m_gpu, gj.at("GPU"), changed);
-            if (gj.contains("Vulkan"))
+            }
+            if (gj.contains("Vulkan")) {
                 ApplyGroupOverrides(m_vulkan, gj.at("Vulkan"), changed);
+            }
 
             // Backwards compat for red-zone setting
             if (gj.contains("WindowsGuestRedZoneProtection") &&
@@ -440,7 +448,6 @@ bool EmulatorSettingsImpl::Load(const std::string& serial) {
                     "StaticPatching");
             }
 
-            PrintChangedSummary(changed);
             EmulatorState::GetInstance()->SetGameSpecifigConfigUsed(true);
             return true;
         }
@@ -706,8 +713,9 @@ bool EmulatorSettingsImpl::TransferSettings() {
 std::vector<std::string> EmulatorSettingsImpl::GetAllOverrideableKeys() const {
     std::vector<std::string> keys;
     auto addGroup = [&keys](const auto& fields) {
-        for (const auto& item : fields)
+        for (const auto& item : fields) {
             keys.push_back(item.key);
+        }
     };
     addGroup(m_general.GetOverrideableFields());
     addGroup(m_log.GetOverrideableFields());

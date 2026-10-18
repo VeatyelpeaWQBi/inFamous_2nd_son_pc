@@ -10,9 +10,9 @@
 #include <string>
 #include <vector>
 
-#include "common/perf_stats.h"
 #include "common/recursive_lock.h"
 #include "common/shared_first_mutex.h"
+#include "core/runtime_policy.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -44,7 +44,7 @@ class Runtime;
  * segments between its two dumps, one per counter pair.
  */
 class OcclusionQueries final : public RenderingObserver {
-public:
+  public:
     static constexpr u32 MaxCounterPairs = 16;
     static constexpr u32 MaxOpenQueries = 16;
 
@@ -78,9 +78,7 @@ public:
     /// The queries are read by the current command buffer: not reused before it completes.
     void MarkUsed(std::span<const u32> queries);
 
-    [[nodiscard]] bool HasOpen() const noexcept {
-        return !open.empty();
-    }
+    [[nodiscard]] bool HasOpen() const noexcept { return !open.empty(); }
 
     /// Whether a counted query begun at this address is open.
     [[nodiscard]] bool IsOpen(VAddr address) const noexcept {
@@ -88,15 +86,11 @@ public:
                            [address](const OpenQuery& q) { return q.address == address; });
     }
 
-    [[nodiscard]] u32 NumOpen() const noexcept {
-        return static_cast<u32>(open.size());
-    }
+    [[nodiscard]] u32 NumOpen() const noexcept { return static_cast<u32>(open.size()); }
 
-    [[nodiscard]] vk::QueryPool Pool() const noexcept {
-        return *pool;
-    }
+    [[nodiscard]] vk::QueryPool Pool() const noexcept { return *pool; }
 
-private:
+  private:
     struct OpenQuery {
         VAddr address;
         u32 max_segments;  ///< Counter pairs of the query: one segment each.
@@ -139,26 +133,18 @@ enum class OcclusionDumpResult {
 };
 
 class Rasterizer {
-public:
+  public:
     explicit Rasterizer(const Instance& instance, Scheduler& scheduler, Runtime& runtime,
                         AmdGpu::Liverpool* liverpool);
     ~Rasterizer();
 
-    [[nodiscard]] Scheduler& GetScheduler() noexcept {
-        return scheduler;
-    }
+    [[nodiscard]] Scheduler& GetScheduler() noexcept { return scheduler; }
 
-    [[nodiscard]] Runtime& GetRuntime() noexcept {
-        return runtime;
-    }
+    [[nodiscard]] Runtime& GetRuntime() noexcept { return runtime; }
 
-    [[nodiscard]] VideoCore::BufferCache& GetBufferCache() noexcept {
-        return buffer_cache;
-    }
+    [[nodiscard]] VideoCore::BufferCache& GetBufferCache() noexcept { return buffer_cache; }
 
-    [[nodiscard]] VideoCore::TextureCache& GetTextureCache() noexcept {
-        return texture_cache;
-    }
+    [[nodiscard]] VideoCore::TextureCache& GetTextureCache() noexcept { return texture_cache; }
 
     void Draw(bool is_indexed, u32 index_offset = 0);
     void DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u32 size, u32 max_count,
@@ -169,29 +155,11 @@ public:
 
     /// The command processor translates the commands of one of the guest's asynchronous compute
     /// queues (asc_queue: their dispatches, copies and fills run on the compute queue).
-    void SetAsyncCompute(bool active) noexcept {
-        async_compute_translation = active;
-    }
+    void SetAsyncCompute(bool active) noexcept { async_compute_translation = active; }
 
     /// asc_queue: submits the work recorded on the compute queue (at the fences of the compute
     /// queues and the end of their submissions).
     void FlushComputeQueue();
-
-    void ScopeMarker(fmt::string_view fmt, fmt::format_args args, auto&& func) {
-        if (host_markers_enabled) {
-            ScopeMarkerBegin(fmt::vformat(fmt, args));
-            func();
-            ScopeMarkerEnd();
-        } else {
-            func();
-        }
-    }
-
-    void ScopeMarkerBegin(const std::string_view& str, bool from_guest = false);
-    void ScopeMarkerEnd(bool from_guest = false);
-    void ScopedMarkerInsert(const std::string_view& str, bool from_guest = false);
-    void ScopedMarkerInsertColor(const std::string_view& str, const u32 color,
-                                 bool from_guest = false);
 
     void FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds);
     void CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, bool src_gds);
@@ -206,20 +174,13 @@ public:
     [[nodiscard]] bool IsCountedOcclusionResult(VAddr address, std::optional<u32>& value) const;
 
     /// Frame x-ray (Tuning::dump_frames): whether the commands of this guest frame are logged.
-    [[nodiscard]] bool IsDumping() const noexcept;
     /// Logs one event of the dumped frames (guest markers...).
-    void DumpNote(std::string_view kind, std::string_view text);
     /// Frame x-ray: records what the GPU reads in `size` bytes (at most 32) of `buffer` at
     /// `offset`, the copy of guest address `address`, to log it with the guest memory content
     /// when the dump ends (null buffer: guest memory only).
-    void ProbeBuffer(std::string_view what, const VideoCore::Buffer* buffer, u64 offset, u32 size,
-                     VAddr address);
     /// The same for the GPU copy (arena) of guest memory, when resident.
-    void ProbeMemory(std::string_view what, VAddr address, u32 size);
     /// Waits for the GPU and logs the probes of the dump.
-    void FinishProbes();
     /// Frame x-ray: after a draw or dispatch, the image dumps Tuning::dump_after asks for.
-    void DumpAfter(const Pipeline* pipeline);
     u32 ReadDataFromGds(u32 gsd_offset);
     bool InvalidateMemory(VAddr addr, u64 size, bool assume_locks = false);
     /// The command processor wrote guest memory directly (see BufferCache::OnGpuThreadWrite).
@@ -237,12 +198,9 @@ public:
     void OnFence();
     void RetireReadbacks();
 
-    PipelineCache& GetPipelineCache() {
-        return pipeline_cache;
-    }
+    PipelineCache& GetPipelineCache() { return pipeline_cache; }
 
-    template <typename Func>
-    void ForEachMappedRangeInRange(VAddr addr, u64 size, Func&& func) {
+    template <typename Func> void ForEachMappedRangeInRange(VAddr addr, u64 size, Func&& func) {
         const auto range = decltype(mapped_ranges)::interval_type::right_open(addr, addr + size);
         Common::RecursiveSharedLock lock{mapped_ranges_mutex};
         for (const auto& mapped_range : (mapped_ranges & range)) {
@@ -255,7 +213,7 @@ public:
     u32 GetGpuCommandProcessorThreadId();
 #endif
 
-private:
+  private:
     void PrepareRenderState(const GraphicsPipeline* pipeline);
     RenderState BeginRendering(const GraphicsPipeline* pipeline);
     void Resolve();
@@ -271,8 +229,6 @@ private:
 
     bool FilterDraw();
 
-    void TraceShaderResources(const Shader::Info& stage);
-    void TraceBufferWriters(const Shader::Info& stage);
     void BindBuffers(const Shader::Info& stage, Shader::Backend::Bindings& binding,
                      Shader::PushData& push_data);
     /// Finish immutable table uploads after vertex/index preparation, immediately before
@@ -290,7 +246,6 @@ private:
 
     /// Logs a draw or dispatch of the dumped frames: shaders and their buffers and images, render
     /// targets, blending and depth state.
-    void DumpCommand(std::string_view kind, const Pipeline* pipeline, std::string_view params);
 
     /// Work skipped while its pipeline compiles leaves the buffers it would write stale. Indirect
     /// arguments read from them could be garbage, so indirect draws and dispatches reading them
@@ -308,7 +263,7 @@ private:
     bool IsComputeImageCopy(const Pipeline* pipeline);
     bool IsComputeImageClear(const Pipeline* pipeline);
 
-private:
+  private:
     friend class VideoCore::BufferCache;
 
     /// asc_queue: whether the compute queue can run this dispatch (buffers only, push
@@ -317,19 +272,18 @@ private:
     /// asc_queue: whether a copy or fill of the compute queue being translated runs there.
     [[nodiscard]] bool UseComputeQueueForCopy() const noexcept {
         return async_compute_translation && compute_scheduler != nullptr &&
-               Common::Perf::GetTuning().asc_queue.load(std::memory_order_relaxed);
+               Core::Runtime::GetPolicy().asc_queue;
     }
     /// asc_queue: records the dispatch, copy or fill in scope on the compute queue when told
     /// to (the buffer cache binds, uploads and tracks the dependencies for that queue).
     class ComputeQueueScope {
-    public:
+      public:
         ComputeQueueScope(Rasterizer& rasterizer_, bool compute) : rasterizer{rasterizer_} {
             if (compute) {
                 rasterizer.on_compute_queue = true;
                 rasterizer.active_runtime = rasterizer.compute_runtime.get();
                 rasterizer.active_scheduler = rasterizer.compute_scheduler.get();
                 rasterizer.buffer_cache.SetQueue(&rasterizer.compute_context);
-                Common::Perf::Add(Common::Perf::AscQueueDispatches);
             }
         }
         ~ComputeQueueScope() {
@@ -341,17 +295,13 @@ private:
             }
         }
 
-    private:
+      private:
         Rasterizer& rasterizer;
     };
     /// asc_queue: the runtime of the queue the current dispatch, copy or fill is recorded on.
-    [[nodiscard]] Runtime& Rt() noexcept {
-        return *active_runtime;
-    }
+    [[nodiscard]] Runtime& Rt() noexcept { return *active_runtime; }
     /// asc_queue: the scheduler of that queue.
-    [[nodiscard]] Scheduler& Sched() noexcept {
-        return *active_scheduler;
-    }
+    [[nodiscard]] Scheduler& Sched() noexcept { return *active_scheduler; }
 
     const Instance& instance;
     Scheduler& scheduler;
@@ -373,34 +323,10 @@ private:
     boost::icl::interval_set<VAddr> mapped_ranges;
     Common::SharedFirstMutex mapped_ranges_mutex;
     PipelineCache pipeline_cache;
-    const bool host_markers_enabled;
-    const bool guest_markers_enabled;
 
-    struct Probe {
-        u32 frame;
-        u32 seq;
-        std::string what;
-        VAddr address;
-        u32 size;
-        u32 offset; ///< In the probe staging buffer.
-        bool gpu;
-        std::array<u32, 8> host;
-        std::string state;
-    };
-    std::vector<Probe> probes;
-    StagingBufferRef probe_staging{};
-    u32 probe_used{};
     /// Frame x-ray: the vertex buffer ranges bound by the last draw (dump_after "hash:vb").
-    struct BoundVertexRange {
-        VAddr base;
-        u64 size;
-        const VideoCore::Buffer* buffer;
-        u64 offset;
-    };
-    boost::container::static_vector<BoundVertexRange, 32> dump_vertex_ranges;
+
     /// Writes the GPU and guest copies of a range to the x-ray folder (waits for the GPU).
-    void DumpBufferToFile(std::string_view name, const VideoCore::Buffer* buffer, u64 offset,
-                          VAddr address, u64 size);
 
     using RenderTargetInfo = std::pair<VideoCore::ImageId, VideoCore::TextureCache::ImageDesc>;
     std::array<RenderTargetInfo, AmdGpu::NUM_COLOR_BUFFERS> cb_descs;

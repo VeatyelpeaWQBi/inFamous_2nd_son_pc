@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <thread>
 #include <boost/asio/io_context.hpp>
+#include <thread>
 
 #include "common/assert.h"
 #include "common/debug.h"
@@ -34,11 +34,11 @@
 #else
 #include <uuid/uuid.h>
 #endif
+#include "aio.h"
 #include <common/singleton.h>
 #include <core/libraries/network/net_error.h>
 #include <core/libraries/network/sockets.h>
 #include <core/linker.h>
-#include "aio.h"
 
 namespace Libraries::Kernel {
 
@@ -80,23 +80,15 @@ static void KernelServiceThread(std::stop_token stoken) {
     }
 }
 
-static PS4_SYSV_ABI void stack_chk_fail() {
-    UNREACHABLE();
-}
+static PS4_SYSV_ABI void stack_chk_fail() { UNREACHABLE(); }
 
 static thread_local s32 g_posix_errno = 0;
 
-s32* PS4_SYSV_ABI __Error() {
-    return &g_posix_errno;
-}
+s32* PS4_SYSV_ABI __Error() { return &g_posix_errno; }
 
-void ErrSceToPosix(s32 error) {
-    g_posix_errno = error - ORBIS_KERNEL_ERROR_UNKNOWN;
-}
+void ErrSceToPosix(s32 error) { g_posix_errno = error - ORBIS_KERNEL_ERROR_UNKNOWN; }
 
-s32 ErrnoToSceKernelError(s32 error) {
-    return error + ORBIS_KERNEL_ERROR_UNKNOWN;
-}
+s32 ErrnoToSceKernelError(s32 error) { return error + ORBIS_KERNEL_ERROR_UNKNOWN; }
 
 s32 PS4_SYSV_ABI sceKernelError(s32 posix_error) {
     if (posix_error == 0) {
@@ -152,9 +144,7 @@ s32 NativeToPosixErrno(s32 const e) {
     }
 }
 
-void SetPosixErrno(s32 e) {
-    g_posix_errno = NativeToPosixErrno(e);
-}
+void SetPosixErrno(s32 e) { g_posix_errno = NativeToPosixErrno(e); }
 
 struct OrbisKernelUuid {
     u32 timeLow;
@@ -187,7 +177,6 @@ s32 PS4_SYSV_ABI kernel_ioctl(s32 fd, u64 cmd, VA_ARGS) {
     auto* h = Common::Singleton<Core::FileSys::HandleTable>::Instance();
     auto* file = h->GetFile(fd);
     if (file == nullptr) {
-        LOG_INFO(Lib_Kernel, "ioctl: fd = {:X} cmd = {:X} file == nullptr", fd, cmd);
         g_posix_errno = POSIX_EBADF;
         return -1;
     }
@@ -198,7 +187,6 @@ s32 PS4_SYSV_ABI kernel_ioctl(s32 fd, u64 cmd, VA_ARGS) {
     }
     VA_CTX(ctx);
     s32 result = file->device->ioctl(cmd, &ctx);
-    LOG_TRACE(Lib_Kernel, "ioctl: fd = {:X} cmd = {:X} result = {}", fd, cmd, result);
     if (result < 0) {
         ErrSceToPosix(result);
         return -1;
@@ -211,23 +199,17 @@ const char* PS4_SYSV_ABI sceKernelGetFsSandboxRandomWord() {
     return path;
 }
 
-s32 PS4_SYSV_ABI _sigprocmask() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI _sigprocmask() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI posix_getpagesize() {
-    return 16_KB;
-}
+s32 PS4_SYSV_ABI posix_getpagesize() { return 16_KB; }
 
 // stubbed on non-devkit consoles
 s32 PS4_SYSV_ABI sceKernelGetGPI() {
-    LOG_DEBUG(Kernel, "called");
     return ORBIS_OK;
 }
 
 // stubbed on non-devkit consoles
 s32 PS4_SYSV_ABI sceKernelSetGPO() {
-    LOG_DEBUG(Kernel, "called");
     return ORBIS_OK;
 }
 
@@ -237,7 +219,6 @@ s32 PS4_SYSV_ABI sceKernelGetAllowedSdkVersionOnSystem(s32* ver) {
     }
     // Returns the highest game SDK version this PS4 allows.
     *ver = CURRENT_FIRMWARE_VERSION | 0xfff;
-    LOG_INFO(Lib_Kernel, "called, returned sw version: {}", *ver);
     return ORBIS_OK;
 }
 
@@ -249,17 +230,12 @@ s32 PS4_SYSV_ABI sceKernelGetSystemSwVersion(SwVersionStruct* ret) {
     ret->hex_representation = fake_fw;
     std::snprintf(ret->text_representation, 28, "%2x.%03x.%03x", fake_fw >> 0x18,
                   fake_fw >> 0xc & 0xfff, fake_fw & 0xfff);
-    LOG_INFO(Lib_Kernel, "called, returned sw version: {}", ret->text_representation);
     return ORBIS_OK;
 }
 
-s32 PS4_SYSV_ABI getargc() {
-    return entry_params.argc;
-}
+s32 PS4_SYSV_ABI getargc() { return entry_params.argc; }
 
-const char** PS4_SYSV_ABI getargv() {
-    return entry_params.argv;
-}
+const char** PS4_SYSV_ABI getargv() { return entry_params.argv; }
 
 s32 PS4_SYSV_ABI get_authinfo(s32 pid, AuthInfoData* p2) {
     LOG_WARNING(Lib_Kernel, "(STUBBED) called, pid: {}", pid);
@@ -311,7 +287,6 @@ s32 PS4_SYSV_ABI sceKernelTitleWorkaroundIsEnabled(OrbisKernelTitleWorkaround* t
 }
 
 s32 PS4_SYSV_ABI sceKernelGetProcessType(s32 pid) {
-    LOG_DEBUG(Lib_Kernel, "called, pid: {}", pid);
     if (pid != GLOBAL_PID && pid != -1 && pid != 0) {
         return ORBIS_KERNEL_ERROR_ESRCH;
     }

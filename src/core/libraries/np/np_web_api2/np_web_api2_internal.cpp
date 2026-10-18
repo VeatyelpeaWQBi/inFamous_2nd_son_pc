@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/np/np_web_api2/np_web_api2_internal.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/kernel/time.h"
@@ -8,7 +9,6 @@
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_types.h"
 #include "core/libraries/np/np_web_api2/np_web_api2_context.h"
-#include "core/libraries/np/np_web_api2/np_web_api2_internal.h"
 #include "core/libraries/system/userservice.h"
 
 #include <map>
@@ -664,7 +664,6 @@ s32 sendRequest(s64 request_id, s32 part_index, void* data, u64 data_size,
     }
 
     if (!EmulatorSettings.IsShadNetEnabled()) {
-        LOG_INFO(Lib_NpWebApi2, "Cannot send request, you are not signed in to shadNet");
         request->RemoveUser();
         user_ctx->RemoveUser();
         lib_ctx->RemoveUser();

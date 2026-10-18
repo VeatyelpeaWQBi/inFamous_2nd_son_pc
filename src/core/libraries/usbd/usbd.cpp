@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "usbd.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
-#include "usbd.h"
 
 #include <fmt/format.h>
 #include <libusb.h>
@@ -14,8 +14,9 @@
 namespace Libraries::Usbd {
 
 s32 libusb_to_orbis_error(int retVal) {
-    if (retVal == LIBUSB_ERROR_OTHER)
+    if (retVal == LIBUSB_ERROR_OTHER) {
         return 0x802400FF;
+    }
     if (retVal < 0) {
         LOG_ERROR(Lib_Usbd, "libusb returned: {}", libusb_error_name(retVal));
         return 0x80240000 - retVal;
@@ -27,141 +28,118 @@ s32 libusb_to_orbis_error(int retVal) {
 std::shared_ptr<UsbBackend> usb_backend;
 
 #if defined(_WIN32)
-bool s_has_removed_driver = false;
 #endif
 
 s32 PS4_SYSV_ABI sceUsbdInit() {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->Init());
 }
 
 void PS4_SYSV_ABI sceUsbdExit() {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     usb_backend->Exit();
 }
 
 s64 PS4_SYSV_ABI sceUsbdGetDeviceList(SceUsbdDevice*** list) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->GetDeviceList(list));
 }
 
 void PS4_SYSV_ABI sceUsbdFreeDeviceList(SceUsbdDevice** list, s32 unref_devices) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     usb_backend->FreeDeviceList(list, unref_devices);
 }
 
 SceUsbdDevice* PS4_SYSV_ABI sceUsbdRefDevice(SceUsbdDevice* device) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_ref_device(device);
 }
 
 void PS4_SYSV_ABI sceUsbdUnrefDevice(SceUsbdDevice* device) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     libusb_unref_device(device);
 }
 
 s32 PS4_SYSV_ABI sceUsbdGetConfiguration(SceUsbdDeviceHandle* dev_handle, s32* config) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->GetConfiguration(dev_handle, config));
 }
 
 s32 PS4_SYSV_ABI sceUsbdGetDeviceDescriptor(SceUsbdDevice* device, SceUsbdDeviceDescriptor* desc) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->GetDeviceDescriptor(device, desc));
 }
 
 s32 PS4_SYSV_ABI sceUsbdGetActiveConfigDescriptor(SceUsbdDevice* device,
                                                   SceUsbdConfigDescriptor** config) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->GetActiveConfigDescriptor(device, config));
 }
 
 s32 PS4_SYSV_ABI sceUsbdGetConfigDescriptor(SceUsbdDevice* device, u8 config_index,
                                             SceUsbdConfigDescriptor** config) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->GetConfigDescriptor(device, config_index, config));
 }
 
 s32 PS4_SYSV_ABI sceUsbdGetConfigDescriptorByValue(SceUsbdDevice* device, u8 bConfigurationValue,
                                                    SceUsbdConfigDescriptor** config) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(
         libusb_get_config_descriptor_by_value(device, bConfigurationValue, config));
 }
 
 void PS4_SYSV_ABI sceUsbdFreeConfigDescriptor(SceUsbdConfigDescriptor* config) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     usb_backend->FreeConfigDescriptor(config);
 }
 
 u8 PS4_SYSV_ABI sceUsbdGetBusNumber(SceUsbdDevice* device) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return usb_backend->GetBusNumber(device);
 }
 
 u8 PS4_SYSV_ABI sceUsbdGetDeviceAddress(SceUsbdDevice* device) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return usb_backend->GetDeviceAddress(device);
 }
 
 SceUsbdSpeed PS4_SYSV_ABI sceUsbdGetDeviceSpeed(SceUsbdDevice* device) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return static_cast<SceUsbdSpeed>(libusb_get_device_speed(device));
 }
 
 s32 PS4_SYSV_ABI sceUsbdGetMaxPacketSize(SceUsbdDevice* device, u8 endpoint) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->GetMaxPacketSize(device, endpoint));
 }
 
 s32 PS4_SYSV_ABI sceUsbdGetMaxIsoPacketSize(SceUsbdDevice* device, u8 endpoint) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(libusb_get_max_iso_packet_size(device, endpoint));
 }
 
 s32 PS4_SYSV_ABI sceUsbdOpen(SceUsbdDevice* device, SceUsbdDeviceHandle** dev_handle) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->OpenDevice(device, dev_handle));
 }
 
 void PS4_SYSV_ABI sceUsbdClose(SceUsbdDeviceHandle* dev_handle) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     usb_backend->CloseDevice(dev_handle);
 }
 
 SceUsbdDevice* PS4_SYSV_ABI sceUsbdGetDevice(SceUsbdDeviceHandle* dev_handle) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return usb_backend->GetDevice(dev_handle);
 }
 
 s32 PS4_SYSV_ABI sceUsbdSetConfiguration(SceUsbdDeviceHandle* dev_handle, s32 config) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->SetConfiguration(dev_handle, config));
 }
 
 s32 PS4_SYSV_ABI sceUsbdClaimInterface(SceUsbdDeviceHandle* dev_handle, s32 interface_number) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     if (sceUsbdKernelDriverActive(dev_handle, interface_number)) {
         sceUsbdDetachKernelDriver(dev_handle, interface_number);
@@ -171,94 +149,79 @@ s32 PS4_SYSV_ABI sceUsbdClaimInterface(SceUsbdDeviceHandle* dev_handle, s32 inte
 }
 
 s32 PS4_SYSV_ABI sceUsbdReleaseInterface(SceUsbdDeviceHandle* dev_handle, s32 interface_number) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(libusb_release_interface(dev_handle, interface_number));
 }
 
 SceUsbdDeviceHandle* PS4_SYSV_ABI sceUsbdOpenDeviceWithVidPid(u16 vendor_id, u16 product_id) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return usb_backend->OpenDeviceWithVidPid(vendor_id, product_id);
 }
 
 s32 PS4_SYSV_ABI sceUsbdSetInterfaceAltSetting(SceUsbdDeviceHandle* dev_handle,
                                                int interface_number, int alternate_setting) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(
         libusb_set_interface_alt_setting(dev_handle, interface_number, alternate_setting));
 }
 
 s32 PS4_SYSV_ABI sceUsbdClearHalt(SceUsbdDeviceHandle* dev_handle, uint8_t endpoint) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(libusb_clear_halt(dev_handle, endpoint));
 }
 
 s32 PS4_SYSV_ABI sceUsbdResetDevice(SceUsbdDeviceHandle* dev_handle) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->ResetDevice(dev_handle));
 }
 
 s32 PS4_SYSV_ABI sceUsbdKernelDriverActive(SceUsbdDeviceHandle* dev_handle, int interface_number) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->KernelDriverActive(dev_handle, interface_number));
 }
 
 s32 PS4_SYSV_ABI sceUsbdDetachKernelDriver(SceUsbdDeviceHandle* dev_handle, int interface_number) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->DetachKernelDriver(dev_handle, interface_number));
 }
 
 s32 PS4_SYSV_ABI sceUsbdAttachKernelDriver(SceUsbdDeviceHandle* dev_handle, int interface_number) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->AttachKernelDriver(dev_handle, interface_number));
 }
 
 u8* PS4_SYSV_ABI sceUsbdControlTransferGetData(SceUsbdTransfer* transfer) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_control_transfer_get_data(transfer);
 }
 
 SceUsbdControlSetup* PS4_SYSV_ABI sceUsbdControlTransferGetSetup(SceUsbdTransfer* transfer) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_control_transfer_get_setup(transfer);
 }
 
 void PS4_SYSV_ABI sceUsbdFillControlSetup(u8* buf, u8 bmRequestType, u8 bRequest, u16 wValue,
                                           u16 wIndex, u16 wLength) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_fill_control_setup(buf, bmRequestType, bRequest, wValue, wIndex, wLength);
 }
 
 SceUsbdTransfer* PS4_SYSV_ABI sceUsbdAllocTransfer(int iso_packets) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_alloc_transfer(iso_packets);
 }
 
 s32 PS4_SYSV_ABI sceUsbdSubmitTransfer(SceUsbdTransfer* transfer) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->SubmitTransfer(transfer));
 }
 
 s32 PS4_SYSV_ABI sceUsbdCancelTransfer(SceUsbdTransfer* transfer) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(libusb_cancel_transfer(transfer));
 }
 
 void PS4_SYSV_ABI sceUsbdFreeTransfer(SceUsbdTransfer* transfer) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     libusb_free_transfer(transfer);
 }
@@ -267,7 +230,6 @@ void PS4_SYSV_ABI sceUsbdFillControlTransfer(SceUsbdTransfer* transfer,
                                              SceUsbdDeviceHandle* dev_handle, u8* buffer,
                                              SceUsbdTransferCallback callback, void* user_data,
                                              u32 timeout) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     libusb_fill_control_transfer(transfer, dev_handle, buffer, callback, user_data, timeout);
 }
@@ -276,7 +238,6 @@ void PS4_SYSV_ABI sceUsbdFillBulkTransfer(SceUsbdTransfer* transfer,
                                           SceUsbdDeviceHandle* dev_handle, uint8_t endpoint,
                                           u8* buffer, s32 length, SceUsbdTransferCallback callback,
                                           void* user_data, u32 timeout) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     libusb_fill_bulk_transfer(transfer, dev_handle, endpoint, buffer, length, callback, user_data,
                               timeout);
@@ -287,7 +248,6 @@ void PS4_SYSV_ABI sceUsbdFillInterruptTransfer(SceUsbdTransfer* transfer,
                                                u8* buffer, s32 length,
                                                SceUsbdTransferCallback callback, void* user_data,
                                                u32 timeout) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     libusb_fill_interrupt_transfer(transfer, dev_handle, endpoint, buffer, length, callback,
                                    user_data, timeout);
@@ -297,20 +257,17 @@ void PS4_SYSV_ABI sceUsbdFillIsoTransfer(SceUsbdTransfer* transfer, SceUsbdDevic
                                          uint8_t endpoint, u8* buffer, s32 length,
                                          s32 num_iso_packets, SceUsbdTransferCallback callback,
                                          void* user_data, u32 timeout) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     libusb_fill_iso_transfer(transfer, dev_handle, endpoint, buffer, length, num_iso_packets,
                              callback, user_data, timeout);
 }
 
 void PS4_SYSV_ABI sceUsbdSetIsoPacketLengths(SceUsbdTransfer* transfer, u32 length) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     libusb_set_iso_packet_lengths(transfer, length);
 }
 
 u8* PS4_SYSV_ABI sceUsbdGetIsoPacketBuffer(SceUsbdTransfer* transfer, u32 packet) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_get_iso_packet_buffer(transfer, packet);
 }
@@ -318,7 +275,6 @@ u8* PS4_SYSV_ABI sceUsbdGetIsoPacketBuffer(SceUsbdTransfer* transfer, u32 packet
 s32 PS4_SYSV_ABI sceUsbdControlTransfer(SceUsbdDeviceHandle* dev_handle, u8 request_type,
                                         u8 bRequest, u16 wValue, u16 wIndex, u8* data, s32 wLength,
                                         u32 timeout) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->ControlTransfer(
         dev_handle, request_type, bRequest, wValue, wIndex, data, wLength, timeout));
@@ -326,7 +282,6 @@ s32 PS4_SYSV_ABI sceUsbdControlTransfer(SceUsbdDeviceHandle* dev_handle, u8 requ
 
 s32 PS4_SYSV_ABI sceUsbdBulkTransfer(SceUsbdDeviceHandle* dev_handle, u8 endpoint, u8* data,
                                      s32 length, s32* actual_length, u32 timeout) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(
         libusb_bulk_transfer(dev_handle, endpoint, data, length, actual_length, timeout));
@@ -334,7 +289,6 @@ s32 PS4_SYSV_ABI sceUsbdBulkTransfer(SceUsbdDeviceHandle* dev_handle, u8 endpoin
 
 s32 PS4_SYSV_ABI sceUsbdInterruptTransfer(SceUsbdDeviceHandle* dev_handle, u8 endpoint, u8* data,
                                           s32 length, s32* actual_length, u32 timeout) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(
         libusb_interrupt_transfer(dev_handle, endpoint, data, length, actual_length, timeout));
@@ -342,7 +296,6 @@ s32 PS4_SYSV_ABI sceUsbdInterruptTransfer(SceUsbdDeviceHandle* dev_handle, u8 en
 
 s32 PS4_SYSV_ABI sceUsbdGetDescriptor(SceUsbdDeviceHandle* dev_handle, u8 descType, u8 descIndex,
                                       u8* data, s32 length) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(
         libusb_get_descriptor(dev_handle, descType, descIndex, data, length));
@@ -350,7 +303,6 @@ s32 PS4_SYSV_ABI sceUsbdGetDescriptor(SceUsbdDeviceHandle* dev_handle, u8 descTy
 
 s32 PS4_SYSV_ABI sceUsbdGetStringDescriptor(SceUsbdDeviceHandle* dev_handle, u8 desc_index,
                                             u16 langid, u8* data, s32 length) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(
         libusb_get_string_descriptor(dev_handle, desc_index, langid, data, length));
@@ -358,80 +310,67 @@ s32 PS4_SYSV_ABI sceUsbdGetStringDescriptor(SceUsbdDeviceHandle* dev_handle, u8 
 
 s32 PS4_SYSV_ABI sceUsbdGetStringDescriptorAscii(SceUsbdDeviceHandle* dev_handle, u8 desc_index,
                                                  u8* data, s32 length) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(
         libusb_get_string_descriptor_ascii(dev_handle, desc_index, data, length));
 }
 
 s32 PS4_SYSV_ABI sceUsbdTryLockEvents() {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return usb_backend->TryLockEvents();
 }
 
 void PS4_SYSV_ABI sceUsbdLockEvents() {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     usb_backend->LockEvents();
 }
 
 void PS4_SYSV_ABI sceUsbdUnlockEvents() {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     usb_backend->UnlockEvents();
 }
 
 s32 PS4_SYSV_ABI sceUsbdEventHandlingOk() {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return usb_backend->EventHandlingOk();
 }
 
 s32 PS4_SYSV_ABI sceUsbdEventHandlerActive() {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return usb_backend->EventHandlerActive();
 }
 
 void PS4_SYSV_ABI sceUsbdLockEventWaiters() {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     usb_backend->LockEventWaiters();
 }
 
 void PS4_SYSV_ABI sceUsbdUnlockEventWaiters() {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     usb_backend->UnlockEventWaiters();
 }
 
 s32 PS4_SYSV_ABI sceUsbdWaitForEvent(timeval* tv) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->WaitForEvent(tv));
 }
 
 s32 PS4_SYSV_ABI sceUsbdHandleEventsTimeout(timeval* tv) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->HandleEventsTimeout(tv));
 }
 
 s32 PS4_SYSV_ABI sceUsbdHandleEvents() {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->HandleEvents());
 }
 
 s32 PS4_SYSV_ABI sceUsbdHandleEventsLocked(timeval* tv) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->HandleEventsTimeout(tv));
 }
 
 s32 PS4_SYSV_ABI sceUsbdCheckConnected(SceUsbdDeviceHandle* dev_handle) {
-    LOG_DEBUG(Lib_Usbd, "called");
 
     return libusb_to_orbis_error(usb_backend->CheckConnected(dev_handle));
 }

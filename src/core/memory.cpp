@@ -18,7 +18,6 @@
 namespace Core {
 
 MemoryManager::MemoryManager() {
-    LOG_INFO(Kernel_Vmm, "Virtual memory space initialized with regions:");
 
     // Construct vma_map using the regions reserved by the address space
     auto regions = impl.GetUsableRegions();
@@ -26,7 +25,6 @@ MemoryManager::MemoryManager() {
     for (auto region : regions) {
         vma_map.emplace(region.lower(),
                         VirtualMemoryArea{region.lower(), region.upper() - region.lower()});
-        LOG_INFO(Kernel_Vmm, "{:#x} - {:#x}", region.lower(), region.upper());
     }
 
     // Pre-initialize direct backing
@@ -97,8 +95,6 @@ void MemoryManager::SetupMemoryRegions(u64 flexible_size, bool use_extended_mem1
                "Unable to shrink dmem map");
     last_dmem_area->second.size -= (old_direct_size - total_direct_size);
 
-    LOG_INFO(Kernel_Vmm, "Configured memory regions: flexible size = {:#x}, direct size = {:#x}",
-             total_flexible_size, total_direct_size);
 }
 
 u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
@@ -124,10 +120,7 @@ u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
     }
     clamped_size = std::min(clamped_size, size);
 
-    if (size != clamped_size) {
-        LOG_DEBUG(Kernel_Vmm, "Clamped requested buffer range addr={:#x}, size={:#x} to {:#x}",
-                  virtual_addr, size, clamped_size);
-    }
+
     return clamped_size;
 }
 
@@ -395,7 +388,6 @@ s32 MemoryManager::Free(PAddr phys_addr, u64 size, bool is_checked) {
     std::scoped_lock lk2{mutex};
 
     for (const auto& [addr, size] : remove_list) {
-        LOG_INFO(Kernel_Vmm, "Unmapping direct mapping {:#x} with size {:#x}", addr, size);
         UnmapMemoryImpl(addr, size);
     }
 

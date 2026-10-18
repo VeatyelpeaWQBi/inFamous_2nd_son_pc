@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 #include "common/assert.h"
 #include "common/div_ceil.h"
-#include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
 #include "shader_recompiler/ir/attribute.h"
 #include "shader_recompiler/ir/microinstruction.h"
@@ -1288,11 +1288,9 @@ void EmitContext::DefineFunctions() {
     }
 
     if (True(info.readconst_types & Info::ReadConstType::Immediate)) {
-        LOG_DEBUG(Render_Recompiler, "Shader {:#x} uses immediate ReadConst", info.pgm_hash);
         read_const = DefineReadConst(false);
     }
     if (True(info.readconst_types & Info::ReadConstType::Dynamic)) {
-        LOG_DEBUG(Render_Recompiler, "Shader {:#x} uses dynamic ReadConst", info.pgm_hash);
         read_const_dynamic = DefineReadConst(true);
     }
 }

@@ -34,9 +34,7 @@ static u32 BinaryVersionFor(const Shader::Info& info) {
 
 namespace Vulkan {
 
-void SetComputeShaderVariant(u32 variant) {
-    Serialization::compute_shader_variant = variant;
-}
+void SetComputeShaderVariant(u32 variant) { Serialization::compute_shader_variant = variant; }
 
 void RegisterPipelineData(const ComputePipelineKey& key,
                           ComputePipeline::SerializationSupport& sdata) {
@@ -134,7 +132,8 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     info.Deserialize(ar);
     if (perm_hash_ar != HashCombine(info.pgm_hash, u64{perm_idx}) ||
         (info.hw_stage == Shader::HwStage::Compute &&
-         (info.sw_stage != Shader::SwStage::Compute || spec.start != Shader::Backend::Bindings{}))) {
+         (info.sw_stage != Shader::SwStage::Compute ||
+          spec.start != Shader::Backend::Bindings{}))) {
         return false;
     }
     // Compiled with another recompiler variant: compiled again.
@@ -163,8 +162,9 @@ bool ComputePipeline::SerializationSupport::Deserialize(Serialization::Archive& 
 }
 
 bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
-    if (ar.Remaining() < sizeof(ComputePipelineKey))
+    if (ar.Remaining() < sizeof(ComputePipelineKey)) {
         return false;
+    }
     compute_key.Deserialize(ar);
 
     ComputePipeline::SerializationSupport sdata{};
@@ -189,15 +189,19 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
 
 bool PipelineCache::PrewarmComputePipeline(const ComputePipelineKey& key) {
     if (!infos[0] || !modules[0] || infos[0]->hw_stage != Shader::HwStage::Compute ||
-        infos[0]->sw_stage != Shader::SwStage::Compute)
+        infos[0]->sw_stage != Shader::SwStage::Compute) {
         return false;
+    }
     const auto* spec = prewarmed_specs[0];
     if (!spec || spec->info != infos[0] || spec->images.size() != infos[0]->images.size() ||
         spec->buffers.size() != infos[0]->buffers.size() ||
-        spec->buffers.size() + spec->images.size() > Shader::StageSpecialization::MaxStageResources)
+        spec->buffers.size() + spec->images.size() >
+            Shader::StageSpecialization::MaxStageResources) {
         return false;
-    if (compute_pipelines.contains(key))
+    }
+    if (compute_pipelines.contains(key)) {
         return true;
+    }
     std::vector<u32> image_bindings;
     image_bindings.reserve(spec->images.size());
     for (size_t index = 0; index < spec->images.size(); ++index) {
@@ -206,22 +210,25 @@ bool PipelineCache::PrewarmComputePipeline(const ComputePipelineKey& key) {
                               : 1; // Null descriptors still occupy one binding.
         if (count == 0 || count > 16 ||
             (infos[0]->images[index].mip_fallback_mode !=
-                 Shader::MipStorageFallbackMode::DynamicIndex && count != 1))
+                 Shader::MipStorageFallbackMode::DynamicIndex &&
+             count != 1)) {
             return false;
+        }
         image_bindings.push_back(count);
     }
-    if (!CanPrewarm(64_KB))
+    if (!CanPrewarm(64_KB)) {
         return false;
+    }
     const auto [it, is_new] = compute_pipelines.try_emplace(key);
-    if (!is_new)
+    if (!is_new) {
         return true;
+    }
 
     ComputePipeline::SerializationSupport sdata{}; // Compute keys have no extra layout state.
     try {
-        it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
-                                                       driver_cache->Handle(), key,
-                                                       *infos[0], modules[0], sdata, true, true,
-                                                       image_bindings);
+        it.value() = std::make_unique<ComputePipeline>(
+            instance, scheduler, desc_heap, profile, driver_cache->Handle(), key, *infos[0],
+            modules[0], sdata, true, true, image_bindings);
     } catch (...) {
         compute_pipelines.erase(it); // Never leave a null cache entry after a failed restore.
         throw;
@@ -268,18 +275,21 @@ bool GraphicsPipeline::SerializationSupport::Deserialize(Serialization::Archive&
     sdata.Read(multisampling);
     sdata.Read(tcs);
     sdata.Read(tes);
-    if (!ar.IsEoS())
+    if (!ar.IsEoS()) {
         sdata.Read(fragment); // Import version-3 graphics records too.
+    }
     return true;
 }
 
 bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar, bool legacy_record) {
     graphics_key.Deserialize(ar);
-    if (graphics_key.num_color_attachments > AmdGpu::NUM_COLOR_BUFFERS)
+    if (graphics_key.num_color_attachments > AmdGpu::NUM_COLOR_BUFFERS) {
         return false;
+    }
     if (legacy_record && profile.needs_clip_distance_emulation &&
-        !graphics_key.stage_hashes[u32(Shader::SwStage::Fragment)])
+        !graphics_key.stage_hashes[u32(Shader::SwStage::Fragment)]) {
         return false; // Version 3 did not save the required auxiliary fragment shader.
+    }
 
     GraphicsPipeline::SerializationSupport sdata{};
     sdata.Deserialize(ar);
@@ -302,13 +312,15 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar, bool legacy
         if (!LoadPipelineStage(meta_ar, stage_idx)) {
             return false;
         }
-        if (u32(infos[stage_idx]->sw_stage) != u32(stage_idx))
+        if (u32(infos[stage_idx]->sw_stage) != u32(stage_idx)) {
             return false;
+        }
     }
 
     const auto [it, is_new] = graphics_pipelines.try_emplace(graphics_key);
-    if (!is_new)
+    if (!is_new) {
         return true;
+    }
 
     try {
         it.value() = std::make_unique<GraphicsPipeline>(
@@ -328,19 +340,22 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar, bool legacy
 }
 
 bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage,
-                                     u64* permutation_hash) {
-    if (stage >= MaxShaderStages)
+                                      u64* permutation_hash) {
+    if (stage >= MaxShaderStages) {
         return false;
+    }
     const auto select_stage = [&](Program& program, size_t index) {
         auto& module = program.modules[index];
-        if (permutation_hash)
+        if (permutation_hash) {
             *permutation_hash = HashCombine(program.info.pgm_hash, u64{index});
+        }
         infos[stage] = &program.info;
         prewarmed_specs[stage] = &module.spec;
         modules[stage] = module.module;
         runtime_infos[stage] = module.spec.runtime_info;
-        if (!module.spec.fetch_shader_data.Empty())
+        if (!module.spec.fetch_shader_data.Empty()) {
             fetch_shader = &module.spec.fetch_shader_data;
+        }
         return true;
     };
     const u64 identity = XXH3_64bits(ar.CurrPtr(), ar.Remaining());
@@ -349,23 +364,26 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage,
         const auto program = program_cache.find(cached->second.first);
         if (program != program_cache.end() &&
             cached->second.second < program->second->modules.size()) {
-            if (program->second->modules[cached->second.second].module)
+            if (program->second->modules[cached->second.second].module) {
                 return select_stage(*program->second, cached->second.second);
+            }
         }
     }
     if (!prewarm_budget.CanContinue(AvailableHostMemory(), AvailableDeviceMemory(instance),
-                                    prewarm_estimated_bytes))
+                                    prewarm_estimated_bytes)) {
         return false;
+    }
     auto program = std::make_unique<Program>();
     Shader::StageSpecialization spec{};
     spec.info = &program->info;
     size_t perm_idx{};
-    if (!LoadShaderMeta(ar, program->info, spec, perm_idx) ||
-        perm_idx > 4095 || u32(program->info.sw_stage) >= Shader::MaxStageTypes) {
+    if (!LoadShaderMeta(ar, program->info, spec, perm_idx) || perm_idx > 4095 ||
+        u32(program->info.sw_stage) >= Shader::MaxStageTypes) {
         return false;
     }
-    if (permutation_hash)
+    if (permutation_hash) {
         *permutation_hash = HashCombine(program->info.pgm_hash, u64{perm_idx});
+    }
 
     std::vector<u32> spv{};
     Storage::DataBase::Instance().Load(Storage::BlobType::ShaderBinary,
@@ -403,11 +421,13 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage,
     }
     if (!module) {
         if (!CanPrewarm(spv.size() * sizeof(u32) * 4 + ar.SizeBytes() + slot_bytes +
-                        (new_program ? sizeof(Program) : 0)))
+                        (new_program ? sizeof(Program) : 0))) {
             return false;
+        }
         module = CompileSPV(spv, instance.GetDevice());
-        if (new_program)
+        if (new_program) {
             it_pgm = program_cache.try_emplace(program->info.pgm_hash, std::move(program)).first;
+        }
     }
     it_pgm.value()->InsertPermut(module, std::move(spec), perm_idx);
     it_pgm.value()->modules[perm_idx].spec.info = &it_pgm.value()->info;
@@ -424,12 +444,10 @@ void PipelineCache::WarmUp() {
     }
 
     Storage::DataBase::Instance().Open();
-    if (!Storage::DataBase::Instance().IsOpened())
+    if (!Storage::DataBase::Instance().IsOpened()) {
         return;
+    }
     Storage::DataBase::Instance().SetWriteBudget(prewarm_budget.host_bytes / 8);
-    LOG_INFO(Render, "Prewarm budget: host {} MiB, host reserve {} MiB, GPU reserve {} MiB",
-             prewarm_budget.host_bytes / 1_MB, prewarm_budget.host_reserve / 1_MB,
-             prewarm_budget.device_reserve / 1_MB);
 
     const auto finish_preload = [this] {
         std::vector<u8> new_profile(sizeof(profile));
@@ -444,8 +462,9 @@ void PipelineCache::WarmUp() {
     Storage::DataBase::Instance().Load(Storage::BlobType::ShaderProfile, "profile", profile_data);
     Shader::Profile cached_profile{};
     const bool valid_size = profile_data.size() == sizeof(cached_profile);
-    if (valid_size)
+    if (valid_size) {
         std::memcpy(&cached_profile, profile_data.data(), sizeof(cached_profile));
+    }
     if (!valid_size || cached_profile != profile) {
         LOG_WARNING(Render, "Missing, invalid or incompatible pipeline cache profile; rebuilding");
         Storage::DataBase::Instance().Reset();
@@ -475,8 +494,9 @@ void PipelineCache::WarmUp() {
                     // A compute pipeline is fully described by this validated specialization.
                     // A session may have saved its shader but ended before saving a .key file.
                     // Build it now instead of waiting for the first in-game dispatch.
-                    if (infos[0]->hw_stage == Shader::HwStage::Compute)
+                    if (infos[0]->hw_stage == Shader::HwStage::Compute) {
                         PrewarmComputePipeline(ComputePipelineKey{permutation_hash});
+                    }
                 } else {
                     ++num_rejected_stages;
                 }
@@ -504,8 +524,9 @@ void PipelineCache::WarmUp() {
                 }
                 u32 is_compute{};
                 pldata.Read(is_compute);
-                if (is_compute > 1)
+                if (is_compute > 1) {
                     return;
+                }
 
                 bool result{};
                 if (is_compute) {
@@ -525,14 +546,6 @@ void PipelineCache::WarmUp() {
     FinishPreloaded(); // Game execution starts only after every queued warmup is ready.
     prewarmed_stages.clear();
     clear_stages();
-    LOG_INFO(Render, "Preloaded {} shader specializations; {} rejected or deferred", num_stages,
-             num_rejected_stages);
-    LOG_INFO(Render, "Preloaded {} pipelines", num_pipelines);
-    LOG_INFO(Render,
-             "Prewarmed {} compute pipelines from complete shader specializations; "
-             "{} total unique pipelines ready",
-             compute_from_stages,
-             compute_pipelines.size() + graphics_pipelines.size());
     if (num_total_pipelines > num_pipelines) {
         LOG_WARNING(Render, "{} cached pipelines rejected or deferred by the memory budget",
                     num_total_pipelines - num_pipelines);

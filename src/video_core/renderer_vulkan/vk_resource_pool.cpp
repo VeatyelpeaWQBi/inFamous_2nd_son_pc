@@ -73,7 +73,6 @@ CommandPool::CommandPool(const Instance& instance, Semaphore* work_semaphore)
     ASSERT_MSG(pool_result == vk::Result::eSuccess, "Failed to create command pool: {}",
                vk::to_string(pool_result));
     cmd_pool = std::move(pool);
-    SetObjectName(device, *cmd_pool, "CommandPool");
 }
 
 CommandPool::~CommandPool() = default;
@@ -93,7 +92,6 @@ void CommandPool::Allocate(std::size_t begin, std::size_t end) {
     ASSERT(result == vk::Result::eSuccess);
 
     for (std::size_t i = begin; i < end; ++i) {
-        SetObjectName(device, cmd_buffers[i], "CommandPool: Command Buffer {}", i);
     }
 }
 

@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <fmt/core.h>
+#include "core/loader/elf.h"
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "core/file_sys/backends/host_fs.h"
-#include "core/loader/elf.h"
+#include <fmt/core.h>
 
 namespace Core::Loader {
 
@@ -246,19 +246,15 @@ void Elf::Open(std::unique_ptr<Core::FileSys::IFile> handle) {
 
 bool Elf::IsSelfFile() const {
     if (m_self.magic != self_header::signature) [[unlikely]] {
-        LOG_INFO(Loader, "Not a SELF file. Magic mismatch current = {:#x} expected = {:#x}",
-                 m_self.magic, self_header::signature);
         return false;
     }
 
     if (m_self.version != 0x00 || m_self.mode != 0x01 || m_self.endian != 0x01 ||
         m_self.attributes != 0x12) [[unlikely]] {
-        LOG_INFO(Loader, "Unknown SELF file");
         return false;
     }
 
     if (m_self.category != 0x01 || m_self.program_type != 0x01) [[unlikely]] {
-        LOG_INFO(Loader, "Unknown SELF file");
         return false;
     }
 
@@ -270,61 +266,42 @@ bool Elf::IsElfFile() const {
         m_elf_header.e_ident.magic[EI_MAG1] != ELFMAG1 ||
         m_elf_header.e_ident.magic[EI_MAG2] != ELFMAG2 ||
         m_elf_header.e_ident.magic[EI_MAG3] != ELFMAG3) {
-        LOG_INFO(Loader, "Not an ELF file magic is wrong!");
         return false;
     }
     if (m_elf_header.e_ident.ei_class != ELF_CLASS_64) {
-        LOG_INFO(Loader, "e_ident[EI_CLASS] expected 0x02 is ({:#x})",
-                 static_cast<u32>(m_elf_header.e_ident.ei_class));
         return false;
     }
 
     if (m_elf_header.e_ident.ei_data != ELF_DATA_2LSB) {
-        LOG_INFO(Loader, "e_ident[EI_DATA] expected 0x01 is ({:#x})",
-                 static_cast<u32>(m_elf_header.e_ident.ei_data));
         return false;
     }
 
     if (m_elf_header.e_ident.ei_version != ELF_VERSION_CURRENT) {
-        LOG_INFO(Loader, "e_ident[EI_VERSION] expected 0x01 is ({:#x})",
-                 static_cast<u32>(m_elf_header.e_ident.ei_version));
         return false;
     }
 
     if (m_elf_header.e_ident.ei_osabi != ELF_OSABI_FREEBSD) {
-        LOG_INFO(Loader, "e_ident[EI_OSABI] expected 0x09 is ({:#x})",
-                 static_cast<u32>(m_elf_header.e_ident.ei_osabi));
         return false;
     }
 
     if (m_elf_header.e_ident.ei_abiversion != ELF_ABI_VERSION_AMDGPU_HSA_V2) {
-        LOG_INFO(Loader, "e_ident[EI_ABIVERSION] expected 0x00 is ({:#x})",
-                 static_cast<u32>(m_elf_header.e_ident.ei_abiversion));
         return false;
     }
 
     if (m_elf_header.e_type != ET_SCE_DYNEXEC && m_elf_header.e_type != ET_SCE_DYNAMIC &&
         m_elf_header.e_type != ET_SCE_EXEC) {
-        LOG_INFO(Loader, "e_type expected 0xFE10 OR 0xFE18 OR 0xfe00 is ({:#x})",
-                 static_cast<u32>(m_elf_header.e_type));
         return false;
     }
 
     if (m_elf_header.e_machine != EM_X86_64) {
-        LOG_INFO(Loader, "e_machine expected 0x3E is ({:#x})",
-                 static_cast<u32>(m_elf_header.e_machine));
         return false;
     }
 
     if (m_elf_header.e_version != EV_CURRENT) {
-        LOG_INFO(Loader, "m_elf_header.e_version expected 0x01 is ({:#x})",
-                 static_cast<u32>(m_elf_header.e_version));
         return false;
     }
 
     if (m_elf_header.e_phentsize != sizeof(elf_program_header)) {
-        LOG_INFO(Loader, "e_phentsize ({}) != sizeof(elf_program_header)",
-                 m_elf_header.e_phentsize);
         return false;
     }
 
@@ -332,8 +309,6 @@ bool Elf::IsElfFile() const {
         m_elf_header.e_shentsize !=
             sizeof(elf_section_header)) // Commercial games doesn't appear to have section headers
     {
-        LOG_INFO(Loader, "e_shentsize ({}) != sizeof(elf_section_header)",
-                 m_elf_header.e_shentsize);
         return false;
     }
 
@@ -510,9 +485,7 @@ void Elf::LoadSegment(u64 virtual_addr, u64 file_offset, u64 size) {
     UNREACHABLE();
 }
 
-bool Elf::IsSharedLib() {
-    return m_elf_header.e_type == ET_SCE_DYNAMIC;
-}
+bool Elf::IsSharedLib() { return m_elf_header.e_type == ET_SCE_DYNAMIC; }
 
 void Elf::ElfHeaderDebugDump(const std::filesystem::path& file_name) {
     Common::FS::IOFile f{file_name, Common::FS::FileAccessMode::Create,

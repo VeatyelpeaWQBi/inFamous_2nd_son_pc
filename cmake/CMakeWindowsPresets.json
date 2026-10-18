@@ -18,7 +18,7 @@
         "IFSS_BUILD_ENGINE": "ON",
         "ENABLE_TESTS": "OFF",
         "TRACY_ENABLE": "OFF",
-        "SHADPS4_DIAGNOSTIC_MAP": "ON"
+        "SHADPS4_DIAGNOSTIC_MAP": "OFF"
       },
       "vendor": {
         "microsoft.com/VisualStudioSettings/CMake/1.0": {

@@ -7,9 +7,9 @@
 
 #include "common/assert.h"
 #include "common/logging/log.h"
-#include "common/perf_stats.h"
 #include "common/polyfill_thread.h"
 #include "common/thread.h"
+#include "core/runtime_policy.h"
 #include "video_core/amdgpu/pm4_cmds.h"
 #include "video_core/amdgpu/scout.h"
 
@@ -77,9 +77,7 @@ ScoutDraw* ScoutSubmission::NewDraw(const void* packet) {
     return draw;
 }
 
-void ScoutSubmission::Publish() {
-    published.store(num_draws, std::memory_order_release);
-}
+void ScoutSubmission::Publish() { published.store(num_draws, std::memory_order_release); }
 
 void ScoutSubmission::RecordCondition(const void* packet, bool skip) {
     if (!conditions) {
@@ -94,9 +92,7 @@ void ScoutSubmission::RecordCondition(const void* packet, bool skip) {
     published_conditions.store(num_conditions, std::memory_order_release);
 }
 
-void ScoutSubmission::Abandon() {
-    abandoned.store(true, std::memory_order_release);
-}
+void ScoutSubmission::Abandon() { abandoned.store(true, std::memory_order_release); }
 
 const ScoutDraw* ScoutSubmission::Next(const void* packet) noexcept {
     const u32 index = cursor++;
@@ -104,14 +100,12 @@ const ScoutDraw* ScoutSubmission::Next(const void* packet) noexcept {
         return nullptr;
     }
     if (index >= published.load(std::memory_order_acquire)) {
-        Common::Perf::Add(Common::Perf::ScoutBehind);
         return nullptr;
     }
     const ScoutDraw* draw =
         &chunks[index >> ChunkBits].load(std::memory_order_acquire)[index & (ChunkSize - 1)];
     if (draw->packet != packet) {
         // Not the same path through the commands: the entries are not for these draws.
-        Common::Perf::Add(Common::Perf::ScoutDesyncs);
         desynced = true;
         return nullptr;
     }
@@ -140,7 +134,6 @@ void ScoutSubmission::CheckCondition(const void* packet, bool skip) noexcept {
     }
     const Condition& condition = conditions[index];
     if (condition.packet != packet || condition.skip != skip) {
-        Common::Perf::Add(Common::Perf::ScoutDesyncs);
         desynced = true;
     }
 }
@@ -284,9 +277,8 @@ void Scout::Run(std::stop_token stoken) {
         std::shared_ptr<ScoutSubmission> submission;
         {
             std::unique_lock lk{mutex};
-            Common::CondvarWait(cv, lk, stoken, [this] {
-                return !pending.empty() && (regs_valid || regs_copy);
-            });
+            Common::CondvarWait(cv, lk, stoken,
+                                [this] { return !pending.empty() && (regs_valid || regs_copy); });
             if (stoken.stop_requested()) {
                 break;
             }
@@ -323,11 +315,11 @@ void Scout::Run(std::stop_token stoken) {
         last_seq = current_seq;
         // Memory writes of the submissions the command processor finished are done.
         const u64 finished = cp_finished_seq.load(std::memory_order_acquire);
-        std::erase_if(written, [finished](const WrittenRange& range) { return range.seq <= finished; });
+        std::erase_if(written,
+                      [finished](const WrittenRange& range) { return range.seq <= finished; });
         if (finished >= current_seq) {
             // The command processor finished it: the guest may have recycled its command
             // buffers, reading them is unsafe. The registers must be copied again.
-            Common::Perf::Add(Common::Perf::ScoutLate);
             submission->Abandon();
             regs_valid = false;
             want_regs.store(true, std::memory_order_release);
@@ -336,22 +328,17 @@ void Scout::Run(std::stop_token stoken) {
         if (cp_seq.load(std::memory_order_acquire) > current_seq) {
             // The command processor is past it: nothing to precompute, but its register
             // writes and memory writes still count for the next submissions.
-            Common::Perf::Add(Common::Perf::ScoutLate);
             submission->Abandon();
-        }
-        Common::Perf::Add(Common::Perf::ScoutSubmissions);
-        const u64 start = Common::Perf::NowNs();
+        };
         Walk(*submission, submission->dcb, 0);
         submission->Publish();
         if (cp_finished_seq.load(std::memory_order_acquire) >= current_seq) {
             // The command processor finished it while it was being read: the guest may have
             // recycled its command buffers meanwhile, so the registers replayed from them are
             // not trusted for the next submissions.
-            Common::Perf::Add(Common::Perf::ScoutLate);
             regs_valid = false;
             want_regs.store(true, std::memory_order_release);
-        }
-        Common::Perf::Add(Common::Perf::ScoutBusyNs, Common::Perf::NowNs() - start);
+        };
     }
 }
 
@@ -391,7 +378,6 @@ void Scout::Walk(ScoutSubmission& sub, std::span<const u32> dcb, u32 depth) {
             entry->vertex_sgpr_offset = vertex_sgpr_offset;
             entry->instance_sgpr_offset = instance_sgpr_offset;
             client.ScoutDraw(regs, *entry, sub.Arena());
-            Common::Perf::Add(Common::Perf::ScoutDraws);
             // Entries are published as they come, the command processor may be close behind.
             sub.Publish();
         };
@@ -503,8 +489,7 @@ void Scout::Walk(ScoutSubmission& sub, std::span<const u32> dcb, u32 depth) {
             break;
         }
         case PM4ItOpcode::DrawIndexIndirectCountMulti: {
-            const auto* packet =
-                reinterpret_cast<const PM4CmdDrawIndexIndirectCountMulti*>(header);
+            const auto* packet = reinterpret_cast<const PM4CmdDrawIndexIndirectCountMulti*>(header);
             draw(packet->base_vtx_loc, packet->start_inst_loc);
             break;
         }

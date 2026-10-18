@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <vector>
-#include <common/assert.h>
 #include "common/error.h"
 #include "core/libraries/kernel/file_system.h"
 #include "core/libraries/kernel/kernel.h"
 #include "net.h"
+#include <common/assert.h>
+#include <vector>
 #ifndef _WIN32
 #include <sys/stat.h>
 #endif
@@ -133,8 +133,9 @@ static int ConvertLevels(int level) {
 }
 
 static void convertOrbisNetSockaddrToPosix(const OrbisNetSockaddr* src, sockaddr* dst) {
-    if (src == nullptr || dst == nullptr)
+    if (src == nullptr || dst == nullptr) {
         return;
+    }
     memset(dst, 0, sizeof(sockaddr));
     const OrbisNetSockaddrIn* src_in = (const OrbisNetSockaddrIn*)src;
     sockaddr_in* dst_in = (sockaddr_in*)dst;
@@ -144,8 +145,9 @@ static void convertOrbisNetSockaddrToPosix(const OrbisNetSockaddr* src, sockaddr
 }
 
 static void convertPosixSockaddrToOrbis(sockaddr* src, OrbisNetSockaddr* dst) {
-    if (src == nullptr || dst == nullptr)
+    if (src == nullptr || dst == nullptr) {
         return;
+    }
     memset(dst, 0, sizeof(OrbisNetSockaddr));
     OrbisNetSockaddrIn* dst_in = (OrbisNetSockaddrIn*)dst;
     sockaddr_in* src_in = (sockaddr_in*)src;
@@ -172,9 +174,7 @@ int PosixSocket::Close() {
     return ConvertReturnErrorCode(out);
 }
 
-int PosixSocket::Shutdown(int how) {
-    return ConvertReturnErrorCode(::shutdown(sock, how));
-}
+int PosixSocket::Shutdown(int how) { return ConvertReturnErrorCode(::shutdown(sock, how)); }
 
 int PosixSocket::Bind(const OrbisNetSockaddr* addr, u32 addrlen) {
     std::scoped_lock lock{m_mutex};
@@ -191,16 +191,19 @@ int PosixSocket::Listen(int backlog) {
 static int convertOrbisFlagsToPosix(int sock_type, int sce_flags) {
     int posix_flags = 0;
 
-    if (sce_flags & ORBIS_NET_MSG_PEEK)
+    if (sce_flags & ORBIS_NET_MSG_PEEK) {
         posix_flags |= MSG_PEEK;
+    }
 #ifndef _WIN32
-    if (sce_flags & ORBIS_NET_MSG_DONTWAIT)
+    if (sce_flags & ORBIS_NET_MSG_DONTWAIT) {
         posix_flags |= MSG_DONTWAIT;
+    }
 #endif
     // MSG_WAITALL is only valid for stream sockets
     if ((sce_flags & ORBIS_NET_MSG_WAITALL) &&
-        ((sock_type == ORBIS_NET_SOCK_STREAM) || (sock_type == ORBIS_NET_SOCK_STREAM_P2P)))
+        ((sock_type == ORBIS_NET_SOCK_STREAM) || (sock_type == ORBIS_NET_SOCK_STREAM_P2P))) {
         posix_flags |= MSG_WAITALL;
+    }
 
     return posix_flags;
 }
@@ -243,8 +246,9 @@ int PosixSocket::SendMessage(const OrbisNetMsghdr* msg, int flags) {
         while (remaining > 0) {
             if (dontWait) {
                 int ready = socket_is_ready(sock, false);
-                if (ready <= 0)
+                if (ready <= 0) {
                     return ready;
+                }
             }
 
             int sent = 0;
@@ -262,22 +266,25 @@ int PosixSocket::SendMessage(const OrbisNetMsghdr* msg, int flags) {
                     int res = wsasendmsg(
                         sock, reinterpret_cast<LPWSAMSG>(const_cast<OrbisNetMsghdr*>(msg)), 0,
                         &bytesSent, nullptr, nullptr);
-                    if (res == SOCKET_ERROR)
+                    if (res == SOCKET_ERROR) {
                         return ConvertReturnErrorCode(WSAGetLastError());
+                    }
                     sent = bytesSent;
                 }
             } else {
                 sent = ::send(sock, buf, remaining, 0);
-                if (sent == SOCKET_ERROR)
+                if (sent == SOCKET_ERROR) {
                     return ConvertReturnErrorCode(WSAGetLastError());
+                }
             }
 
             totalSent += sent;
             remaining -= sent;
             buf += sent;
 
-            if (!waitAll)
+            if (!waitAll) {
                 break;
+            }
         }
     }
 
@@ -297,8 +304,9 @@ int PosixSocket::SendPacket(const void* msg, u32 len, int flags, const OrbisNetS
 #ifdef _WIN32
     if (flags & ORBIS_NET_MSG_DONTWAIT) {
         res = socket_is_ready(sock, false);
-        if (res <= 0)
+        if (res <= 0) {
             return res;
+        }
     }
 #endif
     const auto posix_flags = convertOrbisFlagsToPosix(socket_type, flags);
@@ -333,8 +341,9 @@ int PosixSocket::ReceiveMessage(OrbisNetMsghdr* msg, int flags) {
             // emulate DONTWAIT
             if (dontWait) {
                 int ready = socket_is_ready(sock, true);
-                if (ready <= 0)
+                if (ready <= 0) {
                     return ready; // returns ORBIS_NET_ERROR_EWOULDBLOCK or error
+                }
             }
 
             int received = 0;
@@ -347,21 +356,24 @@ int PosixSocket::ReceiveMessage(OrbisNetMsghdr* msg, int flags) {
                              &wsarecvmsg, sizeof(wsarecvmsg), &bytes, nullptr, nullptr) != 0) {
                     // fallback to recv()
                     received = ::recv(sock, buf, remaining, 0);
-                    if (received == SOCKET_ERROR)
+                    if (received == SOCKET_ERROR) {
                         return ConvertReturnErrorCode(WSAGetLastError());
+                    }
                 } else {
                     DWORD bytesReceived = 0;
                     int res = wsarecvmsg(sock, reinterpret_cast<LPWSAMSG>(msg), &bytesReceived,
                                          nullptr, nullptr);
-                    if (res == SOCKET_ERROR)
+                    if (res == SOCKET_ERROR) {
                         return ConvertReturnErrorCode(WSAGetLastError());
+                    }
                     received = bytesReceived;
                 }
             } else {
                 // fallback to recv() for UDP or single-buffer
                 received = ::recv(sock, buf, remaining, 0);
-                if (received == SOCKET_ERROR)
+                if (received == SOCKET_ERROR) {
                     return ConvertReturnErrorCode(WSAGetLastError());
+                }
             }
 
             totalReceived += received;
@@ -369,8 +381,9 @@ int PosixSocket::ReceiveMessage(OrbisNetMsghdr* msg, int flags) {
             buf += received;
 
             // stop after first receive if WAITALL is not set
-            if (!waitAll)
+            if (!waitAll) {
                 break;
+            }
         }
     }
 
@@ -390,8 +403,9 @@ int PosixSocket::ReceivePacket(void* buf, u32 len, int flags, OrbisNetSockaddr* 
 #ifdef _WIN32
     if (flags & ORBIS_NET_MSG_DONTWAIT) {
         res = socket_is_ready(sock);
-        if (res <= 0)
+        if (res <= 0) {
             return res;
+        }
     }
 #endif
     const auto posix_flags = convertOrbisFlagsToPosix(socket_type, flags);
@@ -402,8 +416,9 @@ int PosixSocket::ReceivePacket(void* buf, u32 len, int flags, OrbisNetSockaddr* 
         socklen_t addrlen = sizeof(addr);
         res = recvfrom(sock, (char*)buf, len, posix_flags, &addr,
                        (fromlen && *fromlen <= sizeof(addr) ? (socklen_t*)fromlen : &addrlen));
-        if (res > 0)
+        if (res > 0) {
             convertPosixSockaddrToOrbis(&addr, from);
+        }
     }
 
     return ConvertReturnErrorCode(res);
@@ -443,8 +458,7 @@ int PosixSocket::Connect(const OrbisNetSockaddr* addr, u32 namelen) {
         }
     }
 #endif
-    LOG_DEBUG(Lib_Net, "raw connect result = {}, errno = {}", result,
-              result == -1 ? Common::GetLastErrorMsg() : "none");
+    ;
     return ConvertReturnErrorCode(result);
 }
 

@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
-#include <limits>
+#include "video_core/renderer_vulkan/vk_swapchain.h"
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
-#include "video_core/renderer_vulkan/vk_swapchain.h"
+#include <algorithm>
+#include <limits>
 
 namespace Vulkan {
 
@@ -80,8 +80,6 @@ void Swapchain::Create(u32 width_, u32 height_) {
 }
 
 void Swapchain::Recreate(u32 width_, u32 height_) {
-    LOG_DEBUG(Render_Vulkan, "Recreate the swapchain: width={} height={} HDR={}", width_, height_,
-              needs_hdr);
     Create(width_, height_);
 }
 
@@ -128,13 +126,13 @@ bool Swapchain::AcquireNextImage() {
         (result == vk::Result::eSuccess || result == vk::Result::eSuboptimalKHR)) {
         // Validation also observes image availability on the host. Keep the binary
         // semaphore wait for the rendering submission; the fence is an extra debug wait.
-        const auto available = device.waitForFences(
-            acquire_available, true, std::numeric_limits<u64>::max());
-        ASSERT_MSG(available == vk::Result::eSuccess,
-                   "Swapchain availability wait failed: {}", vk::to_string(available));
+        const auto available =
+            device.waitForFences(acquire_available, true, std::numeric_limits<u64>::max());
+        ASSERT_MSG(available == vk::Result::eSuccess, "Swapchain availability wait failed: {}",
+                   vk::to_string(available));
         const auto reset = device.resetFences(acquire_available);
-        ASSERT_MSG(reset == vk::Result::eSuccess,
-                   "Swapchain availability fence reset failed: {}", vk::to_string(reset));
+        ASSERT_MSG(reset == vk::Result::eSuccess, "Swapchain availability fence reset failed: {}",
+                   vk::to_string(reset));
     }
 
     return !needs_recreation;
@@ -311,7 +309,6 @@ void Swapchain::RefreshSemaphores() {
         ASSERT_MSG(result == vk::Result::eSuccess,
                    "Swapchain availability fence creation failed: {}", vk::to_string(result));
         acquire_available = fence;
-        LOG_INFO(Render_Vulkan, "Validation swapchain: host-fenced acquire availability enabled");
     }
 
     for (vk::Semaphore& semaphore : image_acquired) {
@@ -329,8 +326,6 @@ void Swapchain::RefreshSemaphores() {
     }
 
     for (u32 i = 0; i < image_count; ++i) {
-        SetObjectName(device, image_acquired[i], "Swapchain Semaphore: image_acquired {}", i);
-        SetObjectName(device, present_ready[i], "Swapchain Semaphore: present_ready {}", i);
     }
 }
 
@@ -364,8 +359,6 @@ void Swapchain::SetupImages() {
     }
 
     for (u32 i = 0; i < image_count; ++i) {
-        SetObjectName(device, images[i], "Swapchain Image {}", i);
-        SetObjectName(device, images_view[i], "Swapchain ImageView {}", i);
     }
 }
 

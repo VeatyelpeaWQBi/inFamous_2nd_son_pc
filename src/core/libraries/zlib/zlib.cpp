@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <condition_variable>
+#include <miniz.h>
 #include <mutex>
+#include <queue>
 #include <stop_token>
 #include <unordered_map>
-#include <miniz.h>
-#include <queue>
 
 #include "common/logging/log.h"
 #include "common/thread.h"
@@ -75,7 +75,6 @@ void ZlibTaskThread(const std::stop_token& stop) {
 }
 
 s32 PS4_SYSV_ABI sceZlibInitialize(const void* buffer, u32 length) {
-    LOG_INFO(Lib_Zlib, "called");
     if (task_thread.Joinable()) {
         return ORBIS_ZLIB_ERROR_ALREADY_INITIALIZED;
     }
@@ -92,7 +91,6 @@ s32 PS4_SYSV_ABI sceZlibInitialize(const void* buffer, u32 length) {
 
 s32 PS4_SYSV_ABI sceZlibInflate(const void* src, u32 src_len, void* dst, u32 dst_len,
                                 u64* request_id) {
-    LOG_DEBUG(Lib_Zlib, "called");
     if (!task_thread.Joinable()) {
         return ORBIS_ZLIB_ERROR_NOT_INITIALIZED;
     }
@@ -117,7 +115,6 @@ s32 PS4_SYSV_ABI sceZlibInflate(const void* src, u32 src_len, void* dst, u32 dst
 }
 
 s32 PS4_SYSV_ABI sceZlibWaitForDone(u64* request_id, const u32* timeout) {
-    LOG_DEBUG(Lib_Zlib, "called");
     if (!task_thread.Joinable()) {
         return ORBIS_ZLIB_ERROR_NOT_INITIALIZED;
     }
@@ -143,7 +140,6 @@ s32 PS4_SYSV_ABI sceZlibWaitForDone(u64* request_id, const u32* timeout) {
 }
 
 s32 PS4_SYSV_ABI sceZlibGetResult(const u64 request_id, u32* dst_length, s32* status) {
-    LOG_DEBUG(Lib_Zlib, "called");
     if (!task_thread.Joinable()) {
         return ORBIS_ZLIB_ERROR_NOT_INITIALIZED;
     }
@@ -164,7 +160,6 @@ s32 PS4_SYSV_ABI sceZlibGetResult(const u64 request_id, u32* dst_length, s32* st
 }
 
 s32 PS4_SYSV_ABI sceZlibFinalize() {
-    LOG_INFO(Lib_Zlib, "called");
     if (!task_thread.Joinable()) {
         return ORBIS_ZLIB_ERROR_NOT_INITIALIZED;
     }

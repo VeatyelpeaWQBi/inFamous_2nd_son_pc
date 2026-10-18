@@ -5,12 +5,12 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <fmt/format.h>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
-#include <fmt/format.h>
 
 #include "common/logging/log.h"
 #include "core/libraries/network/net.h"
@@ -72,8 +72,7 @@ bool IsContextLifecycleEvent(OrbisNpMatching2Event event) {
            event == ORBIS_NP_MATCHING2_CONTEXT_EVENT_STOPPED;
 }
 
-template <typename T>
-std::vector<u8> MakeProtoPayload(const T& msg) {
+template <typename T> std::vector<u8> MakeProtoPayload(const T& msg) {
     std::string bytes;
     (void)msg.SerializeToString(&bytes);
     const u32 len = static_cast<u32>(bytes.size());
@@ -539,8 +538,7 @@ void HandleRoomEvent(const ShadNet::NotifyRoomEvent& n) {
         return;
     }
 
-    LOG_DEBUG(Lib_NpMatching2, "RoomEvent ctx={} room={} event={:#x} cause={}", n.ctx_id, n.room_id,
-              n.event, n.event_cause);
+    ;
 
     OrbisNpMatching2Event fired_event = event;
     if (ctx->a_variant) {
@@ -647,9 +645,7 @@ void OnMatchingReply(ShadNet::CommandType cmd, u64 pkt_id, ShadNet::ErrorType er
         }
         pr = it->second;
         g_mm.pending.erase(it);
-    }
-    LOG_DEBUG(Lib_NpMatching2, "reply pkt_id={} cmd={} -> ctx={} reqId={} event={:#x}", pkt_id,
-              static_cast<u16>(cmd), pr.ctx_id, pr.req_id, static_cast<u16>(pr.req_event));
+    };
     DispatchRequestComplete(pr, error, body);
 }
 
@@ -671,8 +667,7 @@ void SetMmShadNetClient(std::shared_ptr<ShadNet::ShadNetClient> client,
             matching2_enabled ? Libraries::Net::sceNetHtons(static_cast<u16>(tcp_port + 1)) : 0;
         server_addr = g_mm.server_addr;
         server_udp_port = g_mm.server_udp_port;
-    }
-    LOG_INFO(Lib_NpMatching2, "ShadNet features: matching2_enabled={}", matching2_enabled);
+    };
     Net::UPnPClient::Instance().SetP2PFeaturesEnabled(matching2_enabled);
 
     if (!client) {
@@ -775,17 +770,11 @@ s32 MmSubmitRequest(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId 
     }
     const RequestCallbackInfo request_cb = ConsumeRequestCallback(ctx);
     if (IsMatching2BackendDisabled() && !IsContextLifecycleEvent(req_event)) {
-        LOG_INFO(Lib_NpMatching2,
-                 "MmSubmitRequest: matching2 backend disabled; failing ctx={} reqId={} "
-                 "event={:#x} cmd={}",
-                 ctx_id, req_id, static_cast<u16>(req_event), static_cast<u16>(cmd));
 
         s32 error_code = ORBIS_NP_MATCHING2_ERROR_SERVER_NOT_AVAILABLE;
         void* request_data = nullptr;
         std::shared_ptr<CallbackPayload> request_payload_owner;
         if (req_event == ORBIS_NP_MATCHING2_REQUEST_EVENT_GET_WORLD_INFO_LIST) {
-            LOG_INFO(Lib_NpMatching2,
-                     "MmSubmitRequest: matching2 backend disabled; returning empty world");
             shadnet::GetWorldInfoListReply reply;
             auto* world = reply.add_worlds();
             world->set_world_id(1);
@@ -816,20 +805,14 @@ s32 MmSubmitRequest(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId 
         return ORBIS_OK;
     }
 
-    LOG_INFO(Lib_NpMatching2,
-             "MmSubmitRequest: ctx={} reqId={} event={:#x} cmd={} aVariant={} callback={:#x} "
-             "arg={}",
-             ctx_id, req_id, static_cast<u16>(req_event), static_cast<u16>(cmd), a_variant,
-             reinterpret_cast<std::uintptr_t>(request_cb.callback), fmt::ptr(request_cb.arg));
+    ;
 
     const u64 pkt_id = client->SubmitRequest(static_cast<ShadNet::CommandType>(cmd), payload);
     {
         std::lock_guard lock(g_mm.pending_mutex);
         g_mm.pending[pkt_id] = {ctx_id,        req_id, req_event, a_variant, request_cb.callback,
                                 request_cb.arg};
-    }
-    LOG_DEBUG(Lib_NpMatching2, "submit cmd={} pkt_id={} ctx={} reqId={}", static_cast<u16>(cmd),
-              pkt_id, ctx_id, req_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1009,15 +992,8 @@ s32 MmSearchRoom(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req
     req.set_range_filter_max(request.rangeFilter.max);
     req.set_flag_filter(request.flags1);
     req.set_flag_attr(request.flags2);
-    LOG_DEBUG(Lib_NpMatching2,
-              "search world={} lobby={} range={}+{} flags={:#x}/{:#x} intN={} binN={} attrN={}",
-              request.worldId, request.lobbyId, request.rangeFilter.start, request.rangeFilter.max,
-              request.flags1, request.flags2, request.intFilters, request.binFilters,
-              request.attrs);
     for (u64 i = 0; i < request.intFilters; ++i) {
         const auto& f = request.intFilter[i];
-        LOG_DEBUG(Lib_NpMatching2, "  intFilter[{}] op={} id={:#x} num={}", i, f.searchOperator,
-                  f.attr.id, f.attr.num);
         auto* dst = req.add_int_filters();
         dst->set_op(f.searchOperator);
         dst->set_attr_id(f.attr.id);
@@ -1050,9 +1026,7 @@ s32 MmGetRoomDataExternalList(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2
     }
     for (u64 i = 0; i < request.attrIdNum; ++i) {
         req.add_attr_ids(request.attrId[i]);
-    }
-    LOG_DEBUG(Lib_NpMatching2, "getRoomDataExternalList roomN={} attrN={}", request.roomIdNum,
-              request.attrIdNum);
+    };
     return MmSubmitRequest(ctx_id, req_id,
                            a_variant
                                ? ORBIS_NP_MATCHING2_REQUEST_EVENT_GET_ROOM_DATA_EXTERNAL_LIST_A
@@ -1065,7 +1039,6 @@ s32 MmGetRoomMemberDataExternalList(
     const OrbisNpMatching2GetRoomMemberDataExternalListRequest& request, bool a_variant) {
     shadnet::GetRoomMemberDataExternalListRequest req;
     req.set_room_id(request.roomId);
-    LOG_DEBUG(Lib_NpMatching2, "getRoomMemberDataExternalList room={}", request.roomId);
     return MmSubmitRequest(
         ctx_id, req_id,
         a_variant ? ORBIS_NP_MATCHING2_REQUEST_EVENT_GET_ROOM_MEMBER_DATA_EXTERNAL_LIST_A
@@ -1083,8 +1056,6 @@ s32 MmGetUserInfoList(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestI
         req.add_attr_ids(request.attrId[i]);
     }
     req.set_option(request.option);
-    LOG_DEBUG(Lib_NpMatching2, "getUserInfoList npN={} attrN={}", request.npIdNum,
-              request.attrIdNum);
     return MmSubmitRequest(ctx_id, req_id, ORBIS_NP_MATCHING2_REQUEST_EVENT_GET_USER_INFO_LIST,
                            MmCommand::GetUserInfoList, MakeProtoPayload(req), a_variant);
 }
@@ -1095,9 +1066,7 @@ s32 MmSetUserInfo(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId re
     req.set_server_id(request.serverId);
     for (u64 i = 0; request.userBinAttr && i < request.userBinAttrs; ++i) {
         AppendBinAttr(req.add_user_bin_attrs(), request.userBinAttr[i]);
-    }
-    LOG_DEBUG(Lib_NpMatching2, "setUserInfo server={} binAttrs={}", request.serverId,
-              request.userBinAttrs);
+    };
     return MmSubmitRequest(ctx_id, req_id, ORBIS_NP_MATCHING2_REQUEST_EVENT_SET_USER_INFO,
                            MmCommand::SetUserInfo, MakeProtoPayload(req));
 }
@@ -1236,7 +1205,6 @@ bool RequestSignalingInfos(std::string_view target_online_id, u32* out_addr, u16
     }
     *out_addr = addr_nbo;
     *out_port = Libraries::Net::sceNetHtons(port_host);
-    LOG_DEBUG(Lib_NpMatching2, "'{}' -> {}:{}", target_online_id, addr_str, port_host);
     return true;
 }
 

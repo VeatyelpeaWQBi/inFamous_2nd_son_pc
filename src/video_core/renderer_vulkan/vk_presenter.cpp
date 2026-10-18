@@ -1,18 +1,17 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "video_core/renderer_vulkan/vk_presenter.h"
 #include "common/debug.h"
+#include "common/display_state.h"
 #include "common/elf_info.h"
 #include "common/io_file.h"
 #include "common/path_util.h"
-#include "common/perf_stats.h"
 #include "common/singleton.h"
-#include "core/debug_state.h"
-#include "core/benchmark_control.h"
-#include "core/devtools/layer.h"
 #include "core/emulator_settings.h"
+#include "core/game_ui.h"
 #include "core/libraries/system/systemservice.h"
-#include "core/perf_sampler.h"
+#include "core/runtime_policy.h"
 #include "imgui/friends_layer.h"
 #include "imgui/invitation_prompt_layer.h"
 #include "imgui/notifications_layer.h"
@@ -21,9 +20,7 @@
 #include "imgui/shadnet_notifications_layer.h"
 #include "sdl_window.h"
 #include "video_core/buffer_cache/buffer.h"
-#include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
-#include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/texture_cache/image.h"
 
@@ -38,15 +35,15 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <imgui.h>
 #include <iomanip>
 #include <limits>
 #include <memory>
 #include <span>
 #include <sstream>
+#include <stb_image_write.h>
 #include <system_error>
 #include <vector>
-#include <imgui.h>
-#include <stb_image_write.h>
 #include <vk_mem_alloc.h>
 
 namespace Vulkan {
@@ -429,7 +426,7 @@ static void SavePendingScreenshot(const ScreenshotReadback& readback) {
         return;
     }
 
-    LOG_INFO(Render_Vulkan, "Saved screenshot: {}", primary_path.string());
+    ;
 
     std::ifstream file(primary_path, std::ios::binary);
     std::vector<u8> imgdata;
@@ -453,7 +450,7 @@ static void SavePendingScreenshot(const ScreenshotReadback& readback) {
             }
         }
 
-        LOG_INFO(Render_Vulkan, "Saved screenshot: {}", path.string());
+        ;
         std::ifstream file(path, std::ios::binary);
         std::vector<u8> imgdata;
         if (file) {
@@ -495,7 +492,7 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     fsr_pass.Create(device, instance.GetAllocator(), num_images);
     pp_pass.Create(device, swapchain.GetSurfaceFormat().format);
 
-    ImGui::Layer::AddLayer(Common::Singleton<Core::Devtools::Layer>::Instance());
+    ImGui::Layer::AddLayer(Common::Singleton<Core::GameUI::Layer>::Instance());
     ImGui::Friends::Register();
     ImGui::ShadNetNotify::Register();
     ImGui::InvitationPrompt::Register();
@@ -505,7 +502,7 @@ Presenter::~Presenter() {
     ImGui::InvitationPrompt::Unregister();
     ImGui::ShadNetNotify::Unregister();
     ImGui::Friends::Unregister();
-    ImGui::Layer::RemoveLayer(Common::Singleton<Core::Devtools::Layer>::Instance());
+    ImGui::Layer::RemoveLayer(Common::Singleton<Core::GameUI::Layer>::Instance());
 
     draw_scheduler.Finish();
     present_scheduler.Finish();
@@ -523,8 +520,9 @@ Presenter::~Presenter() {
 }
 
 void Presenter::SavePipelineCache() {
-    if (rasterizer)
+    if (rasterizer) {
         rasterizer->GetPipelineCache().Sync();
+    }
 }
 
 bool Presenter::IsVideoOutSurface(const AmdGpu::ColorBuffer& color_buffer) const {
@@ -576,7 +574,6 @@ void Presenter::RecreateFrame(Frame* frame, u32 width, u32 height) {
         UNREACHABLE();
     }
     frame->image = vk::Image{unsafe_image};
-    SetObjectName(device, frame->image, "Frame image #{}", frame->id);
 
     const vk::ImageViewCreateInfo view_info = {
         .image = frame->image,
@@ -615,9 +612,7 @@ Frame* Presenter::PrepareLastFrame() {
         if (result == vk::Result::eTimeout) {
             continue;
         }
-        if (result == vk::Result::eErrorDeviceLost) {
-            GpuCrashDiag::ReportDeviceLost(instance, "frame wait");
-        }
+
         ASSERT_MSG(result != vk::Result::eErrorDeviceLost,
                    "Device lost during waiting for a frame");
     }
@@ -760,8 +755,10 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         attribute.attrib.pixel_format == Libraries::VideoOut::PixelFormat::A2R10G10B10Srgb;
     pp_pass.Render(cmdbuf, image_view, image_size, *frame, pp_settings);
 
-    DebugState.game_resolution = {image_size.width, image_size.height};
-    DebugState.output_resolution = {frame->width, frame->height};
+    Common::DisplayDimensions::Store(Common::display_dimensions.game, image_size.width,
+                                     image_size.height);
+    Common::DisplayDimensions::Store(Common::display_dimensions.output, frame->width,
+                                     frame->height);
 
     if (pending_screenshot) {
         draw_scheduler.DeferPriorityOperation(
@@ -901,9 +898,6 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     }
 
     {
-        auto* profiler_ctx = instance.GetProfilerContext();
-        TracyVkNamedZoneC(profiler_ctx, renderer_gpu_zone, cmdbuf, "Host frame",
-                          MarkersPalette::GpuMarkerColor, profiler_ctx != nullptr);
 
         const vk::Extent2D extent = swapchain.GetExtent();
         const std::array pre_barriers{
@@ -945,11 +939,11 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
 
         // Match the acquire semaphore's wait stage to the first use of its image.
         cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
-                               vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                               {}, {}, {}, pre_barriers[0]);
+                               vk::PipelineStageFlagBits::eColorAttachmentOutput, {}, {}, {},
+                               pre_barriers[0]);
         cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
-                               vk::PipelineStageFlagBits::eFragmentShader,
-                               {}, {}, {}, pre_barriers[1]);
+                               vk::PipelineStageFlagBits::eFragmentShader, {}, {}, {},
+                               pre_barriers[1]);
 
         { // Draw the game
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f});
@@ -996,7 +990,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
                 ImGui::Image(game_texture, size);
 
                 if (EmulatorSettings.IsNullGPU()) {
-                    Core::Devtools::Layer::DrawNullGpuNotice();
+                    Core::GameUI::Layer::DrawNullGpuNotice();
                 }
             }
             ImGui::End();
@@ -1064,12 +1058,9 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         const auto post_src_stage = swapchain_copied_for_screenshot
                                         ? vk::PipelineStageFlagBits::eTransfer
                                         : vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        cmdbuf.pipelineBarrier(post_src_stage, vk::PipelineStageFlagBits::eBottomOfPipe,
-                               {}, {}, {}, post_barrier);
+        cmdbuf.pipelineBarrier(post_src_stage, vk::PipelineStageFlagBits::eBottomOfPipe, {}, {}, {},
+                               post_barrier);
 
-        if (profiler_ctx) {
-            TracyVkCollect(profiler_ctx, cmdbuf);
-        }
     }
     if (EmulatorSettings.IsVkHostMarkersEnabled()) {
         cmdbuf.endDebugUtilsLabelEXT();
@@ -1083,8 +1074,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     }
 
     SubmitInfo info{};
-    info.AddWait(swapchain.GetImageAcquiredSemaphore(), 0,
-                 vk::PipelineStageFlagBits::eAllCommands);
+    info.AddWait(swapchain.GetImageAcquiredSemaphore(), 0, vk::PipelineStageFlagBits::eAllCommands);
     // The frame is sampled by the fragment shader before color attachment output.
     info.AddWait(frame->ready_semaphore, frame->ready_tick);
     info.AddSignal(swapchain.GetPresentReadySemaphore());
@@ -1100,12 +1090,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     }
 
     free_frame();
-    if (!is_reusing_frame && is_game_frame) {
-        DebugState.IncFlipFrameNum();
-        Core::Benchmark::OnFlip();
-        Common::Perf::OnFlip(DebugState.GetDrawCallsAvg(), DebugState.GetDispatchesAvg());
-        Core::PerfSampler::PollTuning();
-    }
+
 }
 
 Frame* Presenter::GetRenderFrame() {
@@ -1114,7 +1099,6 @@ Frame* Presenter::GetRenderFrame() {
     {
         std::unique_lock lock{free_mutex};
         free_cv.wait(lock, [this] { return !free_queue.empty(); });
-        LOG_DEBUG(Render_Vulkan, "Got render frame, remaining {}", free_queue.size() - 1);
 
         // Take the frame from the queue
         frame = free_queue.front();
@@ -1131,9 +1115,7 @@ Frame* Presenter::GetRenderFrame() {
 
     // Wait for the presentation to be finished so all frame resources are free
     while (wait() != vk::Result::eSuccess) {
-        if (result == vk::Result::eErrorDeviceLost) {
-            GpuCrashDiag::ReportDeviceLost(instance, "frame wait");
-        }
+
         ASSERT_MSG(result != vk::Result::eErrorDeviceLost,
                    "Device lost during waiting for a frame");
         // Retry if the waiting times out

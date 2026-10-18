@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <shared_mutex>
-#include <fmt/format.h>
+#include "core/libraries/audio/audioin.h"
 #include "audioin_backend.h"
 #include "audioin_error.h"
 #include "common/logging/log.h"
-#include "core/libraries/audio/audioin.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
+#include <fmt/format.h>
+#include <shared_mutex>
 
 namespace Libraries::AudioIn {
 
@@ -37,9 +37,7 @@ static int GetPortId(s32 handle) {
     return port_id;
 }
 
-static s32 GetPortType(s32 handle) {
-    return (handle >> 16) & 0xFF;
-}
+static s32 GetPortType(s32 handle) { return (handle >> 16) & 0xFF; }
 
 static int AllocatePort(OrbisAudioInType type) {
     // TODO implement port type ranges if needed
@@ -57,8 +55,6 @@ static int AllocatePort(OrbisAudioInType type) {
 static bool initOnce = false;
 int PS4_SYSV_ABI sceAudioInOpen(Libraries::UserService::OrbisUserServiceUserId userId, u32 type,
                                 u32 index, u32 len, u32 freq, u32 param) {
-    LOG_INFO(Lib_AudioIn, "called, userId={}, type={}, index={}, len={}, freq={}, param={}", userId,
-             type, index, len, freq, param);
     if (!initOnce) {
         // sceAudioInInit doesn't seem to be called by most apps before sceAudioInOpen so we init
         // here
@@ -143,15 +139,11 @@ int PS4_SYSV_ABI sceAudioInOpen(Libraries::UserService::OrbisUserServiceUserId u
     // Create handle
     s32 handle = (type << 16) | port_id | 0x30000000;
 
-    LOG_INFO(Lib_AudioIn, "Opened audio input port {}: type={}, samples={}, freq={}, format={}",
-             handle, static_cast<u32>(in_type), len, freq, static_cast<u32>(format));
     return handle;
 }
 
 int PS4_SYSV_ABI sceAudioInHqOpen(Libraries::UserService::OrbisUserServiceUserId userId, u32 type,
                                   u32 index, u32 len, u32 freq, u32 param) {
-    LOG_INFO(Lib_AudioIn, "called, userId={}, type={}, index={}, len={}, freq={}, param={}", userId,
-             type, index, len, freq, param);
     int result = sceAudioInOpen(userId, type, index, len, freq, param);
     if (result < 0) {
         LOG_ERROR(Lib_AudioIn, "Error returned  {:#x}", result);
@@ -160,7 +152,6 @@ int PS4_SYSV_ABI sceAudioInHqOpen(Libraries::UserService::OrbisUserServiceUserId
 }
 
 int PS4_SYSV_ABI sceAudioInClose(s32 handle) {
-    LOG_INFO(Lib_AudioIn, "called, handle={:#x}", handle);
 
     int port_id = GetPortId(handle);
     if (port_id < 0) {
@@ -186,12 +177,10 @@ int PS4_SYSV_ABI sceAudioInClose(s32 handle) {
     std::scoped_lock port_lock{port->mutex};
     port->impl.reset();
 
-    LOG_INFO(Lib_AudioIn, "Closed audio input port {}", handle);
     return ORBIS_OK;
 }
 
 int PS4_SYSV_ABI sceAudioInInput(s32 handle, void* dest) {
-    LOG_TRACE(Lib_AudioIn, "called, handle={:#x}, dest={}", handle, fmt::ptr(dest));
 
     int port_id = GetPortId(handle);
     if (port_id < 0) {
@@ -225,7 +214,6 @@ int PS4_SYSV_ABI sceAudioInInput(s32 handle, void* dest) {
 }
 
 int PS4_SYSV_ABI sceAudioInGetSilentState(s32 handle) {
-    LOG_TRACE(Lib_AudioIn, "called, handle={:#x}", handle);
     int port_id = GetPortId(handle);
     if (port_id < 0) {
         LOG_ERROR(Lib_AudioIn, "Invalid port id");

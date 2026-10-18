@@ -1,22 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <array>
-#include <atomic>
-#include <bitset>
-#include <climits>
-#include <cstring>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <optional>
-#include <set>
-#include <unordered_set>
-#include <vector>
-#include <Zydis/Zydis.h>
-#include <fmt/format.h>
-#include <xbyak/xbyak.h>
-#include <xbyak/xbyak_util.h>
+#include "cpu_patches.h"
 #include "common/alignment.h"
 #include "common/arch.h"
 #include "common/assert.h"
@@ -25,7 +10,22 @@
 #include "common/types.h"
 #include "core/signals.h"
 #include "core/tls.h"
-#include "cpu_patches.h"
+#include <Zydis/Zydis.h>
+#include <array>
+#include <atomic>
+#include <bitset>
+#include <climits>
+#include <cstring>
+#include <fmt/format.h>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <set>
+#include <unordered_set>
+#include <vector>
+#include <xbyak/xbyak.h>
+#include <xbyak/xbyak_util.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -231,7 +231,6 @@ static void GenerateEXTRQ(void* /* address */, const ZydisDecodedOperand* operan
         u8 length = operands[1].imm.value.u & 0x3F;
         u8 index = operands[2].imm.value.u & 0x3F;
 
-        LOG_DEBUG(Core, "Patching immediate form EXTRQ, length: {}, index: {}", length, index);
 
         const Xbyak::Reg64 scratch1 = rax;
         const Xbyak::Reg64 scratch2 = rcx;
@@ -676,8 +675,6 @@ static std::pair<bool, u64> TryPatch(u8* code, PatchModule* module) {
                     patch_gen.nop(instruction.length - patch_size);
 
                     module->patched.insert(code);
-                    LOG_DEBUG(Core, "Patched instruction '{}' at: {}",
-                              ZydisMnemonicGetString(instruction.mnemonic), fmt::ptr(code));
                     return std::make_pair(true, instruction.length);
                 }
             }
@@ -819,14 +816,7 @@ static bool TryExecuteIllegalInstruction(void* ctx, void* code_address) {
         }
 
         u64 index = (lowQWordSrc >> 8) & 0x3F;
-        if (length + index > 64) {
-            // Undefined behavior if length + index is bigger than 64 according to the spec,
-            // we'll warn and continue execution.
-            LOG_TRACE(Core,
-                      "extrq at {} with length {} and index {} is bigger than 64, "
-                      "undefined behavior",
-                      fmt::ptr(code_address), length, index);
-        }
+
 
         lowQWordDst >>= index;
         lowQWordDst &= mask;
@@ -859,14 +849,7 @@ static bool TryExecuteIllegalInstruction(void* ctx, void* code_address) {
         }
 
         u64 index = (highQWordSrc >> 8) & 0x3F;
-        if (length + index > 64) {
-            // Undefined behavior if length + index is bigger than 64 according to the spec,
-            // we'll warn and continue execution.
-            LOG_TRACE(Core,
-                      "insertq at {} with length {} and index {} is bigger than 64, "
-                      "undefined behavior",
-                      fmt::ptr(code_address), length, index);
-        }
+
 
         lowQWordSrc &= mask;
         lowQWordDst &= ~(mask << index);
@@ -1139,9 +1122,10 @@ bool WritesRegister(const DecodedCodeInstruction& decoded, ZydisRegister reg) {
                                });
 }
 
-std::optional<std::vector<uintptr_t>> ResolveBoundedJumpTable(
-    const DecodedFunction& function, uintptr_t branch_address, uintptr_t function_start,
-    uintptr_t function_end, uintptr_t segment_start, uintptr_t segment_end) {
+std::optional<std::vector<uintptr_t>>
+ResolveBoundedJumpTable(const DecodedFunction& function, uintptr_t branch_address,
+                        uintptr_t function_start, uintptr_t function_end, uintptr_t segment_start,
+                        uintptr_t segment_end) {
     const auto branch = function.instructions.find(branch_address);
     if (branch == function.instructions.end() ||
         branch->second.instruction.mnemonic != ZYDIS_MNEMONIC_JMP ||

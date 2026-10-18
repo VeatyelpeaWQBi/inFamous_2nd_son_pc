@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "video_core/texture_cache/blit_helper.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
-#include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
 
 #include "video_core/host_shaders/color_to_ms_depth_frag.h"
@@ -282,7 +282,6 @@ void BlitHelper::CreatePipelineLayouts() {
         instance.GetDevice().createPipelineLayoutUnique(layout_info);
     ASSERT_MSG(layout_result == vk::Result::eSuccess,
                "Failed to create graphics pipeline layout: {}", vk::to_string(layout_result));
-    Vulkan::SetObjectName(instance.GetDevice(), *pipeline_layout, "Single texture pipeline layout");
     single_texture_pl_layout = std::move(pipeline_layout);
 }
 
@@ -348,7 +347,6 @@ void BlitHelper::CreateColorToMSDepthPipeline(const MsPipelineKey& key) {
         instance.GetDevice().createGraphicsPipelineUnique(VK_NULL_HANDLE, pipeline_info);
     ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create graphics pipeline: {}",
                vk::to_string(pipeline_result));
-    Vulkan::SetObjectName(instance.GetDevice(), *pipeline, "Color to MS Depth {}", key.num_samples);
 
     color_to_ms_depth_pl.emplace_back(key, std::move(pipeline));
 }
@@ -426,8 +424,6 @@ void BlitHelper::CreateMsCopyPipeline(const MsPipelineKey& key) {
         instance.GetDevice().createGraphicsPipelineUnique(VK_NULL_HANDLE, pipeline_info);
     ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create graphics pipeline: {}",
                vk::to_string(pipeline_result));
-    Vulkan::SetObjectName(instance.GetDevice(), *pipeline, "Non MS Image to MS Image {}",
-                          key.num_samples);
 
     ms_image_copy_pl.emplace_back(key, std::move(pipeline));
 }

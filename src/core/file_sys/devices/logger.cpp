@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "common/logging/log.h"
 #include "core/file_sys/devices/logger.h"
+#include "common/logging/log.h"
 #include "core/libraries/kernel/file_system.h"
 
 namespace Core::Devices {
@@ -58,8 +58,6 @@ void Logger::log_flush() {
     }
     if (is_err) {
         LOG_ERROR(Tty, "[{}] {}", prefix, std::string_view{buffer});
-    } else {
-        LOG_INFO(Tty, "[{}] {}", prefix, std::string_view{buffer});
     }
     buffer.clear();
 }

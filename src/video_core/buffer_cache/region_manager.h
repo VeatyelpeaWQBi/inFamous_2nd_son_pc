@@ -10,9 +10,9 @@
 #include <utility>
 
 #include "common/adaptive_mutex.h"
-#include "common/perf_stats.h"
 #include "common/types.h"
 #include "core/emulator_settings.h"
+#include "core/runtime_policy.h"
 #include "video_core/buffer_cache/region_definitions.h"
 #include "video_core/page_manager.h"
 
@@ -29,7 +29,7 @@ using LockType = std::mutex;
  * Information is stored in bitsets for spacial locality and fast update of single pages.
  */
 class RegionManager {
-public:
+  public:
     explicit RegionManager(PageManager* tracker_, VAddr cpu_addr_)
         : tracker{tracker_}, cpu_addr{cpu_addr_},
           readbacks_mode{EmulatorSettings.GetReadbacksMode()} {
@@ -44,13 +44,9 @@ public:
     }
     explicit RegionManager() = default;
 
-    void SetCpuAddress(VAddr new_cpu_addr) {
-        cpu_addr = new_cpu_addr;
-    }
+    void SetCpuAddress(VAddr new_cpu_addr) { cpu_addr = new_cpu_addr; }
 
-    [[nodiscard]] VAddr GetCpuAddress() const noexcept {
-        return cpu_addr;
-    }
+    [[nodiscard]] VAddr GetCpuAddress() const noexcept { return cpu_addr; }
 
     static constexpr Bounds GetBounds(u64 offset, u64 size) {
         const u64 end_address = offset + size - 1;
@@ -206,8 +202,7 @@ public:
         }
     }
 
-    template <Type type>
-    bool IsRegionModified(u64 offset, u64 size) noexcept {
+    template <Type type> bool IsRegionModified(u64 offset, u64 size) noexcept {
         auto& state = GetRegionBits<type>();
         const auto [start_word, start_page, end_word, end_page] = GetBounds(offset, size);
         const auto [start_mask, end_mask] = GetMasks(start_page, end_page);
@@ -221,9 +216,9 @@ public:
             }
             // Summary of the words (region_summary): clean words are not read. Huge bindings
             // (a buffer covering the whole guest memory) span every word of many regions.
-            if (Common::Perf::GetTuning().region_summary.load(std::memory_order_relaxed) &&
-                (cpu_any.load(std::memory_order_acquire) &
-                 BitRangeMask(start_word, end_word)) == 0) {
+            if (Core::Runtime::GetPolicy().region_summary &&
+                (cpu_any.load(std::memory_order_acquire) & BitRangeMask(start_word, end_word)) ==
+                    0) {
                 return false;
             }
         }
@@ -322,8 +317,8 @@ public:
             }
             const u16 elapsed = static_cast<u16>(frame - fault_frame[page]);
             u8 streak = fault_streak[page];
-            streak = (streak != 0 && elapsed <= 2) ? static_cast<u8>(std::min(streak + 1, 255))
-                                                    : u8{1};
+            streak =
+                (streak != 0 && elapsed <= 2) ? static_cast<u8>(std::min(streak + 1, 255)) : u8{1};
             fault_frame[page] = frame;
             fault_streak[page] = streak;
             if (streak >= threshold) {
@@ -332,7 +327,6 @@ public:
                 hot[index] |= bit;
                 hash_valid[index] &= ~bit;
                 num_hot.fetch_add(1, std::memory_order_relaxed);
-                Common::Perf::Add(Common::Perf::HotPagePromotions);
             }
         }
     }
@@ -437,7 +431,8 @@ public:
 
     /// Write merge, called with the region locked.
     void SetGpuOwnedLocked(u64 offset, u64 size) noexcept {
-        IterateWords(GetBounds(offset, size), [&](u64 index, u64 mask) { gpu_owned[index] |= mask; });
+        IterateWords(GetBounds(offset, size),
+                     [&](u64 index, u64 mask) { gpu_owned[index] |= mask; });
     }
 
     /// Write merge, called with the region locked.
@@ -472,7 +467,6 @@ public:
             no_hot[index] |= leaving;
             const auto count = static_cast<u32>(std::popcount(leaving));
             num_hot.fetch_sub(count, std::memory_order_relaxed);
-            Common::Perf::Add(Common::Perf::HotPageDemotions, count);
         });
     }
 
@@ -516,10 +510,8 @@ public:
             CpuWordsCleared(index, index);
         });
         if (skipped != 0) {
-            Common::Perf::Add(Common::Perf::HotPageHashSkips, skipped);
         }
         if (uploaded != 0) {
-            Common::Perf::Add(Common::Perf::HotPageHashUploads, uploaded);
         }
     }
 
@@ -547,7 +539,6 @@ public:
             }
         });
         if (mismatches != 0) {
-            Common::Perf::Add(Common::Perf::HotPageHashMismatches, mismatches);
         }
     }
 
@@ -615,7 +606,7 @@ public:
         }
     }
 
-private:
+  private:
     /// At the first use of the region in a new upload epoch, marks the hot pages CPU modified so
     /// they are uploaded again. Called with the region locked.
     void RefreshHot() {
@@ -711,7 +702,6 @@ private:
                         hash_valid[index] &= ~leaving;
                         const auto count = static_cast<u32>(std::popcount(leaving));
                         num_hot.fetch_sub(count, std::memory_order_relaxed);
-                        Common::Perf::Add(Common::Perf::HotPageDemotions, count);
                     }
                     changed = (changed & ~hot_word) | leaving;
                 } else {
@@ -816,8 +806,9 @@ private:
     std::atomic<u64>* summary_word{};
     u64 summary_bit{};
     std::array<u64, NUM_REGION_WORDS> write_tick{}; ///< Last GPU tick writing each word.
-    std::array<u64, NUM_REGION_WORDS> write_seq{};  ///< Sequence of the last GPU write of each word.
-    std::array<u8, NUM_REGION_WORDS> write_queue{}; ///< Queue of write_tick (0 graphics, 1 compute).
+    std::array<u64, NUM_REGION_WORDS> write_seq{}; ///< Sequence of the last GPU write of each word.
+    std::array<u8, NUM_REGION_WORDS>
+        write_queue{}; ///< Queue of write_tick (0 graphics, 1 compute).
     /// Cross queue dependencies (asc_queue): last tick of each queue reading and writing each
     /// word (CrossQueueAccess, NoteQueueWrite), and the words the compute queue ever accessed.
     std::array<std::array<u64, NUM_REGION_WORDS>, 2> queue_read_tick{};
@@ -826,7 +817,7 @@ private:
     std::array<u16, NUM_REGION_PAGES> fault_frame{};
     std::array<u8, NUM_REGION_PAGES> fault_streak{};
     std::array<u16, NUM_REGION_PAGES> write_frame{}; ///< Frame of the last write fault.
-    std::array<u64, NUM_REGION_PAGES> page_hash{}; ///< See SkipUnchangedHotPages.
+    std::array<u64, NUM_REGION_PAGES> page_hash{};   ///< See SkipUnchangedHotPages.
     LockType mutex;
 };
 

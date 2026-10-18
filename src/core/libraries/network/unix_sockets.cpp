@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <common/assert.h>
 #include "common/error.h"
 #include "core/libraries/kernel/file_system.h"
 #include "core/libraries/kernel/kernel.h"
 #include "net.h"
+#include <common/assert.h>
 #ifndef _WIN32
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -133,8 +133,9 @@ static int ConvertLevels(int level) {
 }
 
 static void convertOrbisNetSockaddrToUnix(const OrbisNetSockaddr* src, sockaddr_un* dst) {
-    if (src == nullptr || dst == nullptr)
+    if (src == nullptr || dst == nullptr) {
         return;
+    }
     memset(dst, 0, sizeof(sockaddr_un));
     const OrbisNetSockaddrUn* src_in = (const OrbisNetSockaddrUn*)src;
     sockaddr_un* dst_in = (sockaddr_un*)dst;
@@ -143,8 +144,9 @@ static void convertOrbisNetSockaddrToUnix(const OrbisNetSockaddr* src, sockaddr_
 }
 
 static void convertUnixSockaddrToOrbis(sockaddr* src, OrbisNetSockaddr* dst) {
-    if (src == nullptr || dst == nullptr)
+    if (src == nullptr || dst == nullptr) {
         return;
+    }
     memset(dst, 0, sizeof(OrbisNetSockaddrUn));
     OrbisNetSockaddrUn* dst_in = (OrbisNetSockaddrUn*)dst;
     sockaddr_un* src_in = (sockaddr_un*)src;
@@ -171,9 +173,7 @@ int UnixSocket::Close() {
     return ConvertReturnErrorCode(out);
 }
 
-int UnixSocket::Shutdown(int how) {
-    return ConvertReturnErrorCode(::shutdown(sock, how));
-}
+int UnixSocket::Shutdown(int how) { return ConvertReturnErrorCode(::shutdown(sock, how)); }
 
 int UnixSocket::Bind(const OrbisNetSockaddr* addr, u32 addrlen) {
     std::scoped_lock lock{m_mutex};
@@ -293,8 +293,6 @@ int UnixSocket::Connect(const OrbisNetSockaddr* addr, u32 namelen) {
     int result = 0;
     do {
         result = ::connect(sock, (sockaddr*)&addr2, sizeof(sockaddr_un));
-        LOG_DEBUG(Lib_Net, "raw connect result = {}, errno = {}", result,
-                  result == -1 ? Common::GetLastErrorMsg() : "none");
     } while (result == -1 && (errno == EINTR || errno == EINPROGRESS));
     return ConvertReturnErrorCode(result);
 }
@@ -362,7 +360,6 @@ int UnixSocket::GetSocketOptions(int level, int optname, void* optval, u32* optl
 
 int UnixSocket::GetPeerName(OrbisNetSockaddr* name, u32* namelen) {
     std::scoped_lock lock{m_mutex};
-    LOG_DEBUG(Lib_Net, "called");
 
     sockaddr_un addr;
     convertOrbisNetSockaddrToUnix(name, &addr);

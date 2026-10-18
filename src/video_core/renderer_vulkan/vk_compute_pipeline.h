@@ -55,11 +55,9 @@ public:
 
     void Compile() override;
     /// First runtime lookup only; command processor thread, independent of worker readiness.
-    void NoteFirstUse();
 
 private:
     const bool restored;
-    bool first_use_recorded{};
     ComputePipelineKey compute_key;
     vk::ShaderModule module;
     vk::PipelineCache vk_pipeline_cache;

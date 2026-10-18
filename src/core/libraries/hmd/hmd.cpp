@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/hmd/hmd.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
-#include "core/libraries/hmd/hmd.h"
 #include "core/libraries/hmd/hmd_error.h"
 #include "core/libraries/kernel/process.h"
 #include "core/libraries/libs.h"
@@ -45,7 +45,6 @@ s32 PS4_SYSV_ABI sceHmdInitialize315(const OrbisHmdInitializeParam* param) {
 
 s32 PS4_SYSV_ABI sceHmdOpen(Libraries::UserService::OrbisUserServiceUserId user_id, s32 type,
                             s32 index, OrbisHmdOpenParam* param) {
-    LOG_DEBUG(Lib_Hmd, "called");
     if (!g_library_initialized) {
         return ORBIS_HMD_ERROR_NOT_INITIALIZED;
     }
@@ -69,7 +68,6 @@ s32 PS4_SYSV_ABI sceHmdOpen(Libraries::UserService::OrbisUserServiceUserId user_
 
 s32 PS4_SYSV_ABI sceHmdGet2DEyeOffset(s32 handle, OrbisHmdEyeOffset* left_offset,
                                       OrbisHmdEyeOffset* right_offset) {
-    LOG_DEBUG(Lib_Hmd, "called");
     if (!g_library_initialized) {
         return ORBIS_HMD_ERROR_NOT_INITIALIZED;
     }
@@ -97,7 +95,6 @@ s32 PS4_SYSV_ABI sceHmdGet2DEyeOffset(s32 handle, OrbisHmdEyeOffset* left_offset
 }
 
 s32 PS4_SYSV_ABI sceHmdGetAssyError(void* data) {
-    LOG_DEBUG(Lib_Hmd, "called");
     if (data == nullptr) {
         return ORBIS_HMD_ERROR_PARAMETER_NULL;
     }
@@ -109,7 +106,6 @@ s32 PS4_SYSV_ABI sceHmdGetAssyError(void* data) {
 }
 
 s32 PS4_SYSV_ABI sceHmdGetDeviceInformation(OrbisHmdDeviceInformation* info) {
-    LOG_DEBUG(Lib_Hmd, "called");
     if (info == nullptr) {
         return ORBIS_HMD_ERROR_PARAMETER_NULL;
     }
@@ -124,7 +120,6 @@ s32 PS4_SYSV_ABI sceHmdGetDeviceInformation(OrbisHmdDeviceInformation* info) {
 }
 
 s32 PS4_SYSV_ABI sceHmdGetDeviceInformationByHandle(s32 handle, OrbisHmdDeviceInformation* info) {
-    LOG_DEBUG(Lib_Hmd, "called");
     if (handle != g_internal_handle) {
         return ORBIS_HMD_ERROR_HANDLE_INVALID;
     }
@@ -147,7 +142,6 @@ s32 PS4_SYSV_ABI sceHmdGetDeviceInformationByHandle(s32 handle, OrbisHmdDeviceIn
 }
 
 s32 PS4_SYSV_ABI sceHmdGetFieldOfView(s32 handle, OrbisHmdFieldOfView* field_of_view) {
-    LOG_DEBUG(Lib_Hmd, "called");
     if (field_of_view == nullptr) {
         return ORBIS_HMD_ERROR_PARAMETER_NULL;
     }
@@ -192,7 +186,6 @@ s32 PS4_SYSV_ABI sceHmdGetInertialSensorData(s32 handle, void* data, s32 unk) {
 }
 
 s32 PS4_SYSV_ABI sceHmdClose(s32 handle) {
-    LOG_DEBUG(Lib_Hmd, "called");
     if (!g_library_initialized) {
         return ORBIS_HMD_ERROR_NOT_INITIALIZED;
     }
@@ -206,7 +199,6 @@ s32 PS4_SYSV_ABI sceHmdClose(s32 handle) {
 }
 
 s32 PS4_SYSV_ABI sceHmdTerminate() {
-    LOG_DEBUG(Lib_Hmd, "called");
     if (!g_library_initialized) {
         return ORBIS_HMD_ERROR_NOT_INITIALIZED;
     }
@@ -416,7 +408,6 @@ s32 PS4_SYSV_ABI sceHmdInternalGetDeviceInformationByHandle() {
 }
 
 s32 PS4_SYSV_ABI sceHmdInternalGetDeviceStatus(OrbisHmdDeviceStatus* status) {
-    LOG_DEBUG(Lib_Hmd, "called");
     if (status == nullptr) {
         return ORBIS_HMD_ERROR_PARAMETER_NULL;
     }
@@ -566,7 +557,6 @@ s32 PS4_SYSV_ABI sceHmdInternalMmapGetSensorCalibrationData() {
 }
 
 s32 PS4_SYSV_ABI sceHmdInternalMmapIsConnect() {
-    LOG_DEBUG(Lib_Hmd, "called");
     // Returns 0 when device is disconnected.
     return 0;
 }

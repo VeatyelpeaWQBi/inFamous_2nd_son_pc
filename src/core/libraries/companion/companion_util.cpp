@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/companion/companion_util.h"
 #include "common/logging/log.h"
 #include "companion_error.h"
-#include "core/libraries/companion/companion_util.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
 
@@ -31,7 +31,6 @@ u32 PS4_SYSV_ABI getEvent(sceCompanionUtilContext* ctx, sceCompanionUtilEvent* o
 s32 PS4_SYSV_ABI sceCompanionUtilGetEvent(sceCompanionUtilEvent* outEvent) {
     u32 ret = ORBIS_COMPANION_UTIL_NO_EVENT;
 
-    LOG_DEBUG(Lib_CompanionUtil, "(STUBBED) called ret: {:#x}", ret);
     return ret;
 }
 

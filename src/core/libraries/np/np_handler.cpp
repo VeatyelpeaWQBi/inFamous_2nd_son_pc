@@ -2,11 +2,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
-#include <chrono>
-#include <cstring>
-#include <fmt/format.h>
-#include <httplib.h>
+#include "np_handler.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "common/string_util.h"
@@ -22,9 +18,13 @@
 #include "core/user_settings.h"
 #include "imgui/invitation_prompt_layer.h"
 #include "imgui/shadnet_notifications_layer.h"
-#include "np_handler.h"
 #include "shadnet.pb.h"
 #include "shadnet/server_probe.h"
+#include <algorithm>
+#include <chrono>
+#include <cstring>
+#include <fmt/format.h>
+#include <httplib.h>
 
 namespace Libraries::Np {
 
@@ -59,21 +59,22 @@ std::pair<std::string, u16> NpHandler::ParseServerAddress() const {
 }
 
 bool NpHandler::ConnectUserById(s32 user_id) {
-    if (!EmulatorSettings.IsShadNetEnabled())
+    if (!EmulatorSettings.IsShadNetEnabled()) {
         return false;
+    }
 
     {
         std::lock_guard lock(m_mutex_clients);
-        if (m_clients.find(user_id) != m_clients.end())
+        if (m_clients.find(user_id) != m_clients.end()) {
             return false; // already connected
+        }
     }
 
     const User* u = UserManagement.GetUserByID(user_id);
-    if (!u)
+    if (!u) {
         return false;
+    }
     if (!u->shadnet_enabled) {
-        LOG_DEBUG(NpHandler, "user_id={} ('{}') shadNet disabled,skipping", u->user_id,
-                  u->user_name);
         return false;
     }
     if (u->shadnet_npid.empty() || u->shadnet_password.empty()) {
@@ -101,7 +102,6 @@ void NpHandler::Initialize() {
     }
 
     if (!EmulatorSettings.IsShadNetEnabled()) {
-        LOG_INFO(NpHandler, "shadNet disabled globally we are in offline mode");
         return;
     }
 
@@ -154,10 +154,12 @@ void NpHandler::Initialize() {
     int connected_count = 0;
     for (int i = 0; i < Libraries::UserService::ORBIS_USER_SERVICE_MAX_LOGIN_USERS; ++i) {
         const User* u = logged_in[i];
-        if (!u)
+        if (!u) {
             continue;
-        if (ConnectUserById(u->user_id))
+        }
+        if (ConnectUserById(u->user_id)) {
             ++connected_count;
+        }
     }
 
     if (connected_count == 0) {
@@ -169,8 +171,9 @@ void NpHandler::Initialize() {
 }
 
 void NpHandler::Shutdown() {
-    if (!m_initialized.exchange(false))
+    if (!m_initialized.exchange(false)) {
         return;
+    }
 
     m_worker_running = false;
 
@@ -184,22 +187,23 @@ void NpHandler::Shutdown() {
     std::vector<s32> ids;
     {
         std::lock_guard lock(m_mutex_clients);
-        for (auto& [uid, _] : m_clients)
+        for (auto& [uid, _] : m_clients) {
             ids.push_back(uid);
+        }
     }
-    for (s32 uid : ids)
+    for (s32 uid : ids) {
         DisconnectUser(uid);
+    }
 
-    if (m_worker_thread.joinable())
+    if (m_worker_thread.joinable()) {
         m_worker_thread.join();
+    }
 
-    LOG_INFO(NpHandler, "Shutdown complete");
+    ;
 }
 
 bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, const std::string& npid,
                             const std::string& password, const std::string& token) {
-    LOG_INFO(NpHandler, "Connecting user_id={} npid='{}' to {}:{} (timeout {}s)", user_id, npid,
-             host, port, ShadNet::SHAD_CONNECT_TIMEOUT_MS / 1000);
 
     auto client = std::make_shared<ShadNet::ShadNetClient>();
 
@@ -236,8 +240,9 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
     // corrupt/unparseable stream): tell the user and disable shadNet for this run,
     // since reconnect attempts against an incompatible server are pointless.
     const auto handle_protocol_mismatch = [&client](ShadNet::ShadNetState st) {
-        if (st != ShadNet::ShadNetState::FailureProtocol)
+        if (st != ShadNet::ShadNetState::FailureProtocol) {
             return;
+        }
         const u32 server_ver = client->GetServerProtocolVersion();
         EmulatorSettings.SetShadNetSessionDisabled(true);
         if (server_ver != 0) {
@@ -279,8 +284,7 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
         return false;
     }
 
-    LOG_INFO(NpHandler, "user_id={} signed in npid='{}' accountId={}", user_id, npid,
-             client->GetUserId());
+    ;
 
     Net::UPnPClient::Instance().SetP2PFeaturesEnabled(client->IsMatching2Enabled());
     if (client->IsMatching2Enabled() && EmulatorSettings.IsUPnPEnabled()) {
@@ -306,8 +310,9 @@ void NpHandler::SetAppearOffline(bool enable) {
     m_appear_offline = enable;
     std::lock_guard lock(m_mutex_clients);
     for (auto& [uid, client] : m_clients) {
-        if (client)
+        if (client) {
             client->SetAppearOffline(enable); // sends the toggle to connected sessions
+        }
     }
 }
 
@@ -366,8 +371,9 @@ void NpHandler::DisconnectUser(s32 user_id) {
     {
         std::lock_guard lock(m_mutex_clients);
         auto it = m_clients.find(user_id);
-        if (it == m_clients.end())
+        if (it == m_clients.end()) {
             return;
+        }
         client = std::move(it->second);
         m_clients.erase(it);
     }
@@ -380,12 +386,12 @@ void NpHandler::DisconnectUser(s32 user_id) {
     // in-flight request now, or PollAsync spins and WaitAsync blocks forever.
     FailPendingRequests(user_id, ORBIS_NP_ERROR_SIGNED_OUT);
     FireStateCallback(user_id, NpManager::OrbisNpState::SignedOut);
-    LOG_INFO(NpHandler, "user_id={} disconnected", user_id);
 }
 
 void NpHandler::OnUserLoggedIn(s32 user_id) {
-    if (ConnectUserById(user_id))
+    if (ConnectUserById(user_id)) {
         StartWorker();
+    }
 }
 
 void NpHandler::OnUserLoggedOut(s32 user_id) {
@@ -407,8 +413,9 @@ void NpHandler::WorkerThread() {
         {
             std::lock_guard lock(m_mutex_clients);
             for (auto& [uid, client] : m_clients) {
-                if (!client->IsConnected())
+                if (!client->IsConnected()) {
                     dropped.push_back(uid);
+                }
             }
         }
 
@@ -423,8 +430,9 @@ void NpHandler::WorkerThread() {
 }
 
 void NpHandler::MarkForReconnect(s32 user_id) {
-    if (!EmulatorSettings.IsShadNetEnabled())
+    if (!EmulatorSettings.IsShadNetEnabled()) {
         return; // offline mode: nothing to reconnect to
+    }
     constexpr auto kInitialBackoff = std::chrono::milliseconds(2000);
     std::lock_guard lock(m_mutex_clients);
     auto& st = m_reconnect[user_id];
@@ -440,14 +448,16 @@ void NpHandler::TryReconnect() {
     {
         std::lock_guard lock(m_mutex_clients);
         for (auto& [uid, st] : m_reconnect) {
-            if (m_clients.count(uid) || now >= st.next_attempt)
+            if (m_clients.count(uid) || now >= st.next_attempt) {
                 due.push_back(uid);
+            }
         }
     }
 
     for (s32 uid : due) {
-        if (!m_worker_running)
+        if (!m_worker_running) {
             return;
+        }
         if (!EmulatorSettings.IsShadNetEnabled()) {
             std::lock_guard lock(m_mutex_clients);
             m_reconnect.erase(uid);
@@ -458,12 +468,9 @@ void NpHandler::TryReconnect() {
         std::lock_guard lock(m_mutex_clients);
         if (ok || m_clients.count(uid)) {
             m_reconnect.erase(uid);
-            LOG_INFO(NpHandler, "user_id={} reconnected to shadNet", uid);
         } else if (auto it = m_reconnect.find(uid); it != m_reconnect.end()) {
             it->second.backoff = std::min(it->second.backoff * 2, kMaxBackoff);
             it->second.next_attempt = std::chrono::steady_clock::now() + it->second.backoff;
-            LOG_DEBUG(NpHandler, "user_id={} reconnect failed; next attempt in {}ms", uid,
-                      it->second.backoff.count());
         }
     }
 }
@@ -476,9 +483,11 @@ bool NpHandler::IsPsnSignedIn(s32 user_id) const {
 
 bool NpHandler::IsAnySignedIn() const {
     std::lock_guard lock(m_mutex_clients);
-    for (auto& [_, client] : m_clients)
-        if (client->IsAuthenticated())
+    for (auto& [_, client] : m_clients) {
+        if (client->IsAuthenticated()) {
             return true;
+        }
+    }
     return false;
 }
 
@@ -488,9 +497,7 @@ OrbisNpId NpHandler::GetNpId(s32 user_id) const {
     return it != m_np_ids.end() ? it->second : OrbisNpId{};
 }
 
-OrbisNpOnlineId NpHandler::GetOnlineId(s32 user_id) const {
-    return GetNpId(user_id).handle;
-}
+OrbisNpOnlineId NpHandler::GetOnlineId(s32 user_id) const { return GetNpId(user_id).handle; }
 
 std::string NpHandler::GetAvatarUrl(s32 user_id) const {
     std::lock_guard lock(m_mutex_clients);
@@ -605,9 +612,7 @@ bool NpHandler::SendSessionInvitation(s32 user_id, const std::string& session_id
     if (res->status != 200 && res->status != 204) {
         LOG_ERROR(NpHandler, "SendSessionInvitation: POST {} -> HTTP {}", path, res->status);
         return false;
-    }
-    LOG_INFO(NpHandler, "SendSessionInvitation: sent invite to {} recipient(s) for session '{}'",
-             to.size(), session_id);
+    };
     return true;
 }
 
@@ -640,11 +645,6 @@ void NpHandler::PostSessionInvitationEvent(s32 user_id, const std::string& sessi
     param->referralAccountId = inviter_account_id;
 
     Libraries::SystemService::PushSystemServiceEvent(event);
-    LOG_INFO(NpHandler,
-             "Posted SESSION_INVITATION user_id={} session='{}' invitation='{}' flag={} "
-             "onlineId='{}' referral='{}'({})",
-             user_id, session_id, invitation_id, param->flag, accepter_online_id, inviter_online_id,
-             inviter_account_id);
 }
 
 std::vector<NpHandler::PendingInvitation> NpHandler::GetPendingInvitations(s32 user_id) const {
@@ -714,9 +714,7 @@ bool NpHandler::AcceptSessionInvitation(s32 user_id, const std::string& invitati
         LOG_ERROR(NpHandler, "AcceptSessionInvitation: PUT {} failed ({})", path,
                   res ? res->status : 0);
         return false;
-    }
-    LOG_INFO(NpHandler, "AcceptSessionInvitation: consumed '{}' session='{}'", invitation_id,
-             inv.session_id);
+    };
     return true;
 }
 
@@ -732,8 +730,6 @@ void NpHandler::DeclineSessionInvitation(s32 user_id, const std::string& invitat
                 v.begin(), v.end(),
                 [&](const PendingInvitation& p) { return p.invitation_id == invitation_id; }),
             v.end());
-    LOG_INFO(NpHandler, "DeclineSessionInvitation: dismissed '{}' for user_id={}", invitation_id,
-             user_id);
 }
 
 u32 NpHandler::GetLocalIpAddr(s32 user_id) const {
@@ -745,8 +741,9 @@ u32 NpHandler::GetLocalIpAddr(s32 user_id) const {
 s32 NpHandler::GetUserIdByAccountId(u64 account_id) const {
     std::lock_guard lock(m_mutex_clients);
     for (auto& [uid, client] : m_clients) {
-        if (static_cast<u64>(client->GetUserId()) == account_id)
+        if (static_cast<u64>(client->GetUserId()) == account_id) {
             return uid;
+        }
     }
     return -1;
 }
@@ -754,8 +751,9 @@ s32 NpHandler::GetUserIdByAccountId(u64 account_id) const {
 s32 NpHandler::GetUserIdByOnlineId(const OrbisNpOnlineId& online_id) const {
     std::lock_guard lock(m_mutex_clients);
     for (auto& [uid, np_id] : m_np_ids) {
-        if (strncmp(np_id.handle.data, online_id.data, ORBIS_NP_ONLINEID_MAX_LENGTH) == 0)
+        if (strncmp(np_id.handle.data, online_id.data, ORBIS_NP_ONLINEID_MAX_LENGTH) == 0) {
             return uid;
+        }
     }
     return -1;
 }
@@ -774,7 +772,6 @@ std::optional<std::string> NpHandler::GetFriendNpid(s32 user_id, u32 index) cons
 }
 
 void NpHandler::OnFriendQuery(s32 user_id, const ShadNet::NotifyFriendQuery& n) {
-    LOG_INFO(NpHandler, "user_id={} FriendQuery from '{}'", user_id, n.fromNpid);
     ImGui::ShadNetNotify::Push(ImGui::ShadNetNotify::Kind::FriendRequest,
                                "Friend request from " + n.fromNpid);
     std::lock_guard lock(m_mutex_friend_state);
@@ -786,8 +783,6 @@ void NpHandler::OnFriendQuery(s32 user_id, const ShadNet::NotifyFriendQuery& n) 
 }
 
 void NpHandler::OnFriendNew(s32 user_id, const ShadNet::NotifyFriendNew& n) {
-    LOG_INFO(NpHandler, "user_id={} FriendNew '{}' ({})", user_id, n.npid,
-             n.online ? "online" : "offline");
     ImGui::ShadNetNotify::Push(ImGui::ShadNetNotify::Kind::FriendNew,
                                n.npid + " is now your friend");
     std::lock_guard lock(m_mutex_friend_state);
@@ -807,7 +802,6 @@ void NpHandler::OnFriendNew(s32 user_id, const ShadNet::NotifyFriendNew& n) {
 }
 
 void NpHandler::OnFriendLost(s32 user_id, const ShadNet::NotifyFriendLost& n) {
-    LOG_INFO(NpHandler, "user_id={} FriendLost '{}'", user_id, n.npid);
     ImGui::ShadNetNotify::Push(ImGui::ShadNetNotify::Kind::FriendLost,
                                n.npid + " removed you as a friend");
     std::lock_guard lock(m_mutex_friend_state);
@@ -818,8 +812,6 @@ void NpHandler::OnFriendLost(s32 user_id, const ShadNet::NotifyFriendLost& n) {
 }
 
 void NpHandler::OnFriendStatus(s32 user_id, const ShadNet::NotifyFriendStatus& n) {
-    LOG_DEBUG(NpHandler, "user_id={} FriendStatus '{}' is {}", user_id, n.npid,
-              n.online ? "online" : "offline");
     if (n.online) {
         ImGui::ShadNetNotify::Push(ImGui::ShadNetNotify::Kind::Online, n.npid + " is online");
     }
@@ -835,8 +827,6 @@ void NpHandler::OnFriendStatus(s32 user_id, const ShadNet::NotifyFriendStatus& n
 }
 
 void NpHandler::OnWebApiPushEvent(s32 user_id, const ShadNet::NotifyWebApiPushEvent& n) {
-    LOG_INFO(NpHandler, "user_id={} WebApiPushEvent svc='{}' type='{}' bytes={}", user_id,
-             n.npServiceName, n.dataType, n.data.size());
     // Forward verbatim to the libSceNpWebApi push-event dispatch.it queues the event
     // and delivers it on the game's thread during sceNpCheckCallback to any registered
     // (and filter-matching) push-event callback.
@@ -933,11 +923,7 @@ void NpHandler::OnLoginResult(s32 user_id, const ShadNet::LoginResult& res) {
     {
         std::lock_guard lock(m_mutex_friend_state);
         m_friend_state[user_id] = std::move(snap);
-    }
-    LOG_INFO(NpHandler,
-             "user_id={} friend state seeded: {} friends, {} received, {} sent, {} blocked",
-             user_id, res.friends.size(), res.requestsReceived.size(), res.requestsSent.size(),
-             res.blocked.size());
+    };
 
     // Surface friend requests that arrived while offline (no live notification fires for these).
     if (!res.requestsReceived.empty()) {
@@ -977,7 +963,6 @@ s32 NpHandler::SendFriendRequest(s32 user_id, const std::string& npid) {
         return ORBIS_NP_ERROR_SIGNED_OUT;
     }
     client->AddFriend(npid);
-    LOG_INFO(NpHandler, "user_id={} AddFriend '{}'", user_id, npid);
 
     std::lock_guard lock(m_mutex_friend_state);
     auto& st = m_friend_state[user_id];
@@ -1004,7 +989,6 @@ s32 NpHandler::RemoveFriend(s32 user_id, const std::string& npid) {
         return ORBIS_NP_ERROR_SIGNED_OUT;
     }
     client->RemoveFriend(npid);
-    LOG_INFO(NpHandler, "user_id={} RemoveFriend '{}'", user_id, npid);
 
     std::lock_guard lock(m_mutex_friend_state);
     auto& st = m_friend_state[user_id];
@@ -1033,7 +1017,6 @@ s32 NpHandler::BlockUser(s32 user_id, const std::string& npid) {
         return ORBIS_NP_ERROR_SIGNED_OUT;
     }
     client->AddBlock(npid);
-    LOG_INFO(NpHandler, "user_id={} AddBlock '{}'", user_id, npid);
 
     std::lock_guard lock(m_mutex_friend_state);
     auto& st = m_friend_state[user_id];
@@ -1065,7 +1048,6 @@ s32 NpHandler::UnblockUser(s32 user_id, const std::string& npid) {
         return ORBIS_NP_ERROR_SIGNED_OUT;
     }
     client->RemoveBlock(npid);
-    LOG_INFO(NpHandler, "user_id={} RemoveBlock '{}'", user_id, npid);
 
     std::lock_guard lock(m_mutex_friend_state);
     auto& st = m_friend_state[user_id];
@@ -1091,8 +1073,9 @@ void NpHandler::UnregisterStateCallback(s32 handle) {
 void NpHandler::FireStateCallback(s32 user_id, NpManager::OrbisNpState state) {
     std::lock_guard lock(m_mutex_cbs);
     for (const auto& e : m_state_cbs) {
-        if (e.cb)
+        if (e.cb) {
             e.cb(user_id, state);
+        }
     }
 }
 
@@ -1187,12 +1170,7 @@ s32 NpHandler::RecordScore(s32 user_id, s32 service_label, u32 boardId, s32 pcId
         pending.cmd = ShadNet::CommandType::RecordScore;
         pending.user_id = user_id;
         m_pending_score.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler,
-             "RecordScore: user_id={} service_label={} board={} pcId={} score={} commentLen={} "
-             "gameInfoSize={} pkt_id={} com_id='{}'",
-             user_id, service_label, boardId, pcId, score, commentLen, gameInfoSize, pkt_id,
-             com_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1248,11 +1226,7 @@ s32 NpHandler::RecordGameData(s32 user_id, s32 service_label, u32 boardId, s32 p
         pending.cmd = ShadNet::CommandType::RecordScoreData;
         pending.user_id = user_id;
         m_pending_score.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler,
-             "RecordGameData: user_id={} service_label={} board={} pcId={} score={} dataSize={} "
-             "pkt_id={} com_id='{}'",
-             user_id, service_label, boardId, pcId, score, size, pkt_id, com_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1308,11 +1282,7 @@ s32 NpHandler::GetGameData(s32 user_id, s32 service_label, u32 boardId, const st
         pending.totalSizeOut = totalSizeOut;
         pending.user_id = user_id;
         m_pending_score.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler,
-             "GetGameData: user_id={} service_label={} board={} npId='{}' pcId={} recvSize={} "
-             "pkt_id={} com_id='{}'",
-             user_id, service_label, boardId, npId, pcId, recvSize, pkt_id, com_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1369,11 +1339,7 @@ s32 NpHandler::GetGameDataByAccountId(s32 user_id, s32 service_label, u32 boardI
         pending.totalSizeOut = totalSizeOut;
         pending.user_id = user_id;
         m_pending_score.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler,
-             "GetGameDataByAccountId: user_id={} service_label={} board={} accountId={} pcId={} "
-             "recvSize={} pkt_id={} com_id='{}'",
-             user_id, service_label, boardId, accountId, pcId, recvSize, pkt_id, com_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1418,9 +1384,7 @@ s32 NpHandler::GetBoardInfo(s32 user_id, s32 service_label, u32 boardId,
         pending.boardInfo = boardInfo;
         pending.user_id = user_id;
         m_pending_score.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler, "GetBoardInfo: user_id={} service_label={} board={} pkt_id={} com_id='{}'",
-             user_id, service_label, boardId, pkt_id, com_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1498,12 +1462,7 @@ s32 NpHandler::GetRankingByNpId(s32 user_id, s32 service_label, u32 boardId,
         pending.arrayNum = npIds.size();
         pending.user_id = user_id;
         m_pending_score.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler,
-             "GetRankingByNpId: user_id={} service_label={} board={} npIdCount={} "
-             "withPcId={} withComment={} withGameInfo={} pkt_id={} com_id='{}'",
-             user_id, service_label, boardId, npIds.size(), !pcIds.empty(), commentArray != nullptr,
-             infoArray != nullptr, pkt_id, com_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1567,12 +1526,7 @@ s32 NpHandler::GetRankingByRange(s32 user_id, s32 service_label, u32 boardId, u3
         pending.arrayNum = arrayNum;
         pending.user_id = user_id;
         m_pending_score.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler,
-             "GetRankingByRange: user_id={} service_label={} board={} startRank={} numRanks={} "
-             "withComment={} withGameInfo={} pkt_id={} com_id='{}'",
-             user_id, service_label, boardId, startSerialRank, arrayNum, commentArray != nullptr,
-             infoArray != nullptr, pkt_id, com_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1639,12 +1593,7 @@ s32 NpHandler::GetRankingByRangeA(s32 user_id, s32 service_label, u32 boardId, u
         pending.arrayNum = arrayNum;
         pending.user_id = user_id;
         m_pending_score.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler,
-             "GetRankingByRangeA: user_id={} service_label={} board={} startRank={} numRanks={} "
-             "withComment={} withGameInfo={} pkt_id={} com_id='{}'",
-             user_id, service_label, boardId, startSerialRank, arrayNum, commentArray != nullptr,
-             infoArray != nullptr, pkt_id, com_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1713,12 +1662,7 @@ s32 NpHandler::GetRankingByAccountId(s32 user_id, s32 service_label, u32 boardId
         pending.arrayNum = accountIds.size();
         pending.user_id = user_id;
         m_pending_score.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler,
-             "GetRankingByAccountId: user_id={} service_label={} board={} accountIdCount={} "
-             "withComment={} withGameInfo={} pkt_id={} com_id='{}'",
-             user_id, service_label, boardId, accountIds.size(), commentArray != nullptr,
-             infoArray != nullptr, pkt_id, com_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1782,12 +1726,7 @@ s32 NpHandler::GetFriendsRanking(s32 user_id, s32 service_label, u32 boardId, bo
         pending.arrayNum = arrayNum;
         pending.user_id = user_id;
         m_pending_score.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler,
-             "GetFriendsRanking: user_id={} service_label={} board={} includeSelf={} "
-             "arrayNum={} withComment={} withGameInfo={} pkt_id={} com_id='{}'",
-             user_id, service_label, boardId, includeSelf, arrayNum, commentArray != nullptr,
-             infoArray != nullptr, pkt_id, com_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1853,12 +1792,7 @@ s32 NpHandler::GetFriendsRankingA(s32 user_id, s32 service_label, u32 boardId, b
         pending.arrayNum = arrayNum;
         pending.user_id = user_id;
         m_pending_score.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler,
-             "GetFriendsRankingA: user_id={} service_label={} board={} includeSelf={} "
-             "arrayNum={} withComment={} withGameInfo={} pkt_id={} com_id='{}'",
-             user_id, service_label, boardId, includeSelf, arrayNum, commentArray != nullptr,
-             infoArray != nullptr, pkt_id, com_id);
+    };
     return ORBIS_OK;
 }
 
@@ -1879,10 +1813,6 @@ static u32 FillPlainRankArrayFromProto(const shadnet::GetScoreResponse& resp, u6
         const size_t cp = std::min<size_t>(npid.size(), sizeof(out.npId.handle.data));
         std::memcpy(out.npId.handle.data, npid.data(), cp);
         out.npId.handle.term = 0;
-        LOG_INFO(NpHandler,
-                 "FillPlainRankArrayFromProto: out[{}] (resp[{}]) npid='{}' (len={}) rank={} "
-                 "score={}",
-                 out_i, i, npid, npid.size(), r.rank(), r.score());
         out.pcId = r.pcid();
         out.serialRank = r.rank();
         out.rank = r.rank();
@@ -1925,10 +1855,6 @@ static u32 FillPlainRankArrayAFromProto(const shadnet::GetScoreResponse& resp, u
         const size_t cp = std::min<size_t>(npid.size(), sizeof(out.onlineId.data));
         std::memcpy(out.onlineId.data, npid.data(), cp);
         out.onlineId.term = 0;
-        LOG_INFO(NpHandler,
-                 "FillPlainRankArrayAFromProto: out[{}] (resp[{}]) npid='{}' (len={}) rank={} "
-                 "score={} accountId={}",
-                 out_i, i, npid, npid.size(), r.rank(), r.score(), r.accountid());
         out.pcId = r.pcid();
         out.serialRank = r.rank();
         out.rank = r.rank();
@@ -2782,14 +2708,11 @@ void NpHandler::ReportTrophyUnlock(s32 user_id, s32 service_label, s32 trophy_id
         std::lock_guard lock(m_mutex_clients);
         auto it = m_clients.find(user_id);
         if (it == m_clients.end()) {
-            LOG_DEBUG(NpHandler, "ReportTrophyUnlock: no shadNet session for user_id={}; skipping",
-                      user_id);
             return;
         }
         client = it->second;
     }
     if (!client) {
-        LOG_DEBUG(NpHandler, "ReportTrophyUnlock: null client for user_id={}; skipping", user_id);
         return;
     }
     if (!client->IsAuthenticated()) {
@@ -2815,8 +2738,6 @@ void NpHandler::ReportTrophyUnlock(s32 user_id, s32 service_label, s32 trophy_id
     }
 
     const u64 pkt_id = client->UnlockTrophy(com_id, trophy_id, timestamp);
-    LOG_INFO(NpHandler, "ReportTrophyUnlock: user_id={} trophy={} com_id='{}' pkt_id={}", user_id,
-             trophy_id, com_id, pkt_id);
 }
 
 void NpHandler::SyncTrophies(
@@ -2827,14 +2748,11 @@ void NpHandler::SyncTrophies(
         std::lock_guard lock(m_mutex_clients);
         auto it = m_clients.find(user_id);
         if (it == m_clients.end()) {
-            LOG_DEBUG(NpHandler, "SyncTrophies: no shadNet session for user_id={}; skipping",
-                      user_id);
             return;
         }
         client = it->second;
     }
     if (!client) {
-        LOG_DEBUG(NpHandler, "SyncTrophies: null client for user_id={}; skipping", user_id);
         return;
     }
     if (!client->IsAuthenticated()) {
@@ -2859,9 +2777,7 @@ void NpHandler::SyncTrophies(
     if (on_merged) {
         std::lock_guard lock(m_mutex_pending_trophy);
         m_pending_trophy.emplace(pkt_id, std::move(on_merged));
-    }
-    LOG_INFO(NpHandler, "SyncTrophies: user_id={} uploading {} com_id='{}' pkt_id={}", user_id,
-             local_trophies.size(), com_id, pkt_id);
+    };
 }
 
 void NpHandler::OnTrophyReply(s32 user_id, ShadNet::CommandType cmd, u64 pkt_id,
@@ -2873,15 +2789,17 @@ void NpHandler::OnTrophyReply(s32 user_id, ShadNet::CommandType cmd, u64 pkt_id,
         }
         return;
     }
-    if (cmd != ShadNet::CommandType::SyncTrophies)
+    if (cmd != ShadNet::CommandType::SyncTrophies) {
         return;
+    }
 
     std::function<void(const std::vector<std::pair<s32, u64>>&)> on_merged;
     {
         std::lock_guard lock(m_mutex_pending_trophy);
         auto it = m_pending_trophy.find(pkt_id);
-        if (it == m_pending_trophy.end())
+        if (it == m_pending_trophy.end()) {
             return;
+        }
         on_merged = std::move(it->second);
         m_pending_trophy.erase(it);
     }
@@ -2911,10 +2829,11 @@ void NpHandler::OnTrophyReply(s32 user_id, ShadNet::CommandType cmd, u64 pkt_id,
 
     std::vector<std::pair<s32, u64>> merged;
     merged.reserve(pb.trophies_size());
-    for (const auto& t : pb.trophies())
+    for (const auto& t : pb.trophies()) {
         merged.emplace_back(t.trophyid(), t.timestamp());
+    }
 
-    LOG_INFO(NpHandler, "server holds {} trophies for user_id={}", merged.size(), user_id);
+    ;
     on_merged(merged);
 }
 
@@ -2956,8 +2875,7 @@ void NpHandler::ResolveOnlineId(
         pending.user_id = user_id;
         pending.on_result = std::move(on_result);
         m_pending_lookup.emplace(pkt_id, std::move(pending));
-    }
-    LOG_INFO(NpHandler, "user_id={} onlineId='{}' pkt_id={}", user_id, online_id, pkt_id);
+    };
 }
 
 void NpHandler::OnLookupReply(s32 user_id, ShadNet::CommandType /*cmd*/, u64 pkt_id,
@@ -2977,7 +2895,6 @@ void NpHandler::OnLookupReply(s32 user_id, ShadNet::CommandType /*cmd*/, u64 pkt
     }
 
     if (error == ShadNet::ErrorType::NotFound) {
-        LOG_INFO(NpHandler, "LookupOnlineId: user_id={} pkt_id={} -> not found", user_id, pkt_id);
         on_result(ORBIS_NP_COMMUNITY_SERVER_ERROR_NO_SUCH_USER_NPID, 0, {});
         return;
     }
@@ -3012,8 +2929,7 @@ void NpHandler::OnLookupReply(s32 user_id, ShadNet::CommandType /*cmd*/, u64 pkt
         return;
     }
 
-    LOG_INFO(NpHandler, "LookupOnlineId: user_id={} pkt_id={} -> accountId={} npid='{}'", user_id,
-             pkt_id, pb.account_id(), pb.npid());
+    ;
     on_result(ORBIS_OK, pb.account_id(), pb.npid());
 }
 
@@ -3075,8 +2991,6 @@ void NpHandler::OnScoreReply(s32 user_id, ShadNet::CommandType cmd, u64 pkt_id,
             const u32 rank = static_cast<u32>(body[0]) | (static_cast<u32>(body[1]) << 8) |
                              (static_cast<u32>(body[2]) << 16) | (static_cast<u32>(body[3]) << 24);
             *req->tmpRankOut = rank;
-            LOG_INFO(NpHandler, "OnScoreReply: RecordScore user_id={} pkt_id={} rank={}", user_id,
-                     pkt_id, rank);
         }
         req->SetResult(ORBIS_OK);
         break;
@@ -3087,8 +3001,6 @@ void NpHandler::OnScoreReply(s32 user_id, ShadNet::CommandType cmd, u64 pkt_id,
         // the caller. Server-side errors are mapped to ErrorType values
         // (NotFound / ScoreInvalid / ScoreHasData) which arrive as the
         // packet's error byte; if we got here, error == NoError.
-        LOG_INFO(NpHandler, "OnScoreReply: RecordScoreData user_id={} pkt_id={} ok", user_id,
-                 pkt_id);
         req->SetResult(ORBIS_OK);
         break;
     }
@@ -3128,9 +3040,7 @@ void NpHandler::OnScoreReply(s32 user_id, ShadNet::CommandType cmd, u64 pkt_id,
                             "OnScoreReply: {} truncated user_id={} pkt_id={} stored={} recv={}",
                             cmd_name, user_id, pkt_id, stored_size, pending.recvSize);
             }
-        }
-        LOG_INFO(NpHandler, "OnScoreReply: {} user_id={} pkt_id={} storedSize={} recvSize={}",
-                 cmd_name, user_id, pkt_id, stored_size, pending.recvSize);
+        };
         req->SetResult(ORBIS_OK);
         break;
     }
@@ -3162,12 +3072,7 @@ void NpHandler::OnScoreReply(s32 user_id, ShadNet::CommandType cmd, u64 pkt_id,
             pending.boardInfo->sortMode = bi.sortmode();
             pending.boardInfo->uploadNumLimit = bi.uploadnumlimit();
             pending.boardInfo->uploadSizeLimit = bi.uploadsizelimit();
-        }
-        LOG_INFO(NpHandler,
-                 "OnScoreReply: GetBoardInfos user_id={} pkt_id={} rankLimit={} updateMode={} "
-                 "sortMode={} uploadNumLimit={} uploadSizeLimit={}",
-                 user_id, pkt_id, bi.ranklimit(), bi.updatemode(), bi.sortmode(),
-                 bi.uploadnumlimit(), bi.uploadsizelimit());
+        };
         req->SetResult(ORBIS_OK);
         break;
     }
@@ -3201,10 +3106,7 @@ void NpHandler::OnScoreReply(s32 user_id, ShadNet::CommandType cmd, u64 pkt_id,
         }
         if (pending.totalRecord != nullptr) {
             *pending.totalRecord = resp.totalrecord();
-        }
-        LOG_INFO(NpHandler,
-                 "OnScoreReply: GetScoreNpid user_id={} pkt_id={} found={}/{} totalRecord={}",
-                 user_id, pkt_id, found, pending.arrayNum, resp.totalrecord());
+        };
         req->SetResult(static_cast<s32>(found));
         break;
     }
@@ -3242,10 +3144,7 @@ void NpHandler::OnScoreReply(s32 user_id, ShadNet::CommandType cmd, u64 pkt_id,
         }
         if (pending.totalRecord != nullptr) {
             *pending.totalRecord = resp.totalrecord();
-        }
-        LOG_INFO(NpHandler,
-                 "OnScoreReply: GetScoreAccountId user_id={} pkt_id={} found={}/{} totalRecord={}",
-                 user_id, pkt_id, found, pending.arrayNum, resp.totalrecord());
+        };
         req->SetResult(static_cast<s32>(found));
         break;
     }
@@ -3287,10 +3186,7 @@ void NpHandler::OnScoreReply(s32 user_id, ShadNet::CommandType cmd, u64 pkt_id,
         }
         if (pending.totalRecord != nullptr) {
             *pending.totalRecord = resp.totalrecord();
-        }
-        LOG_INFO(NpHandler, "OnScoreReply: {} user_id={} pkt_id={} found={}/{} totalRecord={}{}",
-                 cmd_name, user_id, pkt_id, found, pending.arrayNum, resp.totalrecord(),
-                 pending.aRankArray != nullptr ? " (A-variant)" : "");
+        };
         req->SetResult(static_cast<s32>(found));
         break;
     }
@@ -3603,7 +3499,7 @@ void NpHandler::OnTusReply(s32 user_id, ShadNet::CommandType cmd, u64 pkt_id,
     }
     default:
         // Set*/Delete* carry no payload to fill.
-        LOG_DEBUG(NpHandler, "OnTusReply: cmd={} ok (no payload)", static_cast<int>(cmd));
+        ;
         break;
     }
     req->SetResult(ORBIS_OK);

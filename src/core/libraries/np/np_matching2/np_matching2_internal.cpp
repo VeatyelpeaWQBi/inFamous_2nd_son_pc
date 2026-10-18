@@ -4,8 +4,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <utility>
 #include <fmt/format.h>
+#include <utility>
 
 #include "common/logging/log.h"
 #include "common/thread.h"
@@ -214,8 +214,9 @@ void ReserveMemberBinAttrs(CallbackPayload& p, const shadnet::CreateJoinRoomResp
     p.member_bin_attrs.reserve(total);
 }
 
-OrbisNpMatching2RoomMemberBinAttrInternal* AppendMemberBinAttrs(
-    CallbackPayload& p, const shadnet::MatchingRoomMemberData& member, u64& count) {
+OrbisNpMatching2RoomMemberBinAttrInternal*
+AppendMemberBinAttrs(CallbackPayload& p, const shadnet::MatchingRoomMemberData& member,
+                     u64& count) {
     const size_t first = p.member_bin_attrs.size();
     count = static_cast<u64>(member.bin_attrs_internal_size());
     for (const auto& a : member.bin_attrs_internal()) {
@@ -1152,8 +1153,6 @@ s32 ContextManager::CreateContext(const OrbisNpId* owner_np_id, OrbisNpServiceLa
     m_used[id] = true;
 
     *out_ctx_id = id;
-    LOG_DEBUG(Lib_NpMatching2, "context{} created: id={} online_id={} serviceLabel={:#x}",
-              a_variant ? "A" : "", id, ctx.online_id.data, service_label);
     return ORBIS_OK;
 }
 
@@ -1175,12 +1174,10 @@ bool ContextManager::Destroy(OrbisNpMatching2ContextId ctx_id) {
     }
     if (ctx->stop_pending) {
         ctx->destroy_pending = true;
-        LOG_DEBUG(Lib_NpMatching2, "context destroy deferred until stop callback: id={}", ctx_id);
         return true;
     }
     m_contexts[ctx_id].Reset();
     m_used[ctx_id] = false;
-    LOG_DEBUG(Lib_NpMatching2, "context destroyed: id={}", ctx_id);
     return true;
 }
 
@@ -1196,7 +1193,6 @@ void ContextManager::CompleteStop(OrbisNpMatching2ContextId ctx_id) {
     }
     m_contexts[ctx_id].Reset();
     m_used[ctx_id] = false;
-    LOG_DEBUG(Lib_NpMatching2, "context destroyed after stop callback: id={}", ctx_id);
 }
 
 s32 ContextManager::Start(OrbisNpMatching2ContextId ctx_id) {
@@ -1211,7 +1207,6 @@ s32 ContextManager::Start(OrbisNpMatching2ContextId ctx_id) {
     ctx->started = true;
     ctx->stop_pending = false;
     ctx->destroy_pending = false;
-    LOG_DEBUG(Lib_NpMatching2, "context started: id={}", ctx_id);
     return ORBIS_OK;
 }
 
@@ -1226,7 +1221,6 @@ s32 ContextManager::Stop(OrbisNpMatching2ContextId ctx_id) {
     }
     ctx->started = false;
     ctx->stop_pending = true;
-    LOG_DEBUG(Lib_NpMatching2, "context stopped: id={}", ctx_id);
     return ORBIS_OK;
 }
 
@@ -1264,13 +1258,9 @@ OrbisNpMatching2RequestId AllocRequestId() {
 
 static bool g_initialized = false;
 
-bool IsInitialized() {
-    return g_initialized;
-}
+bool IsInitialized() { return g_initialized; }
 
-void SetInitialized(bool initialized) {
-    g_initialized = initialized;
-}
+void SetInitialized(bool initialized) { g_initialized = initialized; }
 
 void StoreRequestCallback(ContextObject* ctx, const OrbisNpMatching2RequestOptParam* requestOpt) {
     ctx->per_request_callback = nullptr;
@@ -1308,9 +1298,6 @@ void FireEvent(const PendingEvent& ev) {
     switch (ev.type) {
     case PendingEvent::CONTEXT_CB:
         if (ctx->context_callback) {
-            LOG_DEBUG(Lib_NpMatching2, "callback CONTEXT ctx={} event={:#x} cause={} err={:#x}",
-                      ev.ctx_id, static_cast<u16>(ev.ctx_event),
-                      static_cast<u8>(ev.ctx_event_cause), ev.error_code);
             ctx->context_callback(ev.ctx_id, ev.ctx_event, ev.ctx_event_cause, ev.error_code,
                                   ctx->context_callback_arg);
         } else {
@@ -1323,10 +1310,6 @@ void FireEvent(const PendingEvent& ev) {
         break;
     case PendingEvent::REQUEST_CB:
         if (ev.request_cb) {
-            LOG_DEBUG(Lib_NpMatching2,
-                      "callback REQUEST ctx={} reqId={} event={:#x} err={:#x} data={}", ev.ctx_id,
-                      ev.req_id, static_cast<u16>(ev.req_event), ev.error_code,
-                      fmt::ptr(ev.request_data));
             ev.request_cb(ev.ctx_id, ev.req_id, ev.req_event, ev.error_code, ev.request_data,
                           ev.request_cb_arg);
         } else {
@@ -1337,10 +1320,6 @@ void FireEvent(const PendingEvent& ev) {
         break;
     case PendingEvent::SIGNALING_CB:
         if (ctx->signaling_callback) {
-            LOG_DEBUG(Lib_NpMatching2,
-                      "callback SIGNALING ctx={} room={} member={} event={:#x} err={:#x}",
-                      ev.ctx_id, ev.room_id, ev.member_id, static_cast<u16>(ev.sig_event),
-                      ev.error_code);
             ctx->signaling_callback(ev.ctx_id, ev.room_id, ev.member_id, ev.sig_event,
                                     ev.error_code, ctx->signaling_callback_arg);
         } else {
@@ -1351,9 +1330,6 @@ void FireEvent(const PendingEvent& ev) {
         break;
     case PendingEvent::ROOM_EVENT_CB:
         if (ctx->room_event_callback) {
-            LOG_DEBUG(Lib_NpMatching2, "callback ROOM_EVENT ctx={} room={} event={:#x} data={}",
-                      ev.ctx_id, ev.room_id, static_cast<u16>(ev.room_event),
-                      fmt::ptr(ev.room_event_data));
             ctx->room_event_callback(ev.ctx_id, ev.room_id, ev.room_event, ev.room_event_data,
                                      ctx->room_event_callback_arg);
         } else {
@@ -1364,9 +1340,6 @@ void FireEvent(const PendingEvent& ev) {
         break;
     case PendingEvent::LOBBY_EVENT_CB:
         if (ctx->lobby_event_callback) {
-            LOG_DEBUG(Lib_NpMatching2, "callback LOBBY_EVENT ctx={} lobby={} event={:#x} data={}",
-                      ev.ctx_id, ev.lobby_id, static_cast<u16>(ev.lobby_event),
-                      fmt::ptr(ev.lobby_event_data));
             ctx->lobby_event_callback(ev.ctx_id, ev.lobby_id, ev.lobby_event, ev.lobby_event_data,
                                       ctx->lobby_event_callback_arg);
         } else {
@@ -1377,8 +1350,6 @@ void FireEvent(const PendingEvent& ev) {
         break;
     case PendingEvent::LOBBY_MESSAGE_CB:
         if (ctx->lobby_message_callback) {
-            LOG_DEBUG(Lib_NpMatching2, "callback LOBBY_MESSAGE ctx={} lobby={} src={} event={:#x}",
-                      ev.ctx_id, ev.lobby_id, ev.src_member_id, static_cast<u16>(ev.msg_event));
             ctx->lobby_message_callback(ev.ctx_id, ev.lobby_id, ev.src_member_id, ev.msg_event,
                                         ev.message_data, ctx->lobby_message_callback_arg);
         } else {
@@ -1389,8 +1360,6 @@ void FireEvent(const PendingEvent& ev) {
         break;
     case PendingEvent::ROOM_MESSAGE_CB:
         if (ctx->room_message_callback) {
-            LOG_DEBUG(Lib_NpMatching2, "callback ROOM_MESSAGE ctx={} room={} src={} event={:#x}",
-                      ev.ctx_id, ev.room_id, ev.src_member_id, static_cast<u16>(ev.msg_event));
             ctx->room_message_callback(ev.ctx_id, ev.room_id, ev.src_member_id, ev.msg_event,
                                        ev.message_data, ctx->room_message_callback_arg);
         } else {
@@ -1453,8 +1422,7 @@ void InitEventDispatcher() {
         g_state.dispatch_running.store(false);
         g_state.dispatch_thread = nullptr;
         return;
-    }
-    LOG_DEBUG(Lib_NpMatching2, "event dispatcher thread created");
+    };
 }
 
 void TermEventDispatcher() {

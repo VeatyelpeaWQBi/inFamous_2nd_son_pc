@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/font/fontft.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/font/font.h"
 #include "core/libraries/font/font_internal.h"
-#include "core/libraries/font/fontft.h"
 #include "core/libraries/font/fontft_internal.h"
 #include "core/libraries/libs.h"
 
@@ -107,8 +107,6 @@ s32 PS4_SYSV_ABI sceFontSelectGlyphsFt() {
 }
 
 const OrbisFontLibrarySelection* PS4_SYSV_ABI sceFontSelectLibraryFt(int value) {
-    LOG_INFO(Lib_FontFt, "called");
-    LOG_DEBUG(Lib_FontFt, "params:\nvalue: {}\n", value);
     if (value == 0) {
         return Libraries::FontFt::Internal::GetDriverTable();
     }
@@ -116,8 +114,6 @@ const OrbisFontLibrarySelection* PS4_SYSV_ABI sceFontSelectLibraryFt(int value) 
 }
 
 const OrbisFontRendererSelection* PS4_SYSV_ABI sceFontSelectRendererFt(int value) {
-    LOG_INFO(Lib_FontFt, "called");
-    LOG_DEBUG(Lib_FontFt, "params:\nvalue: {}\n", value);
     if (value == 0) {
         return Libraries::FontFt::Internal::GetRendererSelectionTable();
     }

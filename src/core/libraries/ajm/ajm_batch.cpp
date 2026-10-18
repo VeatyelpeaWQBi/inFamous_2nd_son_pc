@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "common/alignment.h"
 #include "core/libraries/ajm/ajm_batch.h"
+#include "common/alignment.h"
 
 namespace Libraries::Ajm {
 
@@ -45,7 +45,7 @@ struct AjmChunkBuffer {
 static_assert(sizeof(AjmChunkBuffer) == 16);
 
 class AjmBatchBuffer {
-public:
+  public:
     static constexpr size_t s_dynamic_extent = std::numeric_limits<size_t>::max();
 
     AjmBatchBuffer(u8* begin, u8* end)
@@ -65,38 +65,29 @@ public:
         return AjmBatchBuffer(current, size);
     }
 
-    template <class T>
-    T& Peek() const {
+    template <class T> T& Peek() const {
         DEBUG_ASSERT(m_size == s_dynamic_extent ||
                      (m_p_current + sizeof(T)) <= (m_p_begin + m_size));
         return *reinterpret_cast<T*>(m_p_current);
     }
 
-    template <class T>
-    T& Consume() {
+    template <class T> T& Consume() {
         auto* const result = reinterpret_cast<T*>(m_p_current);
         m_p_current += sizeof(T);
         DEBUG_ASSERT(m_size == s_dynamic_extent || m_p_current <= (m_p_begin + m_size));
         return *result;
     }
 
-    template <class T>
-    void Skip() {
-        Advance(sizeof(T));
-    }
+    template <class T> void Skip() { Advance(sizeof(T)); }
 
     void Advance(size_t size) {
         m_p_current += size;
         DEBUG_ASSERT(m_size == s_dynamic_extent || m_p_current <= (m_p_begin + m_size));
     }
 
-    bool IsEmpty() {
-        return m_size != s_dynamic_extent && m_p_current >= (m_p_begin + m_size);
-    }
+    bool IsEmpty() { return m_size != s_dynamic_extent && m_p_current >= (m_p_begin + m_size); }
 
-    size_t BytesConsumed() const {
-        return m_p_current - m_p_begin;
-    }
+    size_t BytesConsumed() const { return m_p_current - m_p_begin; }
 
     size_t BytesRemaining() const {
         if (m_size == s_dynamic_extent) {
@@ -105,11 +96,9 @@ public:
         return m_size - (m_p_current - m_p_begin);
     }
 
-    u8* GetCurrent() const {
-        return m_p_current;
-    }
+    u8* GetCurrent() const { return m_p_current; }
 
-private:
+  private:
     u8* m_p_begin{};
     u8* m_p_current{};
     size_t m_size{};
@@ -346,7 +335,6 @@ std::shared_ptr<AjmBatch> AjmBatch::FromBatchBuffer(std::span<u8> data) {
 void* BatchJobControlBufferRa(void* p_buffer, u32 instance_id, u64 flags, void* p_sideband_input,
                               size_t sideband_input_size, void* p_sideband_output,
                               size_t sideband_output_size, void* p_return_address) {
-    LOG_TRACE(Lib_Ajm, "called");
 
     AjmBatchBuffer buffer(reinterpret_cast<u8*>(p_buffer));
 
@@ -405,7 +393,6 @@ void* BatchJobControlBufferRa(void* p_buffer, u32 instance_id, u64 flags, void* 
 
 void* BatchJobInlineBuffer(void* p_buffer, const void* p_data_input, size_t data_input_size,
                            const void** pp_batch_address) {
-    LOG_TRACE(Lib_Ajm, "called");
 
     AjmBatchBuffer buffer(reinterpret_cast<u8*>(p_buffer));
 
@@ -423,7 +410,6 @@ void* BatchJobRunBufferRa(void* p_buffer, u32 instance_id, u64 flags, void* p_da
                           size_t data_input_size, void* p_data_output, size_t data_output_size,
                           void* p_sideband_output, size_t sideband_output_size,
                           void* p_return_address) {
-    LOG_TRACE(Lib_Ajm, "called");
 
     AjmBatchBuffer buffer(reinterpret_cast<u8*>(p_buffer));
 
@@ -486,7 +472,6 @@ void* BatchJobRunSplitBufferRa(void* p_buffer, u32 instance_id, u64 flags,
                                const AjmBuffer* p_data_output_buffers,
                                size_t num_data_output_buffers, void* p_sideband_output,
                                size_t sideband_output_size, void* p_return_address) {
-    LOG_TRACE(Lib_Ajm, "called");
 
     AjmBatchBuffer buffer(reinterpret_cast<u8*>(p_buffer));
 

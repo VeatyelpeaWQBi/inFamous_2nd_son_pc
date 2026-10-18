@@ -1,38 +1,37 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
-#include <utility>
+#include "video_core/page_manager.h"
 #include "common/adaptive_mutex.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/div_ceil.h"
 #include "common/error.h"
 #include "common/multi_level_page_table.h"
-#include "common/perf_stats.h"
 #include "common/signal_context.h"
 #include "common/thread.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
-#include "core/perf_sampler.h"
+#include "core/runtime_policy.h"
 #include "core/signals.h"
-#include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include <algorithm>
+#include <utility>
 
 #ifndef _WIN64
-#include <sys/mman.h>
 #include "common/adaptive_mutex.h"
+#include <sys/mman.h>
 #else
 #include <windows.h>
 #endif
 
 #ifdef __linux__
-#include <thread>
 #include <fcntl.h>
 #include <linux/userfaultfd.h>
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
+#include <thread>
 #else
 #include "common/spin_lock.h"
 #endif
@@ -77,12 +76,9 @@ struct PageManager::Impl {
                                           : Core::MemoryPermission::None;
         }
 
-        Core::MemoryPermission Perms() const noexcept {
-            return ReadPerm() | WritePerm();
-        }
+        Core::MemoryPermission Perms() const noexcept { return ReadPerm() | WritePerm(); }
 
-        template <bool is_read>
-        u8 GetPage() const {
+        template <bool is_read> u8 GetPage() const {
             if constexpr (is_read) {
                 return num_read_watchers;
             } else {
@@ -154,9 +150,7 @@ struct PageManager::Impl {
                 }
             }
         }
-        if (!late.runs.empty()) {
-            Common::Perf::Add(Common::Perf::LateProtects, late.runs.size());
-        }
+
         late.runs.clear();
         late.locked.clear();
     }
@@ -271,8 +265,8 @@ struct PageManager::Impl {
                 if (defer) {
                     t_deferred_protect->emplace_back(range_begin, range_begin + range_pages);
                 } else if (late.active) {
-                    late.runs.push_back({range_begin << PM_PAGE_BITS, range_pages << PM_PAGE_BITS,
-                                         perms});
+                    late.runs.push_back(
+                        {range_begin << PM_PAGE_BITS, range_pages << PM_PAGE_BITS, perms});
                 } else {
                     Protect(range_begin << PM_PAGE_BITS, range_pages << PM_PAGE_BITS, perms);
                 }
@@ -417,11 +411,11 @@ struct PageManager::Impl {
 
 #ifdef __linux__
 struct UffdImpl : public PageManager::Impl {
-private:
+  private:
     std::jthread ufd_thread;
     int uffd;
 
-public:
+  public:
     UffdImpl(Vulkan::Rasterizer* rasterizer_) : Impl() {
         rasterizer = rasterizer_;
         uffd = syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY);
@@ -485,8 +479,7 @@ public:
         auto regions = Core::Memory::Instance()->GetAddressSpace().GetUsableRegions();
         for (auto& region : regions) {
             OnMap(region.lower(), region.upper());
-        }
-        LOG_INFO(Common_Memory, "registered reserved memory with userfaultfd");
+        };
 
         while (!token.stop_requested()) {
             pollfd pollfd;
@@ -565,8 +558,6 @@ struct SignalImpl : public PageManager::Impl {
         auto& impl = memory->GetAddressSpace();
         ASSERT_MSG(perms != Core::MemoryPermission::Write,
                    "Attempted to protect region as write-only which is not a valid permission");
-        Common::Perf::ScopedTimer protect_timer{Common::Perf::ProtectCalls,
-                                                Common::Perf::ProtectNs};
         impl.Protect(address, size, perms);
     }
 
@@ -577,17 +568,12 @@ struct SignalImpl : public PageManager::Impl {
             std::this_thread::get_id() == rasterizer->GetGpuCommandProcessorThread();
         if (Common::IsWriteError(context)) {
             const bool handled = rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
-            if (handled) {
-                Common::Perf::Add(Common::Perf::FaultWrites);
-            }
+
             return handled;
         } else {
             const u64 rip = reinterpret_cast<u64>(Common::GetRip(context));
             const bool handled = rasterizer->ReadMemory(addr, size, is_gpu_thread, rip);
-            if (handled) {
-                Common::Perf::Add(Common::Perf::FaultReads);
-                Core::PerfSampler::RecordReadback(addr, rip);
-            }
+
             return handled;
         }
         return false;
@@ -599,26 +585,20 @@ PageManager::PageManager(Vulkan::Rasterizer* rasterizer_) {
     if (EmulatorSettings.IsUserfaultfdTracking()) {
         try {
             impl = std::make_unique<UffdImpl>(rasterizer_);
-            LOG_INFO(Config, "Memory tracking method: userfaultfd");
             return;
         } catch (const std::runtime_error& e) {
             // if uffd is unsupported, falls back to SignalImpl
         }
-    }
-    LOG_INFO(Config, "Memory tracking method: signals");
+    };
 #endif
     impl = std::make_unique<SignalImpl>(rasterizer_);
 }
 
 PageManager::~PageManager() = default;
 
-void PageManager::OnGpuMap(VAddr address, size_t size) {
-    impl->OnMap(address, size);
-}
+void PageManager::OnGpuMap(VAddr address, size_t size) { impl->OnMap(address, size); }
 
-void PageManager::OnGpuUnmap(VAddr address, size_t size) {
-    impl->OnUnmap(address, size);
-}
+void PageManager::OnGpuUnmap(VAddr address, size_t size) { impl->OnUnmap(address, size); }
 
 void PageManager::UpdatePageWatchers(VAddr addr, u64 size, PageOp write_op) const {
     impl->UpdatePageWatchers(addr, size, write_op);
@@ -641,7 +621,7 @@ u64 PageManager::RefreshDeferredProtect(u64 first_page, u64 end_page) const {
 
 bool PageManager::BeginLateProtect() const {
     auto& late = t_late_protect;
-    if (late.active || !Common::Perf::GetTuning().late_protect.load(std::memory_order_relaxed)) {
+    if (late.active || !Core::Runtime::GetPolicy().late_protect) {
         return false;
     }
     late.active = true;

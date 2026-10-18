@@ -10,173 +10,134 @@
 namespace Libraries::RazorCpu {
 
 s32 PS4_SYSV_ABI sceRazorCpuBeginLogicalFileAccess() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
-void PS4_SYSV_ABI sceRazorCpuDisableFiberUserMarkers() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
-}
+void PS4_SYSV_ABI sceRazorCpuDisableFiberUserMarkers() { ; }
 
 s32 PS4_SYSV_ABI sceRazorCpuEndLogicalFileAccess() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuFiberLogNameChange() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuFiberSwitch() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 bool PS4_SYSV_ABI sceRazorCpuFlushOccurred() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return false;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuGetDataTagStorageSize() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuGpuMarkerSync() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuInitDataTags() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuInitializeGpuMarkerContext() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuInitializeInternal() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 bool PS4_SYSV_ABI sceRazorCpuIsCapturing() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return false;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuJobManagerDispatch() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuJobManagerJob() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuJobManagerSequence() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuNamedSync() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuPlotValue() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuPopMarker() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuPushMarker() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuPushMarkerStatic() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuResizeTaggedBuffer() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
-void PS4_SYSV_ABI sceRazorCpuSetPopMarkerCallback() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
-}
+void PS4_SYSV_ABI sceRazorCpuSetPopMarkerCallback() { ; }
 
-void PS4_SYSV_ABI sceRazorCpuSetPushMarkerCallback() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
-}
+void PS4_SYSV_ABI sceRazorCpuSetPushMarkerCallback() { ; }
 
-void PS4_SYSV_ABI sceRazorCpuSetPushMarkerStaticCallback() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
-}
+void PS4_SYSV_ABI sceRazorCpuSetPushMarkerStaticCallback() { ; }
 
 s32 PS4_SYSV_ABI sceRazorCpuShutdownDataTags() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuStartCaptureInternal() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuStopCaptureInternal() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuSync() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuTagArray() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuTagBuffer() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuUnTagBuffer() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuWorkloadRunBegin() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuWorkloadRunEnd() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuWorkloadSubmit() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceRazorCpuWriteBookmark() {
-    LOG_DEBUG(Lib_RazorCpu, "(STUBBED) called");
     return ORBIS_OK;
 }
 

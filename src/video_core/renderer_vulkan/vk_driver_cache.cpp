@@ -3,15 +3,15 @@
 #include "video_core/renderer_vulkan/vk_driver_cache.h"
 #include "video_core/renderer_vulkan/vk_driver_cache_format.h"
 
+#include "common/assert.h"
+#include "common/logging/log.h"
+#include "common/thread.h"
+#include "core/runtime_policy.h"
+#include "video_core/cache_file.h"
+#include "video_core/renderer_vulkan/vk_instance.h"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
-#include "common/assert.h"
-#include "common/logging/log.h"
-#include "common/perf_stats.h"
-#include "common/thread.h"
-#include "video_core/cache_file.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__linux__)
@@ -32,19 +32,22 @@ bool Compatible(std::span<const u8> data, const Instance& instance) {
 u64 AvailableHostMemory() {
 #ifdef _WIN32
     MEMORYSTATUSEX memory{sizeof(memory)};
-    if (GlobalMemoryStatusEx(&memory))
+    if (GlobalMemoryStatusEx(&memory)) {
         return memory.ullAvailPhys;
+    }
 #elif defined(__linux__)
     struct sysinfo memory{};
-    if (sysinfo(&memory) == 0)
+    if (sysinfo(&memory) == 0) {
         return (u64(memory.freeram) + memory.bufferram) * memory.mem_unit;
+    }
 #endif
     return 2_GB; // Conservative fallback; no assumption of a large host on other platforms.
 }
 
 u64 AvailableDeviceMemory(const Instance& instance) {
-    if (!instance.CanReportMemoryUsage())
+    if (!instance.CanReportMemoryUsage()) {
         return instance.GetTotalMemoryBudget();
+    }
     vk::PhysicalDeviceMemoryBudgetPropertiesEXT budget{};
     vk::PhysicalDeviceMemoryProperties2 props{.pNext = &budget};
     instance.GetPhysicalDevice().getMemoryProperties2(&props);
@@ -64,8 +67,9 @@ DriverPipelineCache::DriverPipelineCache(const Instance& instance_, std::filesys
     : instance{instance_}, path{std::move(path_)}, limit{std::min<u64>(limit_, 1_GB)} {
     std::vector<u8> initial;
     if (!path.empty() && Storage::CacheFile::Read(path, initial, limit) &&
-        !Compatible(initial, instance))
+        !Compatible(initial, instance)) {
         initial.clear();
+    }
     vk::PipelineCacheCreateInfo
         info{}; // Internally synchronized by Vulkan, no EXTERNALLY_SYNC flag.
     if (!initial.empty()) {
@@ -82,38 +86,38 @@ DriverPipelineCache::DriverPipelineCache(const Instance& instance_, std::filesys
     ASSERT_MSG(result == vk::Result::eSuccess, "Failed to create driver pipeline cache: {}",
                vk::to_string(result));
     cache = std::move(created);
-    LOG_INFO(Render, "Driver cache restored: {} bytes, save limit {} MiB", initial.size(),
-             limit / 1_MB);
 }
 
-DriverPipelineCache::~DriverPipelineCache() {
-    Stop();
-}
+DriverPipelineCache::~DriverPipelineCache() { Stop(); }
 DriverPipelineCache::Lease DriverPipelineCache::Acquire() {
-    if (closing.load(std::memory_order_acquire))
+    if (closing.load(std::memory_order_acquire)) {
         return {{}, vk::PipelineCache{}};
+    }
     std::shared_lock lock{gate, std::try_to_lock};
-    if (lock.owns_lock() && closing.load(std::memory_order_acquire))
+    if (lock.owns_lock() && closing.load(std::memory_order_acquire)) {
         lock.unlock();
+    }
     const auto handle = lock.owns_lock() ? *cache : vk::PipelineCache{};
     return {std::move(lock), handle};
 }
 void DriverPipelineCache::Compiled() {
-    last_compile_ns.store(Common::Perf::NowNs(), std::memory_order_relaxed);
+    last_compile_ns.store(Core::Runtime::NowNs(), std::memory_order_relaxed);
     revision.fetch_add(1, std::memory_order_release);
 }
 void DriverPipelineCache::Start() {
     closing.store(false, std::memory_order_release);
-    if (path.empty() || limit < 1_MB || writer.joinable())
+    if (path.empty() || limit < 1_MB || writer.joinable()) {
         return;
+    }
     writer = std::jthread{[this](std::stop_token stop) {
         Common::SetCurrentThreadName("shadPS4:DriverCacheIO");
         Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
         std::unique_lock lock{wait_mutex};
         while (!stop.stop_requested()) {
             wake.wait_for(lock, stop, std::chrono::seconds{15}, [] { return false; });
-            if (stop.stop_requested())
+            if (stop.stop_requested()) {
                 break;
+            }
             lock.unlock();
             try {
                 Save();
@@ -132,8 +136,9 @@ void DriverPipelineCache::Stop() {
         writer.join();
     }
     try {
-        if (!Save(true))
+        if (!Save(true)) {
             LOG_WARNING(Render, "Driver cache final snapshot could not be saved");
+        }
     } catch (const std::exception& error) {
         LOG_WARNING(Render, "Driver cache save failed: {}", error.what());
     }
@@ -141,27 +146,31 @@ void DriverPipelineCache::Stop() {
 bool DriverPipelineCache::Save(bool final) {
     std::lock_guard saving{save_mutex};
     u64 current = revision.load(std::memory_order_acquire);
-    if (path.empty() || (!final && current == saved_revision) || limit < Prefix + 32)
+    if (path.empty() || (!final && current == saved_revision) || limit < Prefix + 32) {
         return true;
-    if (!final &&
-        Common::Perf::NowNs() - last_compile_ns.load(std::memory_order_relaxed) < 2'000'000'000ULL)
+    }
+    if (!final && Core::Runtime::NowNs() - last_compile_ns.load(std::memory_order_relaxed) <
+                      2'000'000'000ULL) {
         return false;
+    }
     std::vector<u8> bytes;
-    const auto start = Common::Perf::NowNs();
     {
         std::unique_lock lock{gate, std::defer_lock};
-        if (final)
+        if (final) {
             lock.lock(); // Shutdown only: no new cache leases can enter.
-        else if (!lock.try_lock())
+        } else if (!lock.try_lock()) {
             return false;
+        }
         current = revision.load(std::memory_order_acquire);
-        if (current == saved_revision)
+        if (current == saved_revision) {
             return true;
+        }
         size_t size{};
         if (instance.GetDevice().getPipelineCacheData(*cache, &size, nullptr) !=
                 vk::Result::eSuccess ||
-            size < 32 || size > limit - Prefix || size > AvailableHostMemory() / 4)
+            size < 32 || size > limit - Prefix || size > AvailableHostMemory() / 4) {
             return false;
+        }
         bytes.resize(Prefix + size);
         std::memcpy(bytes.data(), "SHADVKC2", 8);
         const u32 driver = instance.GetDriverVersion(), schema = 1;
@@ -169,16 +178,15 @@ bool DriverPipelineCache::Save(bool final) {
         std::memcpy(bytes.data() + 12, &schema, 4);
         const auto result =
             instance.GetDevice().getPipelineCacheData(*cache, &size, bytes.data() + Prefix);
-        if (result != vk::Result::eSuccess)
+        if (result != vk::Result::eSuccess) {
             return false; // Never publish an incomplete snapshot.
+        }
         bytes.resize(Prefix + size);
     }
-    const auto snapshot_ms = (Common::Perf::NowNs() - start) / 1'000'000;
-    if (!Storage::CacheFile::Write(path, bytes))
+    if (!Storage::CacheFile::Write(path, bytes)) {
         return false;
+    }
     saved_revision = current;
-    LOG_INFO(Render, "Driver cache saved{}: {} bytes, snapshot {} ms, revision {}",
-             final ? " on shutdown" : " asynchronously", bytes.size(), snapshot_ms, current);
     return true;
 }
 } // namespace Vulkan

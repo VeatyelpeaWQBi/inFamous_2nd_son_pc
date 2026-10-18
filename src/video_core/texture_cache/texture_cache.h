@@ -4,21 +4,21 @@
 #pragma once
 
 #include <atomic>
+#include <boost/container/small_vector.hpp>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
-#include <thread>
-#include <unordered_set>
-#include <boost/container/small_vector.hpp>
 #include <queue>
+#include <thread>
 #include <tsl/robin_map.h>
+#include <unordered_set>
 
 #include "common/lru_cache.h"
-#include "common/perf_stats.h"
-#include "video_core/amdgpu/cb_db_extent.h"
 #include "common/multi_level_page_table.h"
 #include "common/slot_vector.h"
+#include "core/runtime_policy.h"
 #include "shader_recompiler/resource.h"
+#include "video_core/amdgpu/cb_db_extent.h"
 #include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
 #include "video_core/texture_cache/image_view.h"
@@ -54,10 +54,9 @@ class TextureCache {
         static constexpr bool NULL_CHECK = true;
     };
     using PageTable = Common::MultiLevelPageTable<Traits>;
-    static constexpr u64 NumImagePages = u64{1}
-                                         << (Traits::ADDRESS_SPACE_BITS - Traits::PAGE_BITS);
+    static constexpr u64 NumImagePages = u64{1} << (Traits::ADDRESS_SPACE_BITS - Traits::PAGE_BITS);
 
-public:
+  public:
     enum class BindingType : u32 {
         Texture,
         Storage,
@@ -86,15 +85,13 @@ public:
             : info{group, cpu_address}, type{BindingType::VideoOut} {}
     };
 
-public:
+  public:
     TextureCache(const Vulkan::Instance& instance, Vulkan::Scheduler& scheduler,
                  Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool, BufferCache& buffer_cache,
                  PageManager& tracker);
     ~TextureCache();
 
-    TileManager& GetTileManager() noexcept {
-        return tile_manager;
-    }
+    TileManager& GetTileManager() noexcept { return tile_manager; }
 
     /// Invalidates any image in the logical page range.
     void InvalidateMemory(VAddr addr, size_t size);
@@ -127,7 +124,6 @@ public:
     /// folder, waiting for the GPU. Returns false when no image is there.
     /// Frame x-ray: writes the image at the address raw to the log folder (the one used most
     /// recently among those there, or the one of the given size when width is not 0).
-    bool DumpImageToFile(VAddr address, std::string_view prefix, u32 width = 0, u32 height = 0);
 
     /// Generation of the cache: grows whenever an image is registered, unregistered or replaced
     /// (rebind needed), so that a binding found for a descriptor can be reused while the cache
@@ -145,9 +141,7 @@ public:
     }
 
     /// Garbage collector tick, one per guest frame (command processor thread).
-    [[nodiscard]] u64 GcTick() const noexcept {
-        return gc_tick;
-    }
+    [[nodiscard]] u64 GcTick() const noexcept { return gc_tick; }
 
     /// The use order of the garbage collector, as FindImage updates it for an image it finds
     /// (Rasterizer render target memo, once per frame and image).
@@ -162,8 +156,7 @@ public:
         // Clean, and tracked over its whole range: nothing to do but touch it (bound every
         // draw as a render target or texture: the lock is skipped). A guest write arriving
         // this instant is seen by the next binding, as it would be with the lock.
-        if (Common::Perf::GetTuning().tex_memo.load(std::memory_order_relaxed) &&
-            False(image.flags & ImageFlagBits::Dirty) &&
+        if (Core::Runtime::GetPolicy().tex_memo && False(image.flags & ImageFlagBits::Dirty) &&
             image.track_addr == image.info.guest_address &&
             image.track_addr_end == image.info.guest_address + image.info.guest_size) {
             TouchImage(image);
@@ -221,9 +214,7 @@ public:
     }
 
     /// Retrieves the image view with the specified id.
-    [[nodiscard]] ImageView& GetImageView(ImageId id) {
-        return slot_image_views[id];
-    }
+    [[nodiscard]] ImageView& GetImageView(ImageId id) { return slot_image_views[id]; }
 
     /// Get the associated depth stencil image if it is still valid.
     ImageId GetAssociatedDepth(Image& image) {
@@ -308,8 +299,7 @@ public:
     /// Runs the garbage collector.
     void RunGarbageCollector();
 
-    template <typename Func>
-    void ForEachImageInRegion(VAddr cpu_addr, size_t size, Func&& func) {
+    template <typename Func> void ForEachImageInRegion(VAddr cpu_addr, size_t size, Func&& func) {
         using FuncReturn = typename std::invoke_result<Func, ImageId, Image&>::type;
         static constexpr bool BOOL_BREAK = std::is_same_v<FuncReturn, bool>;
         ImageIds images;
@@ -349,10 +339,9 @@ public:
         }
     }
 
-private:
+  private:
     /// Iterate over all page indices in a range
-    template <typename Func>
-    static void ForEachPage(PAddr addr, size_t size, Func&& func) {
+    template <typename Func> static void ForEachPage(PAddr addr, size_t size, Func&& func) {
         static constexpr bool RETURNS_BOOL = std::is_same_v<std::invoke_result<Func, u64>, bool>;
         const u64 page_end = (addr + size - 1) >> Traits::PAGE_BITS;
         for (u64 page = addr >> Traits::PAGE_BITS; page <= page_end; ++page) {
@@ -411,7 +400,7 @@ private:
     void GarbageCollectImages();
     void GarbageCollectSamplers();
 
-private:
+  private:
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;
     Vulkan::Runtime& runtime;
@@ -441,11 +430,10 @@ private:
     /// invalidations, which mostly hit pages without images (guest write faults).
     std::atomic<u64> generation{1};
     std::atomic<u64> samplers_generation{1};
-    void BumpGeneration() noexcept {
-        generation.fetch_add(1, std::memory_order_release);
-    }
+    void BumpGeneration() noexcept { generation.fetch_add(1, std::memory_order_release); }
     static constexpr u32 NumImageGens = 1 << 16;
-    std::unique_ptr<std::atomic<u32>[]> image_gens{std::make_unique<std::atomic<u32>[]>(NumImageGens)};
+    std::unique_ptr<std::atomic<u32>[]> image_gens{
+        std::make_unique<std::atomic<u32>[]>(NumImageGens)};
     void BumpImageGeneration(ImageId image_id) noexcept {
         if (image_id.index < NumImageGens) {
             image_gens[image_id.index].fetch_add(1, std::memory_order_release);

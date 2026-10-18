@@ -52,8 +52,6 @@ s32 PS4_SYSV_ABI sceNpLookupCreateTitleCtx(const OrbisNpId* selfNpId) {
         Libraries::Np::NpHandler::GetInstance().GetUserIdByOnlineId(selfNpId->handle);
     const OrbisNpLookupTitleCtxId id = g_lookup_next_ctx_id++;
     g_lookup_title_ctxs[id] = LookupTitleCtx{.userId = userId, .selfNpId = *selfNpId};
-    LOG_INFO(Lib_NpUtility, "id={} userId={} onlineId='{}'", id, userId,
-             OnlineIdView(selfNpId->handle));
     return id;
 }
 
@@ -66,7 +64,6 @@ s32 PS4_SYSV_ABI sceNpLookupCreateTitleCtxA(UserService::OrbisUserServiceUserId 
     const OrbisNpId selfNpId = Libraries::Np::NpHandler::GetInstance().GetNpId(userId);
     const OrbisNpLookupTitleCtxId id = g_lookup_next_ctx_id++;
     g_lookup_title_ctxs[id] = LookupTitleCtx{.userId = userId, .selfNpId = selfNpId};
-    LOG_INFO(Lib_NpUtility, "id={} userId={}", id, userId);
     return id;
 }
 
@@ -85,7 +82,6 @@ s32 PS4_SYSV_ABI sceNpLookupDeleteTitleCtx(OrbisNpLookupTitleCtxId titleCtxId) {
         }
     }
     g_lookup_title_ctxs.erase(titleCtxId);
-    LOG_INFO(Lib_NpUtility, "id={}", titleCtxId);
     return ORBIS_OK;
 }
 
@@ -109,7 +105,6 @@ static s32 CreateLookupRequest(OrbisNpLookupTitleCtxId titleCtxId, bool isAsync)
     req->isAsync = isAsync;
     req->timeouts = ctx_it->second.timeouts;
     g_lookup_requests[id] = std::move(req);
-    LOG_INFO(Lib_NpUtility, "id={} titleCtxId={} async={}", id, titleCtxId, isAsync);
     return id;
 }
 
@@ -135,7 +130,6 @@ s32 PS4_SYSV_ABI sceNpLookupDeleteRequest(OrbisNpLookupRequestId reqId) {
     }
     it->second->SetResult(ORBIS_NP_COMMUNITY_ERROR_ABORTED);
     g_lookup_requests.erase(it);
-    LOG_INFO(Lib_NpUtility, "reqId={}", reqId);
     return ORBIS_OK;
 }
 
@@ -155,7 +149,6 @@ s32 PS4_SYSV_ABI sceNpLookupAbortRequest(OrbisNpLookupRequestId reqId) {
         req->aborted = true;
     }
     req->SetResult(ORBIS_NP_COMMUNITY_ERROR_ABORTED);
-    LOG_INFO(Lib_NpUtility, "reqId={}", reqId);
     return ORBIS_OK;
 }
 
@@ -164,9 +157,6 @@ s32 PS4_SYSV_ABI sceNpLookupAbortRequest(OrbisNpLookupRequestId reqId) {
 //***********************************
 s32 PS4_SYSV_ABI sceNpLookupNpId(OrbisNpLookupRequestId reqId, const OrbisNpOnlineId* onlineId,
                                  OrbisNpId* npId, void* option) {
-    LOG_INFO(Lib_NpUtility, "reqId={} onlineId='{}' npId={} option={}", reqId,
-             onlineId != nullptr ? OnlineIdView(*onlineId) : std::string_view("(null)"),
-             static_cast<const void*>(npId), static_cast<const void*>(option));
     if (option != nullptr) {
         LOG_ERROR(Lib_NpUtility, "option is not supported (option={})", option);
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -238,18 +228,12 @@ s32 PS4_SYSV_ABI sceNpLookupPollAsync(OrbisNpLookupRequestId reqId, s32* result)
     }
     if (result != nullptr) {
         *result = *req->result;
-    }
-    LOG_INFO(Lib_NpUtility, "reqId={} completed (result={:#x})", reqId,
-             static_cast<u32>(*req->result));
+    };
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceNpLookupSetTimeout(s32 id, s32 resolveRetry, u32 resolveTimeout,
                                        u32 connTimeout, u32 sendTimeout, u32 recvTimeout) {
-    LOG_INFO(Lib_NpUtility,
-             "id={} resolveRetry={} resolveTimeout={} connTimeout={} "
-             "sendTimeout={} recvTimeout={}",
-             id, resolveRetry, resolveTimeout, connTimeout, sendTimeout, recvTimeout);
 
     if (resolveRetry < 0) {
         LOG_ERROR(Lib_NpUtility, "resolveRetry < 0");
@@ -315,8 +299,7 @@ s32 PS4_SYSV_ABI sceNpLookupWaitAsync(OrbisNpLookupRequestId reqId, s32* result)
     const s32 r = req->Wait();
     if (result != nullptr) {
         *result = r;
-    }
-    LOG_INFO(Lib_NpUtility, "reqId={} completed (result={:#x})", reqId, static_cast<u32>(r));
+    };
     return ORBIS_OK;
 }
 
@@ -700,8 +683,8 @@ s32 PS4_SYSV_ABI sceNpUtilityTerm() {
 // We would eventually want to replace the below with proper handling via a shadnet command.
 // The library sends requests to check input against a stored XML list of censored words.
 
-static std::shared_ptr<WordFilterRequestCtx> GetWordFilterRequest(
-    OrbisNpWordFilterRequestId reqId) {
+static std::shared_ptr<WordFilterRequestCtx>
+GetWordFilterRequest(OrbisNpWordFilterRequestId reqId) {
     std::lock_guard lock(g_word_filter_mutex);
     const auto it = g_word_filter_requests.find(reqId);
     return it != g_word_filter_requests.end() ? it->second : nullptr;
@@ -757,8 +740,7 @@ s32 PS4_SYSV_ABI sceNpWordFilterCensorComment(OrbisNpWordFilterRequestId reqId, 
     const s32 result = StartWordFilterRequest(req);
     if (result < 0) {
         return result;
-    }
-    LOG_INFO(Lib_NpUtility, "reqId={} len={}", reqId, length);
+    };
     // Insert shadnet request
     // ORBIS_NP_COMMUNITY_SERVER_ERROR_CENSORED would imply rejection
     // Rejection would possibly lead to sanitize call depending on the title.
@@ -780,7 +762,6 @@ static s32 CreateWordFilterRequest(OrbisNpWordFilterTitleCtxId titleCtxId, bool 
     req->isAsync = isAsync;
     req->timeouts = ctx_it->second.timeouts;
     g_word_filter_requests.emplace(id, std::move(req));
-    LOG_INFO(Lib_NpUtility, "id={} titleCtxId={} async={}", id, titleCtxId, isAsync);
     return id;
 }
 
@@ -805,8 +786,6 @@ static s32 CreateWordFilterTitleCtx(s32 userId, const OrbisNpId& selfNpId) {
     const OrbisNpWordFilterTitleCtxId id = g_word_filter_next_ctx_id++;
     g_word_filter_title_ctxs.emplace(id,
                                      WordFilterTitleCtx{.userId = userId, .selfNpId = selfNpId});
-    LOG_INFO(Lib_NpUtility, "id={} userId={} onlineId='{}'", id, userId,
-             OnlineIdView(selfNpId.handle));
     return id;
 }
 
@@ -904,7 +883,6 @@ s32 PS4_SYSV_ABI sceNpWordFilterSanitizeComment(OrbisNpWordFilterRequestId reqId
     // Copy it over and process completion or failure.
     // Invalid response would return ORBIS_NP_COMMUNITY_ERROR_BAD_RESPONSE
     std::memcpy(sanitizedComment, comment, length + 1);
-    LOG_INFO(Lib_NpUtility, "reqId={} len={}", reqId, length);
     return CompleteWordFilterRequest(req, ORBIS_OK);
 }
 

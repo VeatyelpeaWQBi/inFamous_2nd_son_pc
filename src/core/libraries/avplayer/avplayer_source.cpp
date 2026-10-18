@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/avplayer/avplayer_source.h"
 #include "common/alignment.h"
 #include "common/singleton.h"
 #include "common/thread.h"
@@ -8,7 +9,6 @@
 #include "core/libraries/avplayer/avplayer_error.h"
 #include "core/libraries/avplayer/avplayer_file_streamer.h"
 #include "core/libraries/avplayer/avplayer_handle_streamer.h"
-#include "core/libraries/avplayer/avplayer_source.h"
 #include "core/libraries/videodec/video_utils.h"
 #include "core/memory.h"
 
@@ -49,9 +49,7 @@ static bool IsStreamSupported(AVStream* stream) {
 
 AvPlayerSource::AvPlayerSource(AvPlayerStateCallback& state) : m_state(state) {}
 
-AvPlayerSource::~AvPlayerSource() {
-    Stop();
-}
+AvPlayerSource::~AvPlayerSource() { Stop(); }
 
 bool AvPlayerSource::Init(const AvPlayerInitData& init_data, std::string_view path) {
     m_memory_replacement = init_data.memory_replacement;
@@ -70,7 +68,6 @@ bool AvPlayerSource::Init(const AvPlayerInitData& init_data, std::string_view pa
     };
 
     if (init_data.file_replacement.open != nullptr) {
-        LOG_INFO(Lib_AvPlayer, "Opening {} through the game-provided file replacement", path);
         m_up_data_streamer = std::make_unique<AvPlayerFileStreamer>(init_data.file_replacement);
         if (!m_up_data_streamer->Init(path)) {
             avformat_free_context(context);
@@ -85,14 +82,11 @@ bool AvPlayerSource::Init(const AvPlayerInitData& init_data, std::string_view pa
         auto handle = mnt->Open(path, /*writable=*/false);
         if (handle) {
             if (auto host = handle->GetHostPath(); host.has_value()) {
-                LOG_INFO(Lib_AvPlayer, "Opening {} directly from host path {}", path,
-                         host->string());
                 if (AVPLAYER_IS_ERROR(
                         avformat_open_input(&context, host->string().c_str(), nullptr, nullptr))) {
                     return false;
                 }
             } else {
-                LOG_INFO(Lib_AvPlayer, "Opening {} through a non-host backend handle", path);
                 m_up_data_streamer = std::make_unique<AvPlayerHandleStreamer>(std::move(handle));
                 if (!m_up_data_streamer->Init(path)) {
                     avformat_free_context(context);
@@ -105,8 +99,6 @@ bool AvPlayerSource::Init(const AvPlayerInitData& init_data, std::string_view pa
             }
         } else {
             const auto filepath = mnt->GetHostPath(path);
-            LOG_INFO(Lib_AvPlayer, "Opening {} via GetHostPath fallback {}", path,
-                     filepath.string());
             if (AVPLAYER_IS_ERROR(
                     avformat_open_input(&context, filepath.string().c_str(), nullptr, nullptr))) {
                 return false;
@@ -133,7 +125,6 @@ bool AvPlayerSource::FindStreams() {
 }
 
 s32 AvPlayerSource::GetStreamCount() {
-    LOG_INFO(Lib_AvPlayer, "Stream Count: {}", m_streams.size());
     return m_streams.size();
 }
 
@@ -162,13 +153,11 @@ AvPlayerStreamInfo AvPlayerSource::CreateStreamInfo(u32 stream_index) {
     info.duration = StreamDurationMillis(*m_avformat_context, *p_stream);
     const auto p_lang_node = av_dict_get(p_stream->metadata, "language", nullptr, 0);
     if (p_lang_node != nullptr) {
-        LOG_INFO(Lib_AvPlayer, "Stream {} language = {}", stream_index, p_lang_node->value);
     } else {
         LOG_WARNING(Lib_AvPlayer, "Stream {} language is unknown", stream_index);
     }
     switch (info.type) {
     case AvPlayerStreamType::Video: {
-        LOG_INFO(Lib_AvPlayer, "Stream {} is a video stream.", stream_index);
         info.details.video.aspect_ratio =
             f32(p_stream->codecpar->width) / p_stream->codecpar->height;
         const auto width = Common::AlignUp<u32>(p_stream->codecpar->width, 16);
@@ -182,7 +171,6 @@ AvPlayerStreamInfo AvPlayerSource::CreateStreamInfo(u32 stream_index) {
         break;
     }
     case AvPlayerStreamType::Audio: {
-        LOG_INFO(Lib_AvPlayer, "Stream {} is an audio stream.", stream_index);
         info.details.audio.channel_count = p_stream->codecpar->ch_layout.nb_channels;
         info.details.audio.sample_rate = p_stream->codecpar->sample_rate;
         info.details.audio.size = 0; // sceAvPlayerGetStreamInfo() is expected to set this to 0
@@ -227,12 +215,10 @@ bool AvPlayerSource::EnableStream(u32 stream_index) {
     switch (stream->codecpar->codec_type) {
     case AVMediaType::AVMEDIA_TYPE_VIDEO: {
         m_video_stream_index = stream_index;
-        LOG_INFO(Lib_AvPlayer, "Video stream {} enabled", stream_index);
         break;
     }
     case AVMediaType::AVMEDIA_TYPE_AUDIO: {
         m_audio_stream_index = stream_index;
-        LOG_INFO(Lib_AvPlayer, "Audio stream {} enabled", stream_index);
         break;
     }
     default:
@@ -243,9 +229,7 @@ bool AvPlayerSource::EnableStream(u32 stream_index) {
     return true;
 }
 
-void AvPlayerSource::SetLooping(bool is_looping) {
-    m_is_looping = is_looping;
-}
+void AvPlayerSource::SetLooping(bool is_looping) { m_is_looping = is_looping; }
 
 std::optional<bool> AvPlayerSource::HasFrames(u32 num_frames) {
     return m_video_packets.Size() > num_frames || m_is_eof;
@@ -560,8 +544,7 @@ void AvPlayerSource::DemuxerThread(std::stop_token stop) {
     if (!m_audio_stream_index.has_value() && !m_video_stream_index.has_value()) {
         LOG_WARNING(Lib_AvPlayer, "Could not start DEMUXER thread. No streams enabled.");
         return;
-    }
-    LOG_INFO(Lib_AvPlayer, "Demuxer Thread started");
+    };
 
     while (!stop.stop_requested()) {
         if (m_video_packets.Size() > 30 &&
@@ -574,7 +557,6 @@ void AvPlayerSource::DemuxerThread(std::stop_token stop) {
         if (res < 0) {
             if (res == AVERROR_EOF) {
                 if (m_is_looping) {
-                    LOG_INFO(Lib_AvPlayer, "EOF reached in demuxer. Looping the source...");
                     m_state.OnWarning(ORBIS_AVPLAYER_ERROR_WAR_LOOPING_BACK);
                     avio_seek(m_avformat_context->pb, 0, SEEK_SET);
                     if (m_video_stream_index.has_value()) {
@@ -591,7 +573,6 @@ void AvPlayerSource::DemuxerThread(std::stop_token stop) {
                     }
                     continue;
                 } else {
-                    LOG_INFO(Lib_AvPlayer, "EOF reached in demuxer. Exiting.");
                     break;
                 }
             } else {
@@ -623,7 +604,6 @@ void AvPlayerSource::DemuxerThread(std::stop_token stop) {
     m_audio_decoder_thread.Join();
     m_state.OnEOF();
 
-    LOG_INFO(Lib_AvPlayer, "Demuxer Thread exited normally");
     m_demuxer_thread.Join();
 }
 
@@ -722,7 +702,6 @@ void AvPlayerSource::VideoDecoderThread(std::stop_token stop) {
     using namespace std::chrono;
     Common::SetCurrentThreadName("shadPS4:AvVideoDecoder");
 
-    LOG_INFO(Lib_AvPlayer, "Video Decoder Thread started");
     while ((!m_is_eof || m_video_packets.Size() != 0) && !stop.stop_requested()) {
         if (m_video_packets.Size() == 0 &&
             !m_video_packets_cv.Wait(stop, [this] { return m_video_packets.Size() != 0; })) {
@@ -749,7 +728,6 @@ void AvPlayerSource::VideoDecoderThread(std::stop_token stop) {
             res = avcodec_receive_frame(m_video_codec_context.get(), up_frame.get());
             if (res < 0) {
                 if (res == AVERROR_EOF) {
-                    LOG_INFO(Lib_AvPlayer, "EOF reached in video decoder");
                     return;
                 } else if (res != AVERROR(EAGAIN)) {
                     LOG_ERROR(Lib_AvPlayer,
@@ -779,7 +757,7 @@ void AvPlayerSource::VideoDecoderThread(std::stop_token stop) {
         }
     }
 
-    LOG_INFO(Lib_AvPlayer, "Video Decoder Thread exited normally");
+    ;
     m_video_decoder_thread.Join();
 }
 
@@ -845,7 +823,6 @@ void AvPlayerSource::AudioDecoderThread(std::stop_token stop) {
     using namespace std::chrono;
     Common::SetCurrentThreadName("shadPS4:AvAudioDecoder");
 
-    LOG_INFO(Lib_AvPlayer, "Audio Decoder Thread started");
     while ((!m_is_eof || m_audio_packets.Size() != 0) && !stop.stop_requested()) {
         if (m_audio_packets.Size() == 0 &&
             !m_audio_packets_cv.Wait(stop, [this] { return m_audio_packets.Size() != 0; })) {
@@ -872,7 +849,6 @@ void AvPlayerSource::AudioDecoderThread(std::stop_token stop) {
             res = avcodec_receive_frame(m_audio_codec_context.get(), up_frame.get());
             if (res < 0) {
                 if (res == AVERROR_EOF) {
-                    LOG_INFO(Lib_AvPlayer, "EOF reached in audio decoder");
                     return;
                 } else if (res != AVERROR(EAGAIN)) {
                     m_state.OnError();
@@ -898,7 +874,7 @@ void AvPlayerSource::AudioDecoderThread(std::stop_token stop) {
         }
     }
 
-    LOG_INFO(Lib_AvPlayer, "Audio Decoder Thread exited normally");
+    ;
     m_audio_decoder_thread.Join();
 }
 

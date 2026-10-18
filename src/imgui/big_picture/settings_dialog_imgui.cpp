@@ -1,17 +1,17 @@
 //  SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 //  SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <map>
-#include <ranges>
 #include <ImGuiFileDialog.h>
 #include <cmrc/cmrc.hpp>
+#include <map>
+#include <ranges>
 #include <stb_image.h>
 
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "common/path_util.h"
 #include "core/cpu_patches.h"
-#include "core/devtools/layer.h"
+#include "core/game_ui.h"
 #include "imgui/imgui_std.h"
 #include "settings_dialog_imgui.h"
 
@@ -24,8 +24,9 @@ namespace ImGuiEmuSettings {
 
 int SettingsWindow::GetComboIndex(std::string selection, std::vector<std::string> options) {
     for (int i = 0; i < options.size(); i++) {
-        if (selection == options[i])
+        if (selection == options[i]) {
             return i;
+        }
     }
 
     return 0;
@@ -226,9 +227,7 @@ SettingsWindow::SettingsWindow(bool gameRunning) : isGameRunning(gameRunning) {
     customConfigFound ? LoadSettings(runningGameSerial) : LoadSettings("Global");
 }
 
-void SettingsWindow::Prepare() {
-    uiScale = EmulatorSettings.GetBigPictureScale() / 1000.f;
-}
+void SettingsWindow::Prepare() { uiScale = EmulatorSettings.GetBigPictureScale() / 1000.f; }
 
 void SettingsWindow::DeInit() {
     EmulatorSettings.Load();
@@ -826,12 +825,14 @@ void SettingsWindow::AddSettingCombo(std::string name, int& value,
     if (ImGui::BeginCombo(label.c_str(), combo_value)) {
         for (int i = 0; i < options.size(); i++) {
             const bool selected = (i == value);
-            if (ImGui::Selectable(options[i].c_str(), selected))
+            if (ImGui::Selectable(options[i].c_str(), selected)) {
                 value = i;
+            }
 
             // Set the initial focus when opening the combo
-            if (selected)
+            if (selected) {
                 ImGui::SetItemDefaultFocus();
+            }
         }
         ImGui::EndCombo();
     }

@@ -1,20 +1,18 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/kernel/process.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
 #include "core/file_sys/fs.h"
 #include "core/libraries/kernel/orbis_error.h"
-#include "core/libraries/kernel/process.h"
 #include "core/libraries/libs.h"
 #include "core/linker.h"
 
 namespace Libraries::Kernel {
 
-s32 PS4_SYSV_ABI sceKernelIsInSandbox() {
-    return 1;
-}
+s32 PS4_SYSV_ABI sceKernelIsInSandbox() { return 1; }
 
 s32 PS4_SYSV_ABI sceKernelIsNeoMode() {
     static s32 IsNeoMode = -1;
@@ -25,28 +23,21 @@ s32 PS4_SYSV_ABI sceKernelIsNeoMode() {
     return IsNeoMode;
 }
 
-s32 PS4_SYSV_ABI sceKernelHasNeoMode() {
-    return EmulatorSettings.IsNeo();
-}
+s32 PS4_SYSV_ABI sceKernelHasNeoMode() { return EmulatorSettings.IsNeo(); }
 
 s32 PS4_SYSV_ABI sceKernelIsDevkit() {
-    LOG_INFO(Lib_Kernel, "called, isDevkit: {}", EmulatorSettings.IsDevKit());
     return EmulatorSettings.IsDevKit();
 }
 
 s32 PS4_SYSV_ABI sceKernelIsProspero() {
-    LOG_INFO(Lib_Kernel, "called: returning false");
     return 0;
 }
 
-s32 PS4_SYSV_ABI sceKernelIsCEX() {
-    return !sceKernelIsDevkit();
-}
+s32 PS4_SYSV_ABI sceKernelIsCEX() { return !sceKernelIsDevkit(); }
 
 s32 PS4_SYSV_ABI sceKernelGetMainSocId() {
     // These hardcoded values are based on hardware observations.
     // Different models of PS4/PS4 Pro likely return slightly different values.
-    LOG_DEBUG(Lib_Kernel, "called");
     if (EmulatorSettings.IsNeo()) {
         return 0x740f30;
     }
@@ -62,7 +53,6 @@ s32 PS4_SYSV_ABI sceKernelGetCompiledSdkVersion(s32* ver) {
 }
 
 s32 PS4_SYSV_ABI sceKernelGetCpumode() {
-    LOG_DEBUG(Lib_Kernel, "called");
     auto& attrs = Common::ElfInfo::Instance().GetPSFAttributes();
     u32 is_cpu6 = attrs.six_cpu_mode.Value();
     u32 is_cpu7 = attrs.seven_cpu_mode.Value();
@@ -76,7 +66,6 @@ s32 PS4_SYSV_ABI sceKernelGetCpumode() {
 }
 
 s32 PS4_SYSV_ABI sceKernelGetCurrentCpu() {
-    LOG_DEBUG(Lib_Kernel, "called");
     return 0;
 }
 
@@ -87,7 +76,6 @@ void* PS4_SYSV_ABI sceKernelGetProcParam() {
 
 s32 PS4_SYSV_ABI sceKernelLoadStartModule(const char* moduleFileName, u64 args, const void* argp,
                                           u32 flags, const void* pOpt, s32* pRes) {
-    LOG_INFO(Lib_Kernel, "called filename = {}, args = {}", moduleFileName, args);
     ASSERT(flags == 0);
 
     auto* linker = Common::Singleton<Core::Linker>::Instance();
@@ -100,20 +88,23 @@ s32 PS4_SYSV_ABI sceKernelLoadStartModule(const char* moduleFileName, u64 args, 
         // try load /system/common/lib/ +path
         // try load /system/priv/lib/   +path
         handle = linker->LoadAndStartModule(guest_path, args, argp, pRes);
-        if (handle != -1)
+        if (handle != -1) {
             return handle;
+        }
     } else {
         if (!guest_path.contains('/')) {
             handle = linker->LoadAndStartModule("/app0/" + guest_path, args, argp, pRes);
-            if (handle != -1)
+            if (handle != -1) {
                 return handle;
+            }
             // if ((flags & 0x10000) != 0)
             //  try load /system/priv/lib/   +basename
             //  try load /system/common/lib/ +basename
         } else {
             handle = linker->LoadAndStartModule(guest_path, args, argp, pRes);
-            if (handle != -1)
+            if (handle != -1) {
                 return handle;
+            }
         }
     }
 
@@ -147,7 +138,7 @@ s32 PS4_SYSV_ABI sceKernelGetModuleInfoForUnwind(VAddr addr, s32 flags,
     }
 
     // Find module that contains specified address.
-    LOG_INFO(Lib_Kernel, "called addr = {:#x}, flags = {:#x}", addr, flags);
+    ;
     auto* linker = Common::Singleton<Core::Linker>::Instance();
     auto* module = linker->FindByAddress(addr);
     if (!module) {
@@ -176,7 +167,7 @@ s32 PS4_SYSV_ABI sceKernelGetModuleInfoFromAddr(VAddr addr, s32 flags,
         return ORBIS_KERNEL_ERROR_EFAULT;
     }
 
-    LOG_INFO(Lib_Kernel, "called addr = {:#x}, flags = {:#x}", addr, flags);
+    ;
     auto* linker = Common::Singleton<Core::Linker>::Instance();
     auto* module = linker->FindByAddress(addr);
     if (!module) {
@@ -288,9 +279,7 @@ s32 PS4_SYSV_ABI sceKernelGetModuleList2(s32* handles, u64 num_array, u64* out_c
     return ORBIS_OK;
 }
 
-u32 PS4_SYSV_ABI posix_getuid() {
-    return 1;
-}
+u32 PS4_SYSV_ABI posix_getuid() { return 1; }
 
 s32 PS4_SYSV_ABI exit(s32 status) {
     UNREACHABLE_MSG("Exiting with status code {}", status);

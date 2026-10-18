@@ -6,23 +6,11 @@
     "patch": 0
   },
   "include": [
-    "cmake/CMake${hostSystemName}Presets.json"
+    "cmake/CMakeWindowsPresets.json"
   ],
   "configurePresets": [
     {
-      "name": "x64-Clang-Debug",
-      "displayName": "Clang x64 Debug",
-      "inherits": [
-        "x64-Clang-Base"
-      ],
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
-      },
-      "binaryDir": "${sourceDir}/Build/Debug"
-    },
-    {
       "name": "x64-Clang-Release",
-      "displayName": "Clang x64 Release",
       "inherits": [
         "x64-Clang-Base"
       ],
@@ -30,17 +18,6 @@
         "CMAKE_BUILD_TYPE": "Release"
       },
       "binaryDir": "${sourceDir}/Build/Release"
-    },
-    {
-      "name": "x64-Clang-RelWithDebInfo",
-      "displayName": "Clang x64 RelWithDebInfo",
-      "inherits": [
-        "x64-Clang-Base"
-      ],
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
-      },
-      "binaryDir": "${sourceDir}/Build/RelWithDebInfo"
     }
   ]
 }

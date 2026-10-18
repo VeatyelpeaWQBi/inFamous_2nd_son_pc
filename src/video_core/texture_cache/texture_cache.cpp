@@ -10,10 +10,10 @@
 #include "common/hash.h"
 #include "common/io_file.h"
 #include "common/path_util.h"
-#include "common/perf_stats.h"
 #include "common/scope_exit.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
+#include "core/runtime_policy.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
@@ -79,85 +79,6 @@ void TextureCache::ProcessDownloadImages() {
     download_images.clear();
 }
 
-bool TextureCache::DumpImageToFile(VAddr address, std::string_view prefix, u32 width,
-                                   u32 height) {
-    ImageId image_id{};
-    {
-        std::scoped_lock lock{mutex};
-        // Among the images starting at the address (else those containing it): the one of the
-        // given size, or the one used most recently (several images alias an address over a
-        // frame, and old ones linger).
-        u64 best_tick = 0;
-        const auto consider = [&](ImageId id, Image& image) {
-            if (width != 0 &&
-                (image.info.size.width != width || (height != 0 && image.info.size.height != height))) {
-                return;
-            }
-            if (!image_id || image.tick_accessed_last > best_tick) {
-                image_id = id;
-                best_tick = image.tick_accessed_last;
-            }
-        };
-        if (const auto it = image_address_index.find(address); it != image_address_index.end()) {
-            for (const ImageId id : it->second) {
-                consider(id, slot_images[id]);
-            }
-        }
-        if (!image_id) {
-            ForEachImageInRegion(address, 1, [&](ImageId id, Image& image) {
-                if (image.info.guest_address <= address &&
-                    address < image.info.guest_address + image.info.guest_size) {
-                    consider(id, image);
-                }
-            });
-        }
-    }
-    if (!image_id) {
-        LOG_INFO(Render_Vulkan, "DUMP image {:x}: no image", address);
-        return false;
-    }
-    Image& image = slot_images[image_id];
-    const u32 row_bytes = image.info.pitch * (image.info.num_bits / 8);
-    const u32 download_size =
-        row_bytes * image.info.size.height * image.info.size.depth * image.info.resources.layers;
-    if (download_size == 0 || download_size > (256u << 20)) {
-        return false;
-    }
-    const auto download =
-        runtime.GetStagingPool().Request(download_size, MemoryType::HostCached, 16, false);
-    const vk::BufferImageCopy image_download = {
-        .bufferOffset = download.offset,
-        .bufferRowLength = image.info.pitch,
-        .bufferImageHeight = image.info.size.height,
-        .imageSubresource =
-            {
-                .aspectMask = image.info.props.is_depth ? vk::ImageAspectFlagBits::eDepth
-                                                        : vk::ImageAspectFlagBits::eColor,
-                .mipLevel = 0,
-                .baseArrayLayer = 0,
-                .layerCount = image.info.resources.layers,
-            },
-        .imageOffset = {0, 0, 0},
-        .imageExtent = {image.info.size.width, image.info.size.height, image.info.size.depth},
-    };
-    runtime.DownloadImage(&image, download.buffer, std::span{&image_download, 1});
-    scheduler.Finish();
-    download.Invalidate();
-    using namespace Common::FS;
-    const auto dir = GetUserPath(PathType::LogDir) / "xray";
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    const auto name = fmt::format("{}_{:x}_{}x{}_p{}_{}_{}.raw", prefix, image.info.guest_address,
-                                  image.info.size.width, image.info.size.height, image.info.pitch,
-                                  image.info.num_bits, vk::to_string(image.info.pixel_format));
-    const auto file = IOFile{dir / name, FileAccessMode::Create};
-    file.WriteRaw<u8>(download.mapped, download_size);
-    LOG_INFO(Render_Vulkan,
-             "DUMP image {:x} written: {} ({} bytes, {} layers, gpu modified {}, last used tick {})",
-             address, name, download_size, image.info.resources.layers,
-             True(image.flags & ImageFlagBits::GpuModified), image.tick_accessed_last);
-    return true;
-}
 
 void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     Image& image = slot_images[image_id];
@@ -234,10 +155,8 @@ void TextureCache::InvalidateMemory(VAddr addr, size_t size) {
     // lock the command processor takes for every texture it binds. An image registered after
     // this check protects its pages after registering, so its writes fault again.
     if (!HasImagesInRange(pages_start, pages_end - pages_start)) {
-        Common::Perf::Add(Common::Perf::TexInvalidateSkips);
         return;
-    }
-    Common::Perf::Add(Common::Perf::TexInvalidateLocked);
+    };
     std::scoped_lock lock{mutex};
     ForEachImageInRegion(pages_start, pages_end - pages_start, [&](ImageId image_id, Image& image) {
         const auto image_begin = image.info.guest_address;
@@ -270,10 +189,8 @@ void TextureCache::InvalidateMemory(VAddr addr, size_t size) {
 
 void TextureCache::InvalidateMemoryFromGPU(VAddr address, size_t max_size) {
     if (max_size == 0 || !HasImagesInRange(address, max_size)) {
-        Common::Perf::Add(Common::Perf::TexInvalidateSkips);
         return;
-    }
-    Common::Perf::Add(Common::Perf::TexInvalidateLocked);
+    };
     std::scoped_lock lock{mutex};
     ForEachImageInRegion(address, max_size, [&](ImageId image_id, Image& image) {
         // Only consider images that match base address.
@@ -641,7 +558,7 @@ ImageId TextureCache::ShrinkImage(const ImageInfo& info, ImageId image_id) {
 }
 
 AmdGpu::CbDbExtent TextureCache::LearnedTargetExtent(VAddr address, u32 pitch) const {
-    if (!Common::Perf::GetTuning().rt_size_learn.load(std::memory_order_relaxed)) {
+    if (!Core::Runtime::GetPolicy().rt_size_learn) {
         return {};
     }
     const auto it = learned_extents.find(address);
@@ -652,7 +569,7 @@ AmdGpu::CbDbExtent TextureCache::LearnedTargetExtent(VAddr address, u32 pitch) c
 }
 
 ImageId TextureCache::LearnTargetSize(ImageId image_id, const ImageInfo& tsharp_info) {
-    if (!image_id || !Common::Perf::GetTuning().rt_size_learn.load(std::memory_order_relaxed)) {
+    if (!image_id || !Core::Runtime::GetPolicy().rt_size_learn) {
         return image_id;
     }
     const Image& image = slot_images[image_id];
@@ -675,10 +592,6 @@ ImageId TextureCache::LearnTargetSize(ImageId image_id, const ImageInfo& tsharp_
     extent.width = static_cast<u16>(width);
     extent.height = static_cast<u16>(height);
     learned_extents[info.guest_address] = LearnedExtent{.pitch = info.pitch, .extent = extent};
-    LOG_INFO(Render_Vulkan,
-             "Render target {:x} (pitch {}, {}x{}) shrunk to its texture size {}x{} (format {})",
-             info.guest_address, info.pitch, info.size.width, info.size.height, width, height,
-             vk::to_string(info.pixel_format));
     ImageInfo new_info = info;
     new_info.size.width = width;
     new_info.size.height = height;
@@ -779,37 +692,8 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     if (!image_id) {
         image_id = slot_images.insert(instance, runtime, slot_image_views, info);
         RegisterImage(image_id);
-        if (info.props.is_tiled) {
-            // Tiled layouts decoded differently since the upstream detiling fix (#5196): 128 bit
-            // elements in display micro tiling, macro tiled images with micro tiled small mips,
-            // thick arrays. Logged once per created image, with the block coded arrays (smoke
-            // flipbooks), to tell which game textures the fix changes.
-            const auto micro_mode = AmdGpu::GetMicroTileMode(info.tile_mode);
-            const u32 thickness = AmdGpu::GetMicroTileThickness(info.array_mode);
-            const bool display128 =
-                micro_mode == AmdGpu::MicroTileMode::Display && info.num_bits == 128;
-            const bool micro_mips = info.micro_tiled_mips != 0;
-            const bool thick_array = thickness > 1 && info.resources.layers > 1;
-            if (display128 || micro_mips || thick_array ||
-                (info.props.is_block && info.resources.layers > 1)) {
-                LOG_INFO(Render_Vulkan,
-                         "TEXLAYOUT {:x}+{:x} {}x{}x{} layers {} mips {} {} bits {} tile {} "
-                         "array {} micro {} micro_mips {:x} changed by #5196: {}{}{}",
-                         info.guest_address, info.guest_size, info.size.width, info.size.height,
-                         info.size.depth, info.resources.layers, info.resources.levels,
-                         vk::to_string(info.pixel_format), info.num_bits,
-                         static_cast<u32>(info.tile_mode), static_cast<u32>(info.array_mode),
-                         static_cast<u32>(micro_mode), info.micro_tiled_mips,
-                         display128 ? "display128 " : "", micro_mips ? "small_mips " : "",
-                         thick_array ? "thick_array" : "");
-            }
-        }
-        if (Common::Perf::FrameDumpActive().load(std::memory_order_relaxed)) [[unlikely]] {
-            LOG_INFO(Render_Vulkan, "DUMP new image {:x}+{:x} {}x{}x{} {} samples {} mips {}",
-                     info.guest_address, info.guest_size, info.size.width, info.size.height,
-                     info.size.depth, vk::to_string(info.pixel_format), info.num_samples,
-                     info.resources.levels);
-        }
+
+
     }
 
     Image& image = slot_images[image_id];
@@ -953,13 +837,7 @@ void TextureCache::RefreshImage(Image& image) {
     if (False(image.flags & ImageFlagBits::Dirty) || image.info.num_samples > 1) {
         return;
     }
-    Common::Perf::ScopedTimer refresh_timer{Common::Perf::ImageRefreshes,
-                                            Common::Perf::ImageRefreshNs};
-    if (Common::Perf::FrameDumpActive().load(std::memory_order_relaxed)) [[unlikely]] {
-        LOG_INFO(Render_Vulkan, "DUMP upload image {:x}+{:x} {}x{} from guest memory",
-                 image.info.guest_address, image.info.guest_size, image.info.size.width,
-                 image.info.size.height);
-    }
+
 
     RENDERER_TRACE;
     TRACE_HINT(fmt::format("{:x}:{:x}", image.info.guest_address, image.info.guest_size));
@@ -1031,7 +909,6 @@ void TextureCache::RefreshImage(Image& image) {
 
     scheduler.EndRendering();
 
-    Common::Perf::Add(Common::Perf::ImageUploadBytes, image.info.guest_size);
     const auto [in_buffer, in_offset] =
         buffer_cache.ObtainBufferForImage(image.info.guest_address, image.info.guest_size);
     const auto [buffer, offset] = tile_manager.DetileImage(in_buffer, in_offset, image.info);
@@ -1326,17 +1203,13 @@ void TextureCache::GarbageCollectSamplers() {
 }
 
 void TextureCache::RunGarbageCollector() {
-    SCOPE_EXIT {
-        ++gc_tick;
-    };
+    SCOPE_EXIT { ++gc_tick; };
 
     GarbageCollectImages();
     GarbageCollectSamplers();
 }
 
-void TextureCache::TouchImage(const Image& image) {
-    lru_cache.Touch(image.lru_id, gc_tick);
-}
+void TextureCache::TouchImage(const Image& image) { lru_cache.Touch(image.lru_id, gc_tick); }
 
 void TextureCache::DeleteImage(ImageId image_id) {
     Image& image = slot_images[image_id];

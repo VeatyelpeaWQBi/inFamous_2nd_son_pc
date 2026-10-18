@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/np/np_commerce/np_commerce_ui.h"
+#include "common/logging/log.h"
+#include "imgui/imgui_std.h"
 #include <algorithm>
 #include <imgui.h>
-#include "common/logging/log.h"
-#include "core/libraries/np/np_commerce/np_commerce_ui.h"
-#include "imgui/imgui_std.h"
 
 using namespace ImGui;
 using namespace Libraries::CommonDialog;
@@ -127,9 +127,7 @@ CommerceDialogUi::CommerceDialogUi(CommerceDialogState* state, Status* status, s
     }
 }
 
-CommerceDialogUi::~CommerceDialogUi() {
-    Finish(CommerceResult::USER_CANCELED);
-}
+CommerceDialogUi::~CommerceDialogUi() { Finish(CommerceResult::USER_CANCELED); }
 
 CommerceDialogUi::CommerceDialogUi(CommerceDialogUi&& other) noexcept
     : Layer(other), first_render(other.first_render), state(other.state), status(other.status),
@@ -255,9 +253,6 @@ void CommerceDialogUi::Draw() {
         BeginGroup();
         if (action) {
             if (Button(action, BUTTON_SIZE)) {
-                LOG_INFO(Lib_NpCommerce, "CommerceDialog: action '{}' mode={} target='{}'", action,
-                         static_cast<s32>(state->mode),
-                         state->targets.empty() ? "" : state->targets.front());
                 Finish(CommerceResult::PURCHASED);
             }
             SameLine();
@@ -306,9 +301,7 @@ void PsStoreIconLayer::Hide() {
     }
 }
 
-void PsStoreIconLayer::SetLayout(PsStoreIconLayout l) {
-    layout.store(l);
-}
+void PsStoreIconLayer::SetLayout(PsStoreIconLayout l) { layout.store(l); }
 
 void PsStoreIconLayer::Draw() {
     if (!shown.load()) {

@@ -7,8 +7,8 @@
 #include <atomic>
 #include <utility>
 
-#include "common/perf_stats.h"
 #include "common/types.h"
+#include "core/runtime_policy.h"
 #if !defined(__GNUC__) && !defined(__clang__) && (defined(_M_X64) || defined(_M_IX86))
 #include <xmmintrin.h>
 #endif
@@ -38,9 +38,7 @@ inline std::atomic<u32> g_tracker_frame{1};
 /// labels, readback and image write backs): copies of guest memory taken before may be stale.
 inline std::atomic<u64> g_host_write_gen{1};
 
-inline u64 CurrentUploadEpoch() noexcept {
-    return g_upload_epoch.load(std::memory_order_acquire);
-}
+inline u64 CurrentUploadEpoch() noexcept { return g_upload_epoch.load(std::memory_order_acquire); }
 
 void NextUploadEpoch() noexcept;
 
@@ -50,7 +48,6 @@ inline u64 CurrentHostWriteGen() noexcept {
 
 inline void NoteHostWrite() noexcept {
     g_host_write_gen.fetch_add(1, std::memory_order_acq_rel);
-    Common::Perf::Add(Common::Perf::HostWrites);
 }
 
 constexpr u64 PAGES_PER_WORD = 64;
@@ -91,19 +88,15 @@ struct Bounds {
 };
 
 struct RegionBits {
-    constexpr void Fill(u64 value) {
-        data.fill(value);
-    }
+    constexpr void Fill(u64 value) { data.fill(value); }
 
     constexpr bool GetPage(u64 page) const {
         return data[page / PAGES_PER_WORD] & (1ULL << (page % PAGES_PER_WORD));
     }
 
-    constexpr u64& operator[](u64 index) {
-        return data[index];
-    }
+    constexpr u64& operator[](u64 index) { return data[index]; }
 
-private:
+  private:
     alignas(64) std::array<u64, NUM_REGION_WORDS> data;
 };
 

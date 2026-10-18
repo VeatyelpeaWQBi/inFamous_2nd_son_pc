@@ -1,22 +1,22 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "ime_ui.h"
+#include "core/libraries/ime/ime_kb_layout.h"
+#include "core/libraries/ime/ime_ui_shared.h"
+#include "core/libraries/pad/pad.h"
+#include "imgui/imgui_std.h"
+#include "imgui/renderer/imgui_core.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <imgui_internal.h>
 #include <limits>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <imgui_internal.h>
-#include "core/libraries/ime/ime_kb_layout.h"
-#include "core/libraries/ime/ime_ui_shared.h"
-#include "core/libraries/pad/pad.h"
-#include "ime_ui.h"
-#include "imgui/imgui_std.h"
-#include "imgui/renderer/imgui_core.h"
 
 namespace Libraries::Ime {
 
@@ -51,9 +51,7 @@ ImeState::ImeState(const OrbisImeParam* param, const OrbisImeParamExtended* exte
     // Respect both the absolute IME limit and the caller-provided limit
     max_text_length = std::min(param->maxTextLength, ORBIS_IME_MAX_TEXT_LENGTH);
 
-    if (extended) {
-        LOG_INFO(Lib_Ime, "Extended IME parameters provided");
-    }
+
 
     if (text_buffer) {
         const std::size_t text_len = std::char_traits<char16_t>::length(text_buffer);
@@ -134,9 +132,7 @@ void ImeState::SendEnterEvent() {
         enterEvent.param.text = text;
     }
 
-    LOG_DEBUG(Lib_Ime,
-              "IME Event queued: PressEnter caret={} area_num={} edit.index={} edit.length={}",
-              text.caret_index, text.area_num, text.text_area[0].index, text.text_area[0].length);
+    ;
     SendEvent(&enterEvent);
 }
 
@@ -168,9 +164,7 @@ void ImeState::SendCloseEvent() {
         closeEvent.param.text = text;
     }
 
-    LOG_DEBUG(Lib_Ime,
-              "IME Event queued: PressClose caret={} area_num={} edit.index={} edit.length={}",
-              text.caret_index, text.area_num, text.text_area[0].index, text.text_area[0].length);
+    ;
     SendEvent(&closeEvent);
 }
 
@@ -205,8 +199,6 @@ void ImeState::SetCaret(u32 position) {
     caret_index = next_caret;
     caret_byte_index = Utf8ByteIndexFromUtf16Index(current_text.begin(), next_caret);
     caret_dirty = true;
-    LOG_DEBUG(Lib_Ime, "ImeState::SetCaret requested={}, applied={} (len={})", position,
-              caret_index, len_utf16);
 }
 
 bool ImeState::ConvertOrbisToUTF8(const char16_t* orbis_text, std::size_t orbis_text_len,
@@ -1554,10 +1546,7 @@ bool ImeUi::DrawInputText(const ImePanelMetrics& metrics, bool pointer_selection
     PushStyleColor(ImGuiCol_FrameBgActive, ImeColorToImVec4(style_config.color_preedit));
     PushStyleColor(ImGuiCol_Text, ImeColorToImVec4(style_config.color_text));
     PushItemFlag(ImGuiItemFlags_NoNav, true);
-    if (InputTextExLimited("##ImeInput", nullptr, state->current_text.begin(),
-                           state->max_text_length * 4 + 1, input_size, flags,
-                           state->max_text_length, InputTextCallback, this)) {
-    }
+
     PopItemFlag();
     PopStyleColor(4);
 
@@ -1726,13 +1715,6 @@ int ImeUi::InputTextCallback(ImGuiInputTextCallbackData* data) {
         OrbisImeEvent event{};
         event.id = OrbisImeEventId::UpdateText;
         event.param.text = eventParam;
-        LOG_DEBUG(Lib_Ime,
-                  "IME Event queued: UpdateText(type, "
-                  "delete)\neventParam.caret_index={}\narea_num={}\neventParam.text_area[0].mode={}"
-                  "\neventParam.text_area[0].index={}\neventParam.text_area[0].length={}",
-                  eventParam.caret_index, eventParam.area_num,
-                  static_cast<s32>(eventParam.text_area[0].mode), eventParam.text_area[0].index,
-                  eventParam.text_area[0].length);
 
         last_text = current_text;
         lastCaretPos = cursor_byte;
@@ -1759,8 +1741,6 @@ int ImeUi::InputTextCallback(ImGuiInputTextCallbackData* data) {
                 OrbisImeEvent caret_step{};
                 caret_step.id = OrbisImeEventId::UpdateCaret;
                 caret_step.param.caret_move = dir;
-                LOG_DEBUG(Lib_Ime, "IME Event queued: UpdateCaret(step {}/{}), dir={}", i + 1,
-                          steps, static_cast<u32>(dir));
                 ui->state->SendEvent(&caret_step);
             }
         }

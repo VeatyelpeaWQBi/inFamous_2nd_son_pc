@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/videodec/videodec2.h"
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "core/libraries/libs.h"
-#include "core/libraries/videodec/videodec2.h"
 #include "core/libraries/videodec/videodec2_impl.h"
 #include "core/libraries/videodec/videodec_error.h"
 
@@ -52,7 +52,6 @@ static void ComputeWorstCaseDimensions(const OrbisVideodec2DecoderConfigInfo& cf
 
 s32 PS4_SYSV_ABI
 sceVideodec2QueryComputeMemoryInfo(OrbisVideodec2ComputeMemoryInfo* compute_mem_info) {
-    LOG_INFO(Lib_Vdec2, "called");
 
     if (!compute_mem_info) {
         LOG_ERROR(Lib_Vdec2, "Invalid arguments");
@@ -105,14 +104,12 @@ sceVideodec2AllocateComputeQueue(const OrbisVideodec2ComputeConfigInfo* compute_
 }
 
 s32 PS4_SYSV_ABI sceVideodec2ReleaseComputeQueue(OrbisVideodec2ComputeQueue compute_queue) {
-    LOG_INFO(Lib_Vdec2, "called");
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI
 sceVideodec2QueryDecoderMemoryInfo(const OrbisVideodec2DecoderConfigInfo* decoder_cfg_info,
                                    OrbisVideodec2DecoderMemoryInfo* decoder_mem_info) {
-    LOG_INFO(Lib_Vdec2, "called");
 
     if (!decoder_cfg_info || !decoder_mem_info) {
         LOG_ERROR(Lib_Vdec2, "Invalid arguments");
@@ -153,7 +150,6 @@ sceVideodec2QueryDecoderMemoryInfo(const OrbisVideodec2DecoderConfigInfo* decode
 s32 PS4_SYSV_ABI sceVideodec2CreateDecoder(const OrbisVideodec2DecoderConfigInfo* decoder_cfg_info,
                                            const OrbisVideodec2DecoderMemoryInfo* decoder_mem_info,
                                            OrbisVideodec2Decoder* decoder) {
-    LOG_INFO(Lib_Vdec2, "called");
 
     if (!decoder_cfg_info || !decoder_mem_info || !decoder) {
         LOG_ERROR(Lib_Vdec2, "Invalid arguments");
@@ -170,7 +166,6 @@ s32 PS4_SYSV_ABI sceVideodec2CreateDecoder(const OrbisVideodec2DecoderConfigInfo
 }
 
 s32 PS4_SYSV_ABI sceVideodec2DeleteDecoder(OrbisVideodec2Decoder decoder) {
-    LOG_INFO(Lib_Vdec2, "called");
 
     if (!decoder) {
         LOG_ERROR(Lib_Vdec2, "Invalid arguments");
@@ -185,7 +180,6 @@ s32 PS4_SYSV_ABI sceVideodec2Decode(OrbisVideodec2Decoder decoder,
                                     const OrbisVideodec2InputData* input_data,
                                     OrbisVideodec2FrameBuffer* frame_buffer,
                                     OrbisVideodec2OutputInfo* output_info) {
-    LOG_TRACE(Lib_Vdec2, "called");
 
     if (!decoder) {
         LOG_ERROR(Lib_Vdec2, "Invalid decoder instance");
@@ -207,7 +201,6 @@ s32 PS4_SYSV_ABI sceVideodec2Decode(OrbisVideodec2Decoder decoder,
 s32 PS4_SYSV_ABI sceVideodec2Flush(OrbisVideodec2Decoder decoder,
                                    OrbisVideodec2FrameBuffer* frame_buffer,
                                    OrbisVideodec2OutputInfo* output_info) {
-    LOG_INFO(Lib_Vdec2, "called");
 
     if (!decoder) {
         LOG_ERROR(Lib_Vdec2, "Invalid decoder instance");
@@ -227,7 +220,6 @@ s32 PS4_SYSV_ABI sceVideodec2Flush(OrbisVideodec2Decoder decoder,
 }
 
 s32 PS4_SYSV_ABI sceVideodec2Reset(OrbisVideodec2Decoder decoder) {
-    LOG_INFO(Lib_Vdec2, "called");
 
     if (!decoder) {
         LOG_ERROR(Lib_Vdec2, "Invalid decoder instance");
@@ -239,7 +231,6 @@ s32 PS4_SYSV_ABI sceVideodec2Reset(OrbisVideodec2Decoder decoder) {
 
 s32 PS4_SYSV_ABI sceVideodec2GetPictureInfo(const OrbisVideodec2OutputInfo* output_info,
                                             void* p_1st_picture_info, void* p_2nd_picture_info) {
-    LOG_TRACE(Lib_Vdec2, "called");
 
     if (!output_info) {
         LOG_ERROR(Lib_Vdec2, "Invalid arguments");
@@ -271,13 +262,11 @@ s32 PS4_SYSV_ABI sceVideodec2GetPictureInfo(const OrbisVideodec2OutputInfo* outp
 
 s32 PS4_SYSV_ABI sceVideodec2GetAvcPictureInfo(const OrbisVideodec2OutputInfo* output_info,
                                                void* p_1st_picture_info, void* p_2nd_picture_info) {
-    LOG_TRACE(Lib_Vdec2, "called");
     return sceVideodec2GetPictureInfo(output_info, p_1st_picture_info, p_2nd_picture_info);
 }
 
 s32 PS4_SYSV_ABI sceVideodec2GetHevcPictureInfo(const OrbisVideodec2OutputInfo* output_info,
                                                 OrbisVideodec2HevcPictureInfo* picture_info) {
-    LOG_TRACE(Lib_Vdec2, "called");
     return sceVideodec2GetPictureInfo(output_info, picture_info, nullptr);
 }
 

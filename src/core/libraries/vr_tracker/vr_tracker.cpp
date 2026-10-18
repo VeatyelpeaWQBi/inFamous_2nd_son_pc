@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/vr_tracker/vr_tracker.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/kernel/time.h"
 #include "core/libraries/libs.h"
-#include "core/libraries/vr_tracker/vr_tracker.h"
 #include "core/libraries/vr_tracker/vr_tracker_error.h"
 #include "core/memory.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -30,7 +30,6 @@ static s32 g_hmd_handle = -1;
 
 s32 PS4_SYSV_ABI sceVrTrackerQueryMemory(const OrbisVrTrackerQueryMemoryParam* param,
                                          OrbisVrTrackerQueryMemoryResult* result) {
-    LOG_DEBUG(Lib_VrTracker, "called");
     if (param == nullptr || result == nullptr ||
         param->size != sizeof(OrbisVrTrackerQueryMemoryParam) ||
         (param->profile != OrbisVrTrackerProfile::ORBIS_VR_TRACKER_PROFILE_000 &&
@@ -143,13 +142,11 @@ s32 PS4_SYSV_ABI sceVrTrackerInit(const OrbisVrTrackerInitParam* param) {
 
 s32 PS4_SYSV_ABI sceVrTrackerRegisterDevice(const OrbisVrTrackerDeviceType device_type,
                                             const s32 handle) {
-    LOG_TRACE(Lib_VrTracker, "redirected to sceVrTrackerRegisterDeviceInternal");
     return sceVrTrackerRegisterDeviceInternal(device_type, handle, -1, 0);
 }
 
 s32 PS4_SYSV_ABI sceVrTrackerRegisterDevice2(const OrbisVrTrackerDeviceType device_type,
                                              const s32 handle) {
-    LOG_TRACE(Lib_VrTracker, "redirected to sceVrTrackerRegisterDeviceInternal");
     return sceVrTrackerRegisterDeviceInternal(device_type, handle, -1, 1);
 }
 
@@ -220,7 +217,6 @@ s32 PS4_SYSV_ABI sceVrTrackerGetResult(const OrbisVrTrackerGetResultParam* param
 }
 
 s32 PS4_SYSV_ABI sceVrTrackerGetTime(u64* time) {
-    LOG_TRACE(Lib_VrTracker, "called");
     if (!g_library_initialized) {
         return ORBIS_VR_TRACKER_ERROR_NOT_INIT;
     }
@@ -442,7 +438,6 @@ s32 PS4_SYSV_ABI sceVrTrackerStopLiveCapture() {
 }
 
 s32 PS4_SYSV_ABI sceVrTrackerUnregisterDevice(const s32 handle) {
-    LOG_DEBUG(Lib_VrTracker, "called");
     if (!g_library_initialized) {
         return ORBIS_VR_TRACKER_ERROR_NOT_INIT;
     }
@@ -467,7 +462,6 @@ s32 PS4_SYSV_ABI sceVrTrackerUnregisterDevice(const s32 handle) {
 }
 
 s32 PS4_SYSV_ABI sceVrTrackerTerm() {
-    LOG_DEBUG(Lib_VrTracker, "called");
     if (!g_library_initialized) {
         return ORBIS_VR_TRACKER_ERROR_NOT_INIT;
     }

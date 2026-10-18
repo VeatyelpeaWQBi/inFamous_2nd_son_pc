@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/libs.h"
 #include "common/arch.h"
 #include "common/elf_info.h"
 #include "common/singleton.h"
@@ -28,7 +29,6 @@
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/keyboard/keyboard.h"
 #include "core/libraries/libc_internal/libc_internal.h"
-#include "core/libraries/libs.h"
 #include "core/libraries/mouse/mouse.h"
 #include "core/libraries/move/move.h"
 #include "core/libraries/network/http.h"
@@ -108,7 +108,6 @@ static void RegisterAudio3d(Core::Loader::SymbolsResolver* sym) {
 }
 
 void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
-    LOG_INFO(Lib_Kernel, "Initializing HLE libraries");
 
     auto* game_info = Common::Singleton<Common::ElfInfo>::Instance();
     const auto& sys_module_path = EmulatorSettings.GetSysModulesDir();

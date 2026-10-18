@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <SDL3/SDL_audio.h>
+#include <SDL3/SDL_hints.h>
 #include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <memory>
 #include <thread>
-#include <SDL3/SDL_audio.h>
-#include <SDL3/SDL_hints.h>
 
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
@@ -56,7 +56,7 @@ enum ChannelPos : u8 {
 };
 
 class SDLPortBackend : public PortBackend {
-public:
+  public:
     explicit SDLPortBackend(const PortOut& port)
         : frame_size(port.format_info.FrameSize()), guest_buffer_size(port.BufferSize()),
           buffer_frames(port.buffer_frames), sample_rate(port.sample_rate),
@@ -68,9 +68,7 @@ public:
         }
     }
 
-    ~SDLPortBackend() override {
-        Cleanup();
-    }
+    ~SDLPortBackend() override { Cleanup(); }
 
     void Output(void* ptr) override {
         if (!stream || !internal_buffer || !convert) [[unlikely]] {
@@ -122,19 +120,14 @@ public:
         // Apply volume change
         if (SDL_SetAudioStreamGain(stream, total_gain)) {
             current_gain.store(total_gain, std::memory_order_release);
-            LOG_DEBUG(Lib_AudioOut,
-                      "Set combined audio gain to {:.3f} (channel: {:.3f}, slider: {:.3f})",
-                      total_gain, max_channel_gain, slider_gain);
         } else {
             LOG_ERROR(Lib_AudioOut, "Failed to set audio stream gain: {}", SDL_GetError());
         }
     }
 
-    u64 GetLastOutputTime() const {
-        return last_output_time.load(std::memory_order_acquire);
-    }
+    u64 GetLastOutputTime() const { return last_output_time.load(std::memory_order_acquire); }
 
-private:
+  private:
     bool Initialize(OrbisAudioOutPort type) {
         // Calculate timing parameters
         period_us = (1000000ULL * buffer_frames + sample_rate / 2) / sample_rate;
@@ -209,7 +202,6 @@ private:
         if (std::abs(config_volume - stored_gain) > VOLUME_EPSILON) {
             if (SDL_SetAudioStreamGain(stream, config_volume)) {
                 current_gain.store(config_volume, std::memory_order_release);
-                LOG_DEBUG(Lib_AudioOut, "Updated audio gain to {:.3f}", config_volume);
             } else {
                 LOG_ERROR(Lib_AudioOut, "Failed to set audio stream gain: {}", SDL_GetError());
             }
@@ -248,8 +240,6 @@ private:
         const auto queued = SDL_GetAudioStreamQueued(stream);
 
         if (queued >= queue_threshold) [[unlikely]] {
-            LOG_DEBUG(Lib_AudioOut, "Clearing backed up audio queue ({} >= {})", queued,
-                      queue_threshold);
             SDL_ClearAudioStream(stream);
             CalculateQueueThreshold();
         }
@@ -283,8 +273,6 @@ private:
             dev_spec.channels >= 1 && dev_spec.channels <= 2) {
             ps4_downmix = true;
             internal_buffer_size = buffer_frames * sizeof(float) * 2;
-            LOG_INFO(Lib_AudioOut, "Stereo device: using PS4-accurate {}ch->stereo downmix",
-                     num_channels);
 
             SDL_DestroyAudioStream(stream);
             const SDL_AudioSpec stereo_fmt = {
@@ -320,15 +308,12 @@ private:
             return false;
         }
 
-        LOG_INFO(Lib_AudioOut, "Opened audio device: {} ({} Hz, {} ch, gain: {:.3f})", device_name,
-                 sample_rate, num_channels, initial_gain);
+        ;
         return true;
     }
 
     SDL_AudioDeviceID SelectAudioDevice(const std::string& device_name, OrbisAudioOutPort type) {
         if (device_name == "None") {
-            LOG_INFO(Lib_AudioOut, "Audio device disabled for port type {}",
-                     static_cast<int>(type));
             return SDL_INVALID_AUDIODEVICEID;
         }
 
@@ -496,8 +481,6 @@ private:
         const u32 sdl_buffer_size = sdl_buffer_frames * sizeof(float) * num_channels;
         queue_threshold = std::max(guest_buffer_size, sdl_buffer_size) * QUEUE_MULTIPLIER;
 
-        LOG_DEBUG(Lib_AudioOut, "Audio queue threshold: {} bytes (SDL buffer: {} frames)",
-                  queue_threshold, sdl_buffer_frames);
     }
 
     using ConverterFunc = void (*)(const void* src, void* dst, u32 frames, const float* volumes);

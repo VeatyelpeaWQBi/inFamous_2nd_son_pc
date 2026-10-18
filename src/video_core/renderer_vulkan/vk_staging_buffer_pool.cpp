@@ -7,9 +7,8 @@
 
 #include "common/alignment.h"
 #include "common/assert.h"
-#include "common/perf_stats.h"
 #include "common/types.h"
-#include "core/devtools/widget/gpu_memory.h"
+#include "core/runtime_policy.h"
 #include "video_core/renderer_vulkan/vk_driver_cache.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -35,17 +34,18 @@ u64 RoundAllocationSize(u64 size) {
 
 StagingBufferPool::StagingBufferPool(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_} {
-    automatic_budget =
-        Common::Perf::GetTuning().staging_budget_auto.load(std::memory_order_relaxed);
-    if (!automatic_budget)
+    automatic_budget = Core::Runtime::GetPolicy().staging_budget_auto;
+    if (!automatic_budget) {
         return;
+    }
     budget = PrewarmBudget::FromAvailable(AvailableHostMemory(), AvailableDeviceMemory(instance));
     keep_bytes = budget.staging_keep_bytes;
     Ring& ring = rings[u32(MemoryType::HostUncached)];
     for (u64 size = 0; size + BLOCK_SIZE <= budget.staging_warm_bytes; size += BLOCK_SIZE) {
         if (AvailableHostMemory() <= budget.host_reserve + BLOCK_SIZE ||
-            AvailableDeviceMemory(instance) <= budget.device_reserve)
+            AvailableDeviceMemory(instance) <= budget.device_reserve) {
             break;
+        }
         auto& block = ring.blocks.emplace_back(Block{
             .buffer = std::make_unique<VideoCore::StreamBuffer>(
                 instance, scheduler, MemoryType::HostUncached, BLOCK_SIZE),
@@ -53,12 +53,11 @@ StagingBufferPool::StagingBufferPool(const Instance& instance_, Scheduler& sched
         });
         // Commit mapped pages before the first resource burst. Never touch a buffer in use.
         auto& mapped = block.buffer->mapped_data;
-        for (size_t page = 0; page < mapped.size(); page += 4096)
+        for (size_t page = 0; page < mapped.size(); page += 4096) {
             mapped[page] = 0;
+        }
         allocated_bytes.fetch_add(BLOCK_SIZE, std::memory_order_relaxed);
-    }
-    LOG_INFO(Render, "Upload pool prewarmed: {} MiB; retention budget {} MiB",
-             allocated_bytes.load(std::memory_order_relaxed) / 1_MB, keep_bytes / 1_MB);
+    };
 }
 
 StagingBufferPool::~StagingBufferPool() = default;
@@ -92,8 +91,6 @@ StagingBufferRef StagingBufferPool::RequestFromRing(Ring& ring, u64 size, u64 al
             best = &ring.blocks[(ring.current + 1) % ring.blocks.size()];
             best_offset = 0;
         } else {
-            Common::Perf::DiagnosticTimer allocation{Common::Perf::StagingAllocations,
-                                                     Common::Perf::StagingAllocationNs};
             best = &ring.blocks.emplace_back(Block{
                 .buffer = std::make_unique<VideoCore::StreamBuffer>(instance, scheduler, type,
                                                                     BLOCK_SIZE),
@@ -139,8 +136,6 @@ StagingBufferRef StagingBufferPool::RequestLarge(u64 size, MemoryType type, bool
     }
 
     if (!best) {
-        Common::Perf::DiagnosticTimer allocation{Common::Perf::StagingAllocations,
-                                                 Common::Perf::StagingAllocationNs};
         best = &cache.emplace_back(LargeBuffer{
             .buffer = std::make_unique<VideoCore::Buffer>(instance, 0, RoundAllocationSize(size),
                                                           type, "StagingBufferPool:Dedicated"),
@@ -194,16 +189,16 @@ void StagingBufferPool::TickFrame() {
     }
     for (auto& cache : large_caches) {
         TrimLarge(cache);
-    }
-    PublishStats();
+    };
 }
 
 void StagingBufferPool::TrimRing(Ring& ring) {
     auto& blocks = ring.blocks;
     for (size_t i = blocks.size(); i-- > 0;) {
         const Block& block = blocks[i];
-        if (allocated_bytes.load(std::memory_order_relaxed) <= keep_bytes)
+        if (allocated_bytes.load(std::memory_order_relaxed) <= keep_bytes) {
             break;
+        }
         if (frame - block.last_used_frame < RING_IDLE_FRAMES ||
             !scheduler.IsFree(block.buffer->LastTick())) {
             continue;
@@ -227,35 +222,12 @@ void StagingBufferPool::TrimLarge(std::vector<LargeBuffer>& cache) {
         if (allocated_bytes.load(std::memory_order_relaxed) <= keep_bytes || entry.held ||
             frame - entry.last_used_frame <
                 (automatic_budget && keep_bytes ? 1800 : LARGE_IDLE_FRAMES) ||
-            !scheduler.IsFree(entry.tick))
+            !scheduler.IsFree(entry.tick)) {
             return false;
+        }
         allocated_bytes.fetch_sub(entry.buffer->SizeBytes(), std::memory_order_relaxed);
         return true;
     });
-}
-
-void StagingBufferPool::PublishStats() const {
-    using namespace Core::Devtools::Widget;
-    if (!GpuMemoryViewer::IsEnabled()) {
-        return;
-    }
-    static constexpr std::array<const char*, NUM_TYPES> names = {"DeviceLocal", "HostUncached",
-                                                                 "HostCached"};
-    GpuMemoryGroup group{.name = "Staging"};
-    for (size_t i = 0; i < NUM_TYPES; ++i) {
-        u64 bytes = 0;
-        for (const Block& block : rings[i].blocks) {
-            bytes += block.buffer->SizeBytes();
-        }
-        std::scoped_lock lk{large_mutex};
-        for (const LargeBuffer& entry : large_caches[i]) {
-            bytes += entry.buffer->SizeBytes();
-        }
-        if (bytes != 0) {
-            group.rows.push_back({.name = names[i], .bytes = bytes});
-        }
-    }
-    GpuMemoryViewer::Publish(std::move(group));
 }
 
 } // namespace Vulkan

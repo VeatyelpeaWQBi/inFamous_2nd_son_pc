@@ -37,7 +37,7 @@ function Resolve-ExistingBuildTool([string]$Name,[string]$Configured,[string[]]$
 }
 function Get-ProjectBuildTools([string]$Root) {
     $configured=@{}
-    foreach($configuration in @('RelWithDebInfo','Release','Debug')){
+    foreach($configuration in @('Release','RelWithDebInfo')){
         $cache=Resolve-ProjectChild $Root ('Build/'+$configuration+'/CMakeCache.txt')
         if(Test-Path -LiteralPath $cache -PathType Leaf){
             $configured=Convert-CMakeToolPaths ([IO.File]::ReadAllLines($cache));break
@@ -69,7 +69,7 @@ function Get-ProjectBuildTools([string]$Root) {
 }
 function Invoke-ProjectBuildProcess([string]$Executable,[string[]]$ToolArguments,[string]$Directory,[hashtable]$Environment=@{},[switch]$Capture) {
     $start=[Diagnostics.ProcessStartInfo]::new()
-    $start.FileName=$Executable;$start.WorkingDirectory=$Directory;$start.UseShellExecute=$false
+    $start.FileName=$Executable;$start.WorkingDirectory=$Directory;$start.UseShellExecute=$false;$start.CreateNoWindow=$true
     $start.Arguments=($ToolArguments|ForEach-Object {Quote-WindowsArgument $_}) -join ' '
     foreach($key in $Environment.Keys){$start.EnvironmentVariables[$key]=$Environment[$key]}
     if($Capture){

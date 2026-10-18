@@ -3,11 +3,11 @@
 
 #pragma once
 
+#include <boost/container/small_vector.hpp>
+#include <boost/container/static_vector.hpp>
 #include <deque>
 #include <optional>
 #include <string>
-#include <boost/container/small_vector.hpp>
-#include <boost/container/static_vector.hpp>
 
 #include "common/interval_set.h"
 #include "common/types.h"
@@ -60,31 +60,23 @@ class BufferCache {
     static constexpr u64 MIN_BLOCK_SIZE = 16_KB;
     static constexpr u64 STREAM_THRESHOLD = 16_KB;
 
-public:
+  public:
     explicit BufferCache(const Vulkan::Instance& instance, Vulkan::Scheduler& scheduler,
                          Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool,
                          TextureCache& texture_cache, PageManager& tracker);
     ~BufferCache();
 
     /// Returns a pointer to GDS device local buffer.
-    [[nodiscard]] const Buffer* GetGdsBuffer() const noexcept {
-        return &gds_buffer;
-    }
+    [[nodiscard]] const Buffer* GetGdsBuffer() const noexcept { return &gds_buffer; }
 
     /// Retrieves the device local DBA page table buffer.
-    [[nodiscard]] Buffer* GetBdaPageTableBuffer() noexcept {
-        return bda_pagetable_buffer.get();
-    }
+    [[nodiscard]] Buffer* GetBdaPageTableBuffer() noexcept { return bda_pagetable_buffer.get(); }
 
     /// Retrieves the fault buffer.
-    [[nodiscard]] Buffer* GetFaultBuffer() noexcept {
-        return fault_manager->GetFaultBuffer();
-    }
+    [[nodiscard]] Buffer* GetFaultBuffer() noexcept { return fault_manager->GetFaultBuffer(); }
 
     /// Retrieves the stream buffer of the active queue.
-    [[nodiscard]] StreamBuffer& GetStreamBuffer() noexcept {
-        return *active->stream_buffer;
-    }
+    [[nodiscard]] StreamBuffer& GetStreamBuffer() noexcept { return *active->stream_buffer; }
 
     /// The queue the bindings, uploads and copies are recorded for (asc_queue): nullptr for the
     /// graphics queue. Command processor thread only.
@@ -92,13 +84,9 @@ public:
         active = context != nullptr ? context : &graphics_queue;
     }
 
-    [[nodiscard]] const QueueContext& ActiveQueue() const noexcept {
-        return *active;
-    }
+    [[nodiscard]] const QueueContext& ActiveQueue() const noexcept { return *active; }
 
-    [[nodiscard]] bool OnComputeQueue() const noexcept {
-        return active->index != 0;
-    }
+    [[nodiscard]] bool OnComputeQueue() const noexcept { return active->index != 0; }
 
     /// Cross queue dependencies are tracked while the compute queue is in use (asc_queue). The
     /// compute scheduler waits for the upload worker like the graphics one.
@@ -134,9 +122,7 @@ public:
     void FlushComputeQueue();
 
     /// Returns minimum granularity of a sparse memory bind.
-    u32 GetSparsePageShift() const noexcept {
-        return block_shift;
-    }
+    u32 GetSparsePageShift() const noexcept { return block_shift; }
 
     void TickFrame();
 
@@ -171,9 +157,8 @@ public:
     void PrefetchStreamSource(VAddr device_addr, u64 size) noexcept;
 
     /// Finds a buffer for the specified region.
-    [[nodiscard]] std::pair<const Buffer*, u64> ObtainBuffer(VAddr device_addr, u32 size,
-                                                           bool is_written,
-                                                           bool is_texel_buffer = false);
+    [[nodiscard]] std::pair<const Buffer*, u64>
+    ObtainBuffer(VAddr device_addr, u32 size, bool is_written, bool is_texel_buffer = false);
 
     /// Attempts to obtain a buffer without modifying the cache contents.
     [[nodiscard]] std::pair<const Buffer*, u64> ObtainBufferForImage(VAddr device_addr, u32 size);
@@ -191,10 +176,8 @@ public:
 
     /// Frame x-ray: the arena holding the range and the range's offset in it, null when its
     /// pages are not resident. Nothing is synchronized or changed.
-    [[nodiscard]] std::pair<const Buffer*, u64> PeekArena(VAddr device_addr, u32 size);
 
     /// Frame x-ray: the tracking state of the range's pages, as text.
-    [[nodiscard]] std::string DescribePages(VAddr device_addr, u32 size);
 
     /// Synchronizes all buffers needed for DMA.
     void SynchronizeDmaBuffers();
@@ -202,7 +185,7 @@ public:
     /// Commits pending sparse buffer memory binds. Must be called before every scheduler submit.
     void SubmitPendingArenaBinds(Vulkan::SubmitInfo& info);
 
-private:
+  private:
     struct ArenaBinds {
         const Buffer* arena;
         boost::container::small_vector<vk::SparseMemoryBind, 32> binds;
@@ -235,7 +218,6 @@ private:
     struct PendingReadback {
         u64 tick{};
         u64 record_seq{}; ///< GPU writes numbered above it came after the download was recorded.
-        u64 trace_id{}; ///< Diagnostic only; zero in ordinary runs.
         Vulkan::StagingBufferRef download{};
         boost::container::small_vector<vk::BufferCopy, 8> copies;
         VAddr arena_base{};
@@ -254,7 +236,7 @@ private:
     /// only for the graphics submission that last wrote its data, not for the work recorded
     /// after it, which is what a readback recorded in the graphics command buffer waits for.
     class ReadbackQueue {
-    public:
+      public:
         struct Job {
             vk::Buffer src;
             vk::Buffer dst;
@@ -274,9 +256,7 @@ private:
         /// semaphore tick signaled when the data is visible to the host.
         u64 Submit(std::span<const Job> jobs, std::span<const Wait> waits);
 
-        Vulkan::Semaphore& Semaphore() noexcept {
-            return semaphore;
-        }
+        Vulkan::Semaphore& Semaphore() noexcept { return semaphore; }
 
         bool IsFree(u64 tick) {
             if (semaphore.IsFree(tick)) {
@@ -286,7 +266,7 @@ private:
             return semaphore.IsFree(tick);
         }
 
-    private:
+      private:
         const Vulkan::Instance& instance;
         Vulkan::Semaphore semaphore;
         Vulkan::CommandPool command_pool;
@@ -336,7 +316,7 @@ private:
         u64 prefetch_tick; ///< Tick of the last prefetch of the window, at most one in flight.
         u64 prefetch_seq;  ///< Write sequence the last prefetch covered (readback_keep_ranges).
         bool prefetch_on_queue; ///< prefetch_tick is on the readback queue.
-        bool demand_pages; ///< Observed CPU pages, not the wider normal download window.
+        bool demand_pages;      ///< Observed CPU pages, not the wider normal download window.
     };
 
     /// Downloads the GPU modified memory around a request and waits for it (command processor).
@@ -348,7 +328,7 @@ private:
     /// tick to wait for on wait_semaphore before calling CompleteReadbacks, or 0 when there is
     /// nothing to wait for.
     u64 BeginReadback(VAddr device_addr, u64 size, bool is_write,
-                      Vulkan::Semaphore*& wait_semaphore, u64 trace_id = 0);
+                      Vulkan::Semaphore*& wait_semaphore);
 
     /// Writes the pending readbacks the GPU has finished to guest memory: in any order, except
     /// after an unfinished earlier readback of the same window. With wait, waits for all of them
@@ -359,8 +339,7 @@ private:
     void FinishReadback(size_t index);
 
     /// Guest thread: waits for a readback tick (reported if it takes seconds).
-    void WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, u64 tick,
-                      u64 trace_id = 0, u32 round = 0);
+    void WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, u64 tick);
 
     /// Command processor: the in flight readback to wait for before the range can be written,
     /// nullptr if none (see CompleteReadbacks).
@@ -368,37 +347,27 @@ private:
 
     /// Whether a guest read by this instruction is let through without waiting for the GPU
     /// (readback_relaxed_sites).
-    [[nodiscard]] bool IsRelaxedSite(u64 guest_rip) const;
 
     /// Command processor: the download of the window of a relaxed read is recorded (or the one in
     /// flight is used), then its page becomes readable at once with the data guest memory has.
-    void BeginRelaxedReadback(VAddr device_addr, u64 size);
 
     bool SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size, bool is_written,
-                            bool is_texel_buffer);
+                           bool is_texel_buffer);
 
     bool SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_addr, u32 size);
 
     /// Tests whether the GPU could use the guest memory around this address in place (import of
     /// host memory), through the guest mapping and through its backing, and logs the results.
-    void ProbeHostImport(VAddr address);
-    u32 probed_host_import{};
 
     /// The scheduler, runtime, staging pool and stream buffer of the active queue (asc_queue).
-    [[nodiscard]] Vulkan::Scheduler& Sched() const noexcept {
-        return *active->scheduler;
-    }
-    [[nodiscard]] Vulkan::Runtime& Rt() const noexcept {
-        return *active->runtime;
-    }
+    [[nodiscard]] Vulkan::Scheduler& Sched() const noexcept { return *active->scheduler; }
+    [[nodiscard]] Vulkan::Runtime& Rt() const noexcept { return *active->runtime; }
     [[nodiscard]] Vulkan::StagingBufferPool& Staging() const noexcept;
-    [[nodiscard]] StreamBuffer& Stream() const noexcept {
-        return *active->stream_buffer;
-    }
+    [[nodiscard]] StreamBuffer& Stream() const noexcept { return *active->stream_buffer; }
 
     const Vulkan::Instance& instance;
-    Vulkan::Scheduler& scheduler; ///< Graphics queue.
-    Vulkan::Runtime& runtime;     ///< Graphics queue.
+    Vulkan::Scheduler& scheduler;            ///< Graphics queue.
+    Vulkan::Runtime& runtime;                ///< Graphics queue.
     Vulkan::StagingBufferPool& staging_pool; ///< Graphics queue.
     QueueContext graphics_queue;
     QueueContext* active;
@@ -440,7 +409,6 @@ private:
     };
     static constexpr size_t NumStreamCopies = 4096;
     std::array<StreamCopy, NumStreamCopies> stream_copies{};
-    u32 stream_clean_sample{};
 
     /// Sync memo (Tuning::sync_memo): read only ranges found up to date in the GPU copy of guest
     /// memory, with the CPU modification versions of their regions at that time. Command

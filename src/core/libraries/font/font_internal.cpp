@@ -96,13 +96,9 @@ FT_Face CreateFreeTypeFaceFromBytes(const unsigned char* data, std::size_t size,
     FT_Face face = nullptr;
     if (FT_New_Memory_Face(lib, reinterpret_cast<const FT_Byte*>(data), static_cast<FT_Long>(size),
                            static_cast<FT_Long>(subfont_index), &face) != 0) {
-        LOG_DEBUG(Lib_Font, "CreateFreeTypeFaceFromBytes: failed size={} subfont_index={}", size,
-                  subfont_index);
         return nullptr;
     }
     (void)FT_Select_Charmap(face, FT_ENCODING_UNICODE);
-    LOG_DEBUG(Lib_Font, "CreateFreeTypeFaceFromBytes: ok face={} size={} subfont_index={}",
-              reinterpret_cast<const void*>(face), size, subfont_index);
     return face;
 }
 
@@ -388,8 +384,9 @@ static bool HasPathFilenameLower(const FontState& st, std::string_view filename_
     return false;
 }
 
-static std::optional<std::filesystem::path> ResolveKnownSysFontAliasImpl(
-    const std::filesystem::path& sysfonts_dir, std::string_view ps4_filename) {
+static std::optional<std::filesystem::path>
+ResolveKnownSysFontAliasImpl(const std::filesystem::path& sysfonts_dir,
+                             std::string_view ps4_filename) {
     const auto resolve_existing =
         [&](std::string_view filename) -> std::optional<std::filesystem::path> {
         const std::filesystem::path file_path{std::string(filename)};
@@ -476,8 +473,8 @@ static std::mutex g_sysfont_file_cache_mutex;
 static std::unordered_map<std::string, std::shared_ptr<std::vector<unsigned char>>>
     g_sysfont_file_cache;
 
-static std::shared_ptr<std::vector<unsigned char>> GetCachedFontBytes(
-    const std::filesystem::path& host_path) {
+static std::shared_ptr<std::vector<unsigned char>>
+GetCachedFontBytes(const std::filesystem::path& host_path) {
     const std::string key = host_path.string();
     {
         std::scoped_lock lock(g_sysfont_file_cache_mutex);
@@ -501,8 +498,8 @@ static std::shared_ptr<std::vector<unsigned char>> GetCachedFontBytes(
 
 } // namespace
 
-std::optional<std::filesystem::path> ResolveKnownSysFontAlias(
-    const std::filesystem::path& sysfonts_dir, std::string_view ps4_filename) {
+std::optional<std::filesystem::path>
+ResolveKnownSysFontAlias(const std::filesystem::path& sysfonts_dir, std::string_view ps4_filename) {
     return ResolveKnownSysFontAliasImpl(sysfonts_dir, ps4_filename);
 }
 
@@ -761,12 +758,14 @@ FontState& GetState(Libraries::Font::OrbisFontHandle h) {
 }
 
 FontState* TryGetState(Libraries::Font::OrbisFontHandle h) {
-    if (!h)
+    if (!h) {
         return nullptr;
+    }
     std::scoped_lock lock(g_state_mutex);
     auto it = g_font_state.find(h);
-    if (it == g_font_state.end())
+    if (it == g_font_state.end()) {
         return nullptr;
+    }
     return &it->second;
 }
 
@@ -881,23 +880,14 @@ void LogFontOpenError(s32 rc) {
     }
 }
 
-void LogExternalFormatSupport(u32 formats_mask) {
-    LOG_INFO(Lib_Font, "ExternalFormatsMask=0x{:X}", formats_mask);
-}
+void LogExternalFormatSupport(u32 formats_mask) { ; }
 
 bool LoadFontFile(const std::filesystem::path& path, std::vector<unsigned char>& out_bytes);
 
 void LogFontOpenParams(const Libraries::Font::OrbisFontOpenParams* params) {
     if (!params) {
-        LOG_INFO(Lib_Font, "OpenFontSetParams: <null>");
         return;
-    }
-    LOG_INFO(
-        Lib_Font,
-        "OpenFontSetParams: tag=0x{:04X} flags=0x{:X} subfont={} unique_id={} reserved_ptrs=[{}, "
-        "{}]",
-        params->tag, params->flags, params->subfont_index, params->unique_id, params->reserved_ptr1,
-        params->reserved_ptr2);
+    };
 }
 
 std::filesystem::path ResolveGuestPath(const char* guest_path) {
@@ -1023,13 +1013,9 @@ float ComputeScaleForPixelHeight(const FontState& st, float pixel_h) {
 const float kPointsPerInch = 72.0f;
 const float kScaleEpsilon = 1e-4f;
 
-float SafeDpiToFloat(u32 dpi) {
-    return dpi == 0 ? kPointsPerInch : static_cast<float>(dpi);
-}
+float SafeDpiToFloat(u32 dpi) { return dpi == 0 ? kPointsPerInch : static_cast<float>(dpi); }
 
-float PointsToPixels(float pt, u32 dpi) {
-    return pt * SafeDpiToFloat(dpi) / kPointsPerInch;
-}
+float PointsToPixels(float pt, u32 dpi) { return pt * SafeDpiToFloat(dpi) / kPointsPerInch; }
 
 float PixelsToPoints(float px, u32 dpi) {
     const float dpi_f = SafeDpiToFloat(dpi);
@@ -1345,16 +1331,18 @@ s32 RenderCodepointToSurface(FontState& st, Libraries::Font::OrbisFontHandle han
 
         for (int row = start_row; row < end_row; ++row) {
             const int src_y = row - dest_y;
-            if (src_y < 0 || src_y >= glyph_h)
+            if (src_y < 0 || src_y >= glyph_h) {
                 continue;
+            }
             const std::uint8_t* src_row =
                 glyph_bitmap.data() + static_cast<std::size_t>(src_y) * glyph_w;
             std::uint8_t* dst_row = dst_base + static_cast<std::size_t>(row) *
                                                    static_cast<std::size_t>(surf->widthByte);
             for (int col = start_col; col < end_col; ++col) {
                 const int src_x = col - dest_x;
-                if (src_x < 0 || src_x >= glyph_w)
+                if (src_x < 0 || src_x >= glyph_w) {
                     continue;
+                }
                 const std::uint8_t cov = src_row[src_x];
                 std::uint8_t* dst = dst_row + static_cast<std::size_t>(col) * bpp;
                 if (bpp == 1) {
@@ -1578,16 +1566,18 @@ s32 RenderCodepointToSurfaceWithScale(FontState& st, Libraries::Font::OrbisFontH
 
         for (int row = start_row; row < end_row; ++row) {
             const int src_y = row - dest_y;
-            if (src_y < 0 || src_y >= glyph_h)
+            if (src_y < 0 || src_y >= glyph_h) {
                 continue;
+            }
             const std::uint8_t* src_row =
                 glyph_bitmap.data() + static_cast<std::size_t>(src_y) * glyph_w;
             std::uint8_t* dst_row = dst_base + static_cast<std::size_t>(row) *
                                                    static_cast<std::size_t>(surf->widthByte);
             for (int col = start_col; col < end_col; ++col) {
                 const int src_x = col - dest_x;
-                if (src_x < 0 || src_x >= glyph_w)
+                if (src_x < 0 || src_x >= glyph_w) {
                     continue;
+                }
                 const std::uint8_t cov = src_row[src_x];
                 std::uint8_t* dst = dst_row + static_cast<std::size_t>(col) * bpp;
                 if (bpp == 1) {
@@ -1663,7 +1653,6 @@ const GlyphEntry* GetGlyphEntry(FontState& st, Libraries::Font::OrbisFontHandle 
         const std::string sys_log = ReportSystemFaceRequest(st, handle, system_attached);
         if (!sys_log.empty()) {
             LOG_ERROR(Lib_Font, "SYSTEM_FONT_FAILED");
-            LOG_DEBUG(Lib_Font, "{}", sys_log);
         }
         if (system_attached) {
             face_out = st.ext_ft_face;
@@ -1875,8 +1864,8 @@ s32 ComputeSysfontShiftValue(FT_Face face) {
     return 0;
 }
 
-std::shared_ptr<std::vector<unsigned char>> LoadBuiltinFontBytesShared(
-    const std::filesystem::path& path, u32* out_subfont_index) {
+std::shared_ptr<std::vector<unsigned char>>
+LoadBuiltinFontBytesShared(const std::filesystem::path& path, u32* out_subfont_index) {
     const auto* blob = FindBuiltinFontBlob(path);
     if (!blob) {
         return {};
@@ -2074,9 +2063,7 @@ static std::filesystem::path GetSysFontBaseDirImpl(bool log_errors) {
     return {};
 }
 
-std::filesystem::path GetSysFontBaseDir() {
-    return GetSysFontBaseDirImpl(true);
-}
+std::filesystem::path GetSysFontBaseDir() { return GetSysFontBaseDirImpl(true); }
 
 static std::filesystem::path ResolveSystemFontPathCandidate(const std::filesystem::path& base_dir,
                                                             const std::filesystem::path& filename) {
@@ -2345,13 +2332,7 @@ bool AttachSystemFont(FontState& st, Libraries::Font::OrbisFontHandle handle) {
         NotifyBuiltinFontFallbackOnce();
     }
 
-    LOG_INFO(Lib_Font, "system font attached");
-    LOG_DEBUG(Lib_Font,
-              "system font attach params:\n"
-              " handle={}\n"
-              " font_set_type=0x{:08X}\n"
-              " path={}\n",
-              static_cast<const void*>(handle), st.font_set_type, st.system_font_path.string());
+    ;
     return true;
 }
 
@@ -2382,13 +2363,6 @@ void LogCachedStyleOnce(Libraries::Font::OrbisFontHandle handle,
     }
     s_logged.insert(handle);
 
-    LOG_DEBUG(Lib_Font,
-              "BindRenderer: cached_style snapshot: hDpi={} vDpi={} scaleUnit={} baseScale={} "
-              "scalePixelW={} scalePixelH={} effectWeightX={} effectWeightY={} slantRatio={}",
-              font.cached_style.hDpi, font.cached_style.vDpi, font.cached_style.scaleUnit,
-              font.cached_style.baseScale, font.cached_style.scalePixelW,
-              font.cached_style.scalePixelH, font.cached_style.effectWeightX,
-              font.cached_style.effectWeightY, font.cached_style.slantRatio);
 }
 
 void LogRenderResultSample(Libraries::Font::OrbisFontHandle handle, u32 code,
@@ -2402,14 +2376,6 @@ void LogRenderResultSample(Libraries::Font::OrbisFontHandle handle, u32 code,
         return;
     }
     ++count;
-    LOG_DEBUG(Lib_Font,
-              "RenderSample: handle={} code=U+{:04X} update=[{},{} {}x{}] img=[bx={} by={} adv={} "
-              "stride={} w={} h={}] metrics=[w={} h={} hbx={} hby={} hadv={}]",
-              static_cast<const void*>(handle), code, result.UpdateRect.x, result.UpdateRect.y,
-              result.UpdateRect.w, result.UpdateRect.h, result.ImageMetrics.bearingX,
-              result.ImageMetrics.bearingY, result.ImageMetrics.advance, result.ImageMetrics.stride,
-              result.ImageMetrics.width, result.ImageMetrics.height, metrics.width, metrics.height,
-              metrics.Horizontal.bearingX, metrics.Horizontal.bearingY, metrics.Horizontal.advance);
 }
 
 u8 CachedStyleCacheFlags(const Libraries::Font::OrbisFontStyleFrame& cached_style) {

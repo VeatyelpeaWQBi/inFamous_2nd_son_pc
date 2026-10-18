@@ -3,10 +3,14 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <functional>
 #include <ctime>
-#include <string>
-#include <thread>
 #include <fmt/format.h>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <vector>
 
 #include "core/libraries/fiber/fiber.h"
 #include "core/libraries/kernel/threads/pthread.h"
@@ -20,8 +24,8 @@
 #include <mach/mach_time.h>
 #include <pthread.h>
 #elif defined(_WIN32)
-#include <windows.h>
 #include "common/string_util.h"
+#include <windows.h>
 #else
 #if defined(__Bitrig__) || defined(__DragonFly__) || defined(__FreeBSD__) || defined(__OpenBSD__)
 #include <pthread_np.h>
@@ -175,11 +179,86 @@ bool AccurateSleep(const std::chrono::nanoseconds duration, std::chrono::nanosec
 #ifdef _WIN32
 
 // Sets the debugger-visible name of the current thread.
+static u64 AutoGpuThreadsMask() {
+    const auto read = [](LOGICAL_PROCESSOR_RELATIONSHIP relation) {
+        std::vector<u8> buffer;
+        DWORD length = 0;
+        GetLogicalProcessorInformationEx(relation, nullptr, &length);
+        if (length == 0) {
+            return buffer;
+        }
+        buffer.resize(length);
+        if (!GetLogicalProcessorInformationEx(
+                relation, reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer.data()),
+                &length)) {
+            return std::vector<u8>{};
+        }
+        buffer.resize(length);
+        return buffer;
+    };
+    const auto for_each = [](const std::vector<u8>& buffer, auto&& visit) {
+        for (size_t offset = 0; offset + sizeof(DWORD) * 2 <= buffer.size();) {
+            const auto* entry = reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(
+                buffer.data() + offset);
+            if (entry->Size < sizeof(DWORD) * 2 || entry->Size > buffer.size() - offset) {
+                break;
+            }
+            visit(*entry);
+            offset += entry->Size;
+        }
+    };
+    // L3 caches of processor group 0 (the emulator does not use more than 64 processors).
+    std::vector<std::pair<u64, u64>> l3; // (size, mask)
+    for_each(read(RelationCache), [&](const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX& entry) {
+        if (entry.Cache.Level == 3 && entry.Cache.GroupMask.Group == 0) {
+            l3.emplace_back(entry.Cache.CacheSize, static_cast<u64>(entry.Cache.GroupMask.Mask));
+        }
+    });
+    if (l3.size() < 2) {
+        return 0;
+    }
+    std::ranges::sort(l3, std::greater<>{});
+    if (l3[0].first == l3[1].first) {
+        return 0; // Same L3 on every die: nothing to choose.
+    }
+    const u64 domain = l3[0].second;
+    std::vector<u64> core_first; // Lowest logical processor of each core of that L3.
+    for_each(read(RelationProcessorCore),
+             [&](const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX& entry) {
+                 if (entry.Processor.GroupCount == 0 || entry.Processor.GroupMask[0].Group != 0) {
+                     return;
+                 }
+                 const u64 core = static_cast<u64>(entry.Processor.GroupMask[0].Mask);
+                 if (core != 0 && (core & domain) == core) {
+                     core_first.push_back(core & (~core + 1));
+                 }
+             });
+    std::ranges::sort(core_first);
+    u64 mask = 0;
+    for (size_t i = 1; i < core_first.size(); ++i) {
+        mask |= core_first[i];
+    };
+    return mask;
+}
+
 void SetCurrentThreadName(const char* name) {
     if (Libraries::Kernel::g_curthread) {
         Libraries::Kernel::g_curthread->name = name;
     }
     SetThreadDescription(GetCurrentThread(), UTF8ToUTF16W(name).data());
+    const std::string_view worker{name};
+    if (!Libraries::Kernel::g_curthread &&
+        (worker == "shadPS4:GpuCommandProcessor" || worker == "shadPS4:GpuCommandRecorder" ||
+         worker == "shadPS4:Scout" || worker == "shadPS4:GpuUploadWorker")) {
+        static const u64 selected = AutoGpuThreadsMask();
+        DWORD_PTR allowed{}, system{};
+        if (selected && GetProcessAffinityMask(GetCurrentProcess(), &allowed, &system)) {
+            const auto mask = static_cast<DWORD_PTR>(selected) & allowed;
+            if (mask) {
+                SetThreadAffinityMask(GetCurrentThread(), mask);
+            }
+        }
+    }
 }
 
 void SetThreadName(void* thread, const char* name) {

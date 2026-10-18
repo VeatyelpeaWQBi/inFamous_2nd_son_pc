@@ -11,44 +11,28 @@
 #include <unordered_map>
 #include <vector>
 
-#include "core/debug_state.h"
+#include "common/display_state.h"
 #include "core/libraries/ime/ime_ui_shared.h"
 
 namespace Libraries::Ime {
 namespace {
 
 #define KEY(r, c, label, action)                                                                   \
-    ImeKbKeySpec {                                                                                 \
-        r, c, 1, 1, label, nullptr, ImeKbKeyAction::action, ImeKbKeyGlyph::None                    \
-    }
+    ImeKbKeySpec { r, c, 1, 1, label, nullptr, ImeKbKeyAction::action, ImeKbKeyGlyph::None }
 #define KEYHOT(r, c, label, hotkey, action)                                                        \
-    ImeKbKeySpec {                                                                                 \
-        r, c, 1, 1, label, hotkey, ImeKbKeyAction::action, ImeKbKeyGlyph::None                     \
-    }
+    ImeKbKeySpec { r, c, 1, 1, label, hotkey, ImeKbKeyAction::action, ImeKbKeyGlyph::None }
 #define KEYSPAN(r, c, cs, rs, label, action)                                                       \
-    ImeKbKeySpec {                                                                                 \
-        r, c, cs, rs, label, nullptr, ImeKbKeyAction::action, ImeKbKeyGlyph::None                  \
-    }
+    ImeKbKeySpec { r, c, cs, rs, label, nullptr, ImeKbKeyAction::action, ImeKbKeyGlyph::None }
 #define KEYSPANHOT(r, c, cs, rs, label, hotkey, action)                                            \
-    ImeKbKeySpec {                                                                                 \
-        r, c, cs, rs, label, hotkey, ImeKbKeyAction::action, ImeKbKeyGlyph::None                   \
-    }
+    ImeKbKeySpec { r, c, cs, rs, label, hotkey, ImeKbKeyAction::action, ImeKbKeyGlyph::None }
 #define KEYGLYPH(r, c, glyph, action)                                                              \
-    ImeKbKeySpec {                                                                                 \
-        r, c, 1, 1, nullptr, nullptr, ImeKbKeyAction::action, ImeKbKeyGlyph::glyph                 \
-    }
+    ImeKbKeySpec { r, c, 1, 1, nullptr, nullptr, ImeKbKeyAction::action, ImeKbKeyGlyph::glyph }
 #define KEYHOTGLYPH(r, c, hotkey, glyph, action)                                                   \
-    ImeKbKeySpec {                                                                                 \
-        r, c, 1, 1, nullptr, hotkey, ImeKbKeyAction::action, ImeKbKeyGlyph::glyph                  \
-    }
+    ImeKbKeySpec { r, c, 1, 1, nullptr, hotkey, ImeKbKeyAction::action, ImeKbKeyGlyph::glyph }
 #define KEYSPANGLYPH(r, c, cs, rs, glyph, action)                                                  \
-    ImeKbKeySpec {                                                                                 \
-        r, c, cs, rs, nullptr, nullptr, ImeKbKeyAction::action, ImeKbKeyGlyph::glyph               \
-    }
+    ImeKbKeySpec { r, c, cs, rs, nullptr, nullptr, ImeKbKeyAction::action, ImeKbKeyGlyph::glyph }
 #define KEYSPANHOTGLYPH(r, c, cs, rs, hotkey, glyph, action)                                       \
-    ImeKbKeySpec {                                                                                 \
-        r, c, cs, rs, nullptr, hotkey, ImeKbKeyAction::action, ImeKbKeyGlyph::glyph                \
-    }
+    ImeKbKeySpec { r, c, cs, rs, nullptr, hotkey, ImeKbKeyAction::action, ImeKbKeyGlyph::glyph }
 
 constexpr float kPanelBaseW = 793.0f;
 constexpr float kPanelBaseHSingle = 528.0f;
@@ -976,13 +960,9 @@ constexpr ImeTopPanelLayoutConfig kTopPanelDefaultLayout{
     static_cast<u8>(ImeSelectionGridIndex::DefaultTopPanelRows),
 };
 
-const ImeKbLayoutModel& GetDefaultLayoutModel() {
-    return kLatinLowerModel;
-}
+const ImeKbLayoutModel& GetDefaultLayoutModel() { return kLatinLowerModel; }
 
-const ImeTopPanelLayoutConfig& GetDefaultTopPanelLayoutConfig() {
-    return kTopPanelDefaultLayout;
-}
+const ImeTopPanelLayoutConfig& GetDefaultTopPanelLayoutConfig() { return kTopPanelDefaultLayout; }
 
 #undef KEY
 #undef KEYHOT
@@ -1088,7 +1068,7 @@ ImeViewportMetrics ComputeImeViewportMetrics(bool use_over2k) {
     metrics.size = base_size;
     metrics.offset = base_pos;
 
-    const auto out_res = DebugState.output_resolution;
+    const auto out_res = Common::DisplayDimensions::Load(Common::display_dimensions.output);
     if (out_res.first != 0 && out_res.second != 0) {
         const float fb_scale_x =
             io.DisplayFramebufferScale.x > 0.0f ? io.DisplayFramebufferScale.x : 1.0f;
@@ -1259,9 +1239,7 @@ ImVec4 ImeColorToImVec4(const OrbisImeColor& color) {
     return ImGui::ColorConvertU32ToFloat4(ImeColorToImU32(color));
 }
 
-ImeStyleConfig GetDefaultImeStyleConfig() {
-    return ImeStyleConfig{};
-}
+ImeStyleConfig GetDefaultImeStyleConfig() { return ImeStyleConfig{}; }
 
 ImeStyleConfig ResolveImeStyleConfig(const OrbisImeParamExtended* extended) {
     ImeStyleConfig style = GetDefaultImeStyleConfig();

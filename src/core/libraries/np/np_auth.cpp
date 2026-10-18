@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <mutex>
+#include "core/libraries/np/np_auth.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
-#include "core/libraries/np/np_auth.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/system/userservice.h"
+#include <mutex>
 
 namespace Libraries::Np::NpAuth {
 
@@ -60,13 +60,10 @@ s32 CreateNpAuthRequest(bool async) {
 
     // Offset by one, first returned ID is 0x10000001
     g_active_auth_requests++;
-    LOG_DEBUG(Lib_NpAuth, "called, async = {}", async);
     return req_index + ORBIS_NP_AUTH_REQUEST_ID_OFFSET + 1;
 }
 
-s32 PS4_SYSV_ABI sceNpAuthCreateRequest() {
-    return CreateNpAuthRequest(false);
-}
+s32 PS4_SYSV_ABI sceNpAuthCreateRequest() { return CreateNpAuthRequest(false); }
 
 s32 PS4_SYSV_ABI sceNpAuthCreateAsyncRequest(const OrbisNpAuthCreateAsyncRequestParameter* param) {
     if (param == nullptr) {
@@ -127,9 +124,6 @@ s32 GetAuthorizationCode(s32 req_id, const OrbisNpAuthGetAuthorizationCodeParame
         *issuer_id = ORBIS_NP_AUTH_ISSUER_ID;
     }
     request.result = ORBIS_OK;
-    LOG_INFO(Lib_NpAuth, "req_id = {:#x}, async = {}, scope = '{}', code = '{}', issuer_id = {:#x}",
-             req_id, request.async, param->scope ? param->scope : "(null)", auth_code->code,
-             ORBIS_NP_AUTH_ISSUER_ID);
     return ORBIS_OK;
 }
 
@@ -280,7 +274,6 @@ s32 PS4_SYSV_ABI sceNpAuthSetTimeout(s32 req_id, s32 resolve_retry, u32 resolve_
 }
 
 s32 PS4_SYSV_ABI sceNpAuthAbortRequest(s32 req_id) {
-    LOG_DEBUG(Lib_NpAuth, "called req_id = {:#x}", req_id);
 
     std::scoped_lock lk{g_auth_request_mutex};
 
@@ -352,7 +345,6 @@ s32 PS4_SYSV_ABI sceNpAuthPollAsync(s32 req_id, s32* result) {
 }
 
 s32 PS4_SYSV_ABI sceNpAuthDeleteRequest(s32 req_id) {
-    LOG_DEBUG(Lib_NpAuth, "called req_id = {:#x}", req_id);
 
     std::scoped_lock lk{g_auth_request_mutex};
 

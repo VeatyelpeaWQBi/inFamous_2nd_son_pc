@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <string>
-#include <vector>
+#include "shadnet/server_probe.h"
 #include "common/logging/log.h"
 #include "shadnet/client.h" // socket platform typedefs + protocol constants
-#include "shadnet/server_probe.h"
+#include <string>
+#include <vector>
 
 #ifdef _WIN32
 #pragma comment(lib, "Ws2_32.lib")
@@ -34,8 +34,9 @@ static bool ProbeRecvN(ShadSocketHandle sock, u8* buf, u32 n) {
     while (got < n) {
         const int r =
             ::recv(sock, reinterpret_cast<char*>(buf) + got, static_cast<int>(n - got), 0);
-        if (r <= 0)
+        if (r <= 0) {
             return false;
+        }
         got += static_cast<u32>(r);
     }
     return true;
@@ -163,8 +164,6 @@ ProbeInfo ProbeServer(const std::string& host, u16 port, u32 timeout_ms) {
 
     if (payload_sz < 4) {
         info.result = ProbeResult::Ok;
-        LOG_INFO(ShadNet, "probe: server {}:{} is reachable (no version field in ServerInfo)", host,
-                 port);
         return info;
     }
 
@@ -177,8 +176,6 @@ ProbeInfo ProbeServer(const std::string& host, u16 port, u32 timeout_ms) {
     }
 
     info.result = ProbeResult::Ok;
-    LOG_INFO(ShadNet, "probe: server {}:{} is reachable (protocol v{})", host, port,
-             info.server_version);
     return info;
 }
 

@@ -4,20 +4,18 @@
 #include <algorithm>
 #include <ctime>
 #include <filesystem>
+#include <fmt/core.h>
+#include <fmt/xchar.h>
 #include <fstream>
 #include <iostream>
 #include <set>
 #include <sstream>
-#include <fmt/core.h>
-#include <fmt/xchar.h>
-#include <hwinfo/hwinfo.h>
 
 #include "common/debug.h"
 #include "common/logging/log.h"
 #include "common/string_util.h"
 #include "common/thread.h"
 #include "core/emulator_settings.h"
-#include "core/ipc/ipc.h"
 #ifdef ENABLE_DISCORD_RPC
 #include "common/discord_rpc_handler.h"
 #endif
@@ -25,15 +23,10 @@
 #include "common/memory_patcher.h"
 #include "common/ntapi.h"
 #include "common/path_util.h"
-#include "common/path_trace.h"
-#include "common/perf_stats.h"
 #include "common/polyfill_thread.h"
 #include "common/scm_rev.h"
 #include "common/singleton.h"
 #include "core/cpu_patches.h" // Windows static guest red-zone protection
-#include "core/benchmark_control.h"
-#include "core/debugger.h"
-#include "core/devtools/widget/module_list.h"
 #include "core/emulator_settings.h"
 #include "core/emulator_state.h"
 #include "core/file_format/psf.h"
@@ -45,11 +38,11 @@
 #include "core/libraries/save_data/save_backup.h"
 #include "core/linker.h"
 #include "core/memory.h"
-#include "core/perf_sampler.h"
+#include "core/release_config.h"
+#include "core/runtime_policy.h"
 #include "core/user_settings.h"
 #include "emulator.h"
 #include "video_core/cache_storage.h"
-#include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 
 #ifdef _WIN32
@@ -94,18 +87,13 @@ void Emulator::Shutdown() {
     std::scoped_lock l{exit_mutex};
     if (exit_done) {
         return;
-    }
-    Common::PathTrace::Stop();
+    };
     Common::Log::Flush();
     Libraries::SaveData::Backup::StopThread();
-    if (presenter)
+    if (presenter) {
         presenter->SavePipelineCache();
-    Storage::DataBase::Instance().Close();
-    play_time_thread.request_stop();
-    if (play_time_thread.joinable()) {
-        play_time_thread.join();
     }
-    UpdatePlayTime(Common::Singleton<Common::ElfInfo>::Instance()->GameSerial());
+    Storage::DataBase::Instance().Close();
     if (controllers) {
         controllers->ResetLightbarColors();
         // need to give SDL time to do this before the runtime exits
@@ -208,7 +196,6 @@ std::map<s32, std::string> ExtractTrophies(std::string_view npbind_guest,
 
         const std::string np_comm_id = np_comm_ids[trophy_index];
         trophy_index_map[trophy_index] = np_comm_id;
-        LOG_DEBUG(Loader, "Mapped trophy index {} to NPCommID: {}", trophy_index, np_comm_id);
 
         // Extract the actual trophies if they're not extracted yet.
         const auto& trophy_output_dir =
@@ -290,9 +277,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
                    std::vector<std::pair<std::filesystem::path, std::string>> mounts,
                    std::vector<std::string> const& env_vars, bool append_log) {
     Common::SetCurrentThreadName("shadPS4:Main");
-    if (waitForDebuggerBeforeRun) {
-        Debugger::WaitForDebuggerAttach();
-    }
 
     if (std::filesystem::is_directory(file)) {
         file /= "eboot.bin";
@@ -330,8 +314,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     const auto rebase_to_base_game = [](std::filesystem::path& folder) {
         if (const auto base = FileSys::BaseGameFromOverlay(folder)) {
             if (const auto resolved = FileSys::ResolveGameRoot(*base)) {
-                LOG_INFO(Loader, "Launched from overlay {}, using base game {} as /app0",
-                         folder.string(), resolved->string());
                 folder = *resolved;
             } else {
                 LOG_WARNING(Loader, "Launched from overlay {} but no base game was found",
@@ -395,13 +377,11 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     std::string app_version;
     u32 sdk_version;
     u32 fw_version;
-    bool param_sfo_exists = false;
     Common::PSFAttributes psf_attributes{};
 
     if (auto psf_handle = mnt->Open("/app0/sce_sys/param.sfo", /*writable=*/false)) {
         auto* param_sfo = Common::Singleton<PSF>::Instance();
         ASSERT_MSG(param_sfo->Open(psf_handle), "Failed to open param.sfo");
-        param_sfo_exists = true;
 
         const auto content_id = param_sfo->GetString("CONTENT_ID");
         const auto title_id = param_sfo->GetString("TITLE_ID");
@@ -442,7 +422,7 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     }
 
     EmulatorSettings.Load(id);
-    Core::Benchmark::PrepareGame(id);
+    Core::Release::Apply(id, app_version);
     // Switch to configured log
     Common::Log::Switch((!id.empty() && EmulatorSettings.IsLogSeparate()) ? id + ".log"
                                                                           : "shad_log.txt",
@@ -462,8 +442,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
 
     if (auto splash = mnt->ReadFile("/app0/sce_sys/pic1.png")) {
         game_info.splash_data = std::move(*splash);
-    } else {
-        LOG_INFO(Loader, "No splash image found at /app0/sce_sys/pic1.png");
     }
 
     game_info.game_folder = game_folder;
@@ -471,88 +449,21 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     ASSERT_MSG(mnt->Exists(guest_eboot_path), "Guest app's main executable {} does not exist",
                guest_eboot_path);
 
-    LOG_INFO(Loader, "Starting shadps4 emulator v{} ", Common::g_version);
-    LOG_INFO(Loader, "Revision {}", Common::g_scm_rev);
-    LOG_INFO(Loader, "Branch {}", Common::g_scm_branch);
-    LOG_INFO(Loader, "Description {}", Common::g_scm_desc);
-    LOG_INFO(Loader, "Remote {}", Common::g_scm_remote_url);
 
-    LOG_INFO(Config, "Game-specific config used: {}",
-             EmulatorState::GetInstance()->IsGameSpecifigConfigUsed());
-
-    LOG_INFO(Config, "General isNeo: {}", EmulatorSettings.IsNeo());
-    LOG_INFO(Config, "General isDevKit: {}", EmulatorSettings.IsDevKit());
-    LOG_INFO(Config, "General isConnectedToNetwork: {}", EmulatorSettings.IsConnectedToNetwork());
-    LOG_INFO(Config, "General isShadNetEnabled: {}", EmulatorSettings.IsShadNetEnabled());
 #ifdef _WIN32
-    LOG_INFO(Config, "General isRedZonePatchingEnabled: {}",
-             EmulatorSettings.IsRedZonePatchingEnabled());
+    ;
 #endif
-    LOG_INFO(Config, "Log sync: {}", EmulatorSettings.IsLogSync());
-    LOG_INFO(Config, "Log skipDuplicate: {}", EmulatorSettings.IsLogSkipDuplicate());
+    ;
 #ifdef _WIN32
-    LOG_INFO(Config, "Log type: {}", EmulatorSettings.GetLogType());
+    ;
 #endif
-    LOG_INFO(Config, "GPU isNullGpu: {}", EmulatorSettings.IsNullGPU());
-    LOG_INFO(Config, "GPU readbacksMode: {}", EmulatorSettings.GetReadbacksMode());
-    LOG_INFO(Config, "GPU readbackLinearImages: {}",
-             EmulatorSettings.IsReadbackLinearImagesEnabled());
-    LOG_INFO(Config, "GPU readbacksWriteDiscard: {}", EmulatorSettings.IsReadbacksWriteDiscard());
-    LOG_INFO(Config, "GPU directMemoryAccess: {}", EmulatorSettings.IsDirectMemoryAccessEnabled());
-    LOG_INFO(Config, "GPU shouldDumpShaders: {}", EmulatorSettings.IsDumpShaders());
-    LOG_INFO(Config, "GPU vblankFrequency: {}", EmulatorSettings.GetVblankFrequency());
-    LOG_INFO(Config, "GPU shouldCopyGPUBuffers: {}", EmulatorSettings.IsCopyGpuBuffers());
+    ;
 #ifdef __linux__
-    LOG_INFO(Config, "GPU userfaultfdTracking: {}", EmulatorSettings.IsUserfaultfdTracking());
+    ;
 #endif
-    LOG_INFO(Config, "GPU inlineFetchShader: {}", EmulatorSettings.IsInlineFetchShader());
-    LOG_INFO(Config, "Vulkan gpuId: {}", EmulatorSettings.GetGpuId());
-    LOG_INFO(Config, "Vulkan vkValidation: {}", EmulatorSettings.IsVkValidationEnabled());
-    LOG_INFO(Config, "Vulkan vkValidationCore: {}", EmulatorSettings.IsVkValidationCoreEnabled());
-    LOG_INFO(Config, "Vulkan vkValidationSync: {}", EmulatorSettings.IsVkValidationSyncEnabled());
-    LOG_INFO(Config, "Vulkan vkValidationGpu: {}", EmulatorSettings.IsVkValidationGpuEnabled());
-    LOG_INFO(Config, "Vulkan crashDiagnostics: {}", EmulatorSettings.IsVkCrashDiagnosticEnabled());
-    LOG_INFO(Config, "Vulkan hostMarkers: {}", EmulatorSettings.IsVkHostMarkersEnabled());
-    LOG_INFO(Config, "Vulkan guestMarkers: {}", EmulatorSettings.IsVkGuestMarkersEnabled());
-    LOG_INFO(Config, "Vulkan rdocEnable: {}", EmulatorSettings.IsRenderdocEnabled());
-    LOG_INFO(Config, "Vulkan PipelineCacheEnabled: {}", EmulatorSettings.IsPipelineCacheEnabled());
-    LOG_INFO(Config, "Vulkan PipelineCacheArchived: {}",
-             EmulatorSettings.IsPipelineCacheArchived());
+    ;
 
-    hwinfo::Memory ram;
-    hwinfo::OS os;
-    const auto cpus = hwinfo::getAllCPUs();
-    for (const auto& cpu : cpus) {
-        LOG_INFO(Config, "CPU Model: {}", cpu.modelName());
-        LOG_INFO(Config, "CPU Physical Cores: {}, Logical Cores: {}", cpu.numPhysicalCores(),
-                 cpu.numLogicalCores());
-    }
-    LOG_INFO(Config, "Total RAM: {} GB", std::round(ram.total_Bytes() / pow(1024, 3)));
-    LOG_INFO(Config, "Operating System: {}", os.name());
-    Core::PerfSampler::ApplyGameProfile(id);
-    LOG_INFO(Debug, "Core rendering policies: buffer bind deduplication, precise range dependencies, "
-                    "required compute priority, demand-page prefetch");
-    Core::PerfSampler::Start();
-    // Tuning read once before the renderer starts (some settings only apply at startup).
-    Core::PerfSampler::PollTuning();
-    if (Core::Benchmark::Enabled() &&
-        Common::Perf::GetTuning().path_trace.load(std::memory_order_relaxed)) {
-        Common::PathTrace::Start(Core::Benchmark::TuningPath().parent_path());
-    }
-
-    if (param_sfo_exists) {
-        LOG_INFO(Loader, "Game id: {} Title: {}", id, title);
-        LOG_INFO(Loader, "Fw: {:#x} App Version: {}", fw_version, app_version);
-        LOG_INFO(Loader, "param.sfo SDK version: {:#x}", sdk_version);
-        LOG_INFO(Loader, "eboot SDK version: {:#x}", game_info.sdk_ver);
-        LOG_INFO(Loader, "PSVR Supported: {}", (bool)psf_attributes.support_ps_vr.Value());
-        LOG_INFO(Loader, "PSVR Required: {}", (bool)psf_attributes.require_ps_vr.Value());
-    }
     if (!args.empty()) {
-        const auto argc = std::min<size_t>(args.size(), 32);
-        for (auto i = 0; i < argc; i++) {
-            LOG_INFO(Loader, "Game argument {}: {}", i, args[i]);
-        }
         if (args.size() > 32) {
             LOG_ERROR(Loader, "Too many game arguments, only passing the first 32");
         }
@@ -560,11 +471,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         args.insert(args.begin(), guest_eboot_path);
     }
 
-    const auto mods_folder = FileSys::OverlayPath(game_folder, "-mods");
-
-    if (std::filesystem::exists(mods_folder) && !std::filesystem::is_empty(mods_folder)) {
-        LOG_INFO(Loader, "Files found in game mods folder");
-    }
 
 #ifdef _WIN32
     // Enable red-zone patching if the setting is enabled
@@ -582,8 +488,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     controllers = Common::Singleton<Input::GameControllers>::Instance();
     linker = Common::Singleton<Core::Linker>::Instance();
 
-    // Load renderdoc module
-    VideoCore::LoadRenderDoc();
 
     // Initialize patcher
     if (!id.empty()) {
@@ -630,8 +534,7 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     const auto& mount_captures_dir = Common::FS::GetUserPath(Common::FS::PathType::CapturesDir);
     if (!std::filesystem::exists(mount_captures_dir)) {
         std::filesystem::create_directory(mount_captures_dir);
-    }
-    VideoCore::SetOutputDir(mount_captures_dir, id);
+    };
 
     // Mount system fonts
     const auto& fonts_dir = EmulatorSettings.GetFontsDir();
@@ -658,7 +561,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     mnt->Mount(host_font2_dir, guest_font_dir);
 
     for (auto const& mount_pair : mounts) {
-        LOG_INFO(Loader, "Mounting {} to {}", mount_pair.first.string(), mount_pair.second);
         mnt->Mount(mount_pair.first, mount_pair.second);
     }
 
@@ -668,7 +570,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
 
     auto env_max = std::min<u64>(env_vars.size(), 63);
     for (int i = 0; i < env_max; i++) {
-        LOG_INFO(Loader, "Env {:02}: {}", i, env_vars[i]);
         Libraries::Kernel::g_environment[i] = env_vars[i].c_str();
     }
     Libraries::Kernel::g_environment[env_max] = nullptr;
@@ -693,16 +594,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     }
 #endif
 
-    if (!id.empty()) {
-        start_time = std::chrono::steady_clock::now();
-
-        play_time_thread = std::jthread([this, id](std::stop_token stop) {
-            while (Common::StoppableTimedWait(stop, std::chrono::seconds(60))) {
-                UpdatePlayTime(id);
-            }
-        });
-    }
-
     linker->Execute(args);
 
     window->InitTimers();
@@ -710,16 +601,9 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         window->WaitEvent();
     }
 
-    Core::Benchmark::ArmShutdownTrace();
+    ;
     // Do not suspend/sample host threads while quick-exit callbacks and injected
     // profiler DLLs are shutting down. The sampler is also stopped on relaunch.
-    Core::PerfSampler::Stop();
-    Common::PathTrace::Stop();
-    if (Core::Benchmark::ProfilerFastExitReady()) {
-        Shutdown();
-        Common::Log::Flush();
-        Core::Benchmark::ExitAfterProfilerShutdown();
-    }
     std::quick_exit(0);
 }
 
@@ -771,9 +655,7 @@ void Emulator::Restart(std::filesystem::path eboot_path,
         args.push_back(MemoryPatcher::patch_file);
     }
 
-    if (waitForDebuggerBeforeRun) {
-        args.push_back("--wait-for-debugger");
-    }
+    ;
 
     if (guest_args.size() > 0) {
         args.push_back("--");
@@ -787,21 +669,10 @@ void Emulator::Restart(std::filesystem::path eboot_path,
 
 [[noreturn]] void Emulator::Relaunch(std::vector<std::string> args) {
     const auto guest_args = std::find(args.begin(), args.end(), "--");
-    args.insert(guest_args, {"--wait-for-pid", std::to_string(Debugger::GetCurrentPid())});
+    args.insert(guest_args, {"--wait-for-pid", std::to_string(GetCurrentProcessId())});
 
-    LOG_INFO(Common, "Relaunching the emulator with args: {}", fmt::join(args, " "));
-    Core::PerfSampler::Stop();
-    Common::PathTrace::Stop();
     Common::Log::Shutdown();
 
-    auto& ipc = IPC::Instance();
-
-    if (ipc.IsEnabled()) {
-        ipc.SendRestart(args);
-        while (true) {
-            std::this_thread::sleep_for(std::chrono::minutes(1));
-        }
-    }
 #if defined(_WIN32)
     std::wstring cmdline;
     // Emulator executable
@@ -853,79 +724,6 @@ void Emulator::Restart(std::filesystem::path eboot_path,
 #endif
 
     std::quick_exit(0);
-}
-
-void Emulator::UpdatePlayTime(const std::string_view serial) {
-    if (serial.empty() || start_time == std::chrono::steady_clock::time_point{}) {
-        return;
-    }
-
-    const auto user_dir = Common::FS::GetUserPath(Common::FS::PathType::UserDir);
-    const auto filePath = (user_dir / "play_time.txt").string();
-
-    std::ifstream in(filePath);
-    if (!in && !std::ofstream(filePath)) {
-        LOG_INFO(Loader, "Error opening play_time.txt");
-        return;
-    }
-
-    const auto end_time = std::chrono::steady_clock::now();
-    const auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);
-    start_time = end_time;
-    const int total_seconds = static_cast<int>(duration.count());
-
-    std::vector<std::string> lines;
-    std::string line;
-    while (std::getline(in, line)) {
-        lines.push_back(line);
-    }
-    in.close();
-
-    int accumulated_seconds = 0;
-    bool found = false;
-
-    for (const auto& l : lines) {
-        std::istringstream iss(l);
-        std::string s, time_str;
-        if (iss >> s >> time_str && s == serial) {
-            int h, m, s_;
-            char c1, c2;
-            std::istringstream ts(time_str);
-            if (ts >> h >> c1 >> m >> c2 >> s_ && c1 == ':' && c2 == ':') {
-                accumulated_seconds = h * 3600 + m * 60 + s_;
-                found = true;
-                break;
-            }
-        }
-    }
-
-    accumulated_seconds += total_seconds;
-    int hours = accumulated_seconds / 3600;
-    int minutes = (accumulated_seconds % 3600) / 60;
-    int seconds = accumulated_seconds % 60;
-
-    std::string playTimeSaved = fmt::format("{:d}:{:02d}:{:02d}", hours, minutes, seconds);
-
-    const std::time_t last_time_played = std::time(nullptr);
-
-    std::ofstream outfile(filePath, std::ios::trunc);
-    bool lineUpdated = false;
-    for (const auto& l : lines) {
-        std::istringstream iss(l);
-        std::string s;
-        if (iss >> s && s == serial) {
-            outfile << fmt::format("{} {} {}\n", serial, playTimeSaved, last_time_played);
-            lineUpdated = true;
-        } else {
-            outfile << l << "\n";
-        }
-    }
-
-    if (!lineUpdated) {
-        outfile << fmt::format("{} {} {}\n", serial, playTimeSaved, last_time_played);
-    }
-
-    LOG_INFO(Loader, "Playing time for {}: {} {}", serial, playTimeSaved, last_time_played);
 }
 
 } // namespace Core

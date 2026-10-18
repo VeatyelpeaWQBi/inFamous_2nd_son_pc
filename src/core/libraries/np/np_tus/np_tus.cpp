@@ -1,20 +1,20 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
-#include <cstring>
-#include <map>
-#include <fmt/format.h>
+#include "core/libraries/np/np_tus/np_tus.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_handler.h"
 #include "core/libraries/np/np_manager.h"
-#include "core/libraries/np/np_tus/np_tus.h"
 #include "core/libraries/np/np_types.h"
 #include "core/libraries/system/userservice.h"
 #include "np_tus_ctx.h"
+#include <algorithm>
+#include <cstring>
+#include <fmt/format.h>
+#include <map>
 
 namespace Libraries::Np::NpTus {
 
@@ -127,8 +127,7 @@ s32 PS4_SYSV_ABI sceNpTusCreateNpTitleCtx(OrbisNpServiceLabel serviceLabel, Orbi
     if (serviceLabel == ORBIS_NP_INVALID_SERVICE_LABEL) {
         LOG_ERROR(Lib_NpTus, "Invalid serviceLabel {}", serviceLabel);
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    }
-    LOG_INFO(Lib_NpTus, "serviceLabel = {}, npId->data = {}", serviceLabel, npId->handle.data);
+    };
 
     std::lock_guard lock(g_mutex);
     if (g_title_ctxs.size() >= TusMaxTitleCtx) {
@@ -144,13 +143,11 @@ s32 PS4_SYSV_ABI sceNpTusCreateNpTitleCtx(OrbisNpServiceLabel serviceLabel, Orbi
 }
 
 s32 PS4_SYSV_ABI sceNpTssCreateNpTitleCtx(OrbisNpServiceLabel serviceLabel, OrbisNpId* npId) {
-    LOG_INFO(Lib_NpTus, "redirecting to sceNpTusCreateNpTitleCtx");
     return sceNpTusCreateNpTitleCtx(serviceLabel, npId);
 }
 
 s32 PS4_SYSV_ABI sceNpTusCreateNpTitleCtxA(OrbisNpServiceLabel serviceLabel,
                                            Libraries::UserService::OrbisUserServiceUserId userId) {
-    LOG_INFO(Lib_NpTus, "serviceLabel = {}, userId = {}", serviceLabel, userId);
     OrbisNpId npId;
     auto ret = Np::NpManager::sceNpGetNpId(userId, &npId);
 
@@ -163,12 +160,10 @@ s32 PS4_SYSV_ABI sceNpTusCreateNpTitleCtxA(OrbisNpServiceLabel serviceLabel,
 
 s32 PS4_SYSV_ABI sceNpTssCreateNpTitleCtxA(OrbisNpServiceLabel serviceLabel,
                                            Libraries::UserService::OrbisUserServiceUserId userId) {
-    LOG_INFO(Lib_NpTus, "redirecting to sceNpTusCreateNpTitleCtxA");
     return sceNpTusCreateNpTitleCtxA(serviceLabel, userId);
 }
 
 s32 PS4_SYSV_ABI sceNpTusDeleteNpTitleCtx(int ctxId) {
-    LOG_INFO(Lib_NpTus, "ctxId = {}", ctxId);
 
     std::lock_guard lock(g_mutex);
     auto it = g_title_ctxs.find(ctxId);
@@ -197,7 +192,6 @@ s32 PS4_SYSV_ABI sceNpTusDeleteNpTitleCtx(int ctxId) {
 // Request management functions
 //***********************************
 s32 PS4_SYSV_ABI sceNpTusCreateRequest(int libCtxId) {
-    LOG_INFO(Lib_NpTus, "libCtxId = {}", libCtxId);
 
     std::lock_guard lock(g_mutex);
     if (!g_title_ctxs.count(libCtxId)) {
@@ -216,7 +210,6 @@ s32 PS4_SYSV_ABI sceNpTusCreateRequest(int libCtxId) {
 }
 
 s32 PS4_SYSV_ABI sceNpTusDeleteRequest(int requestId) {
-    LOG_INFO(Lib_NpTus, "requestId = {:#x}", requestId);
 
     std::lock_guard lock(g_mutex);
     auto it = g_requests.find(requestId);
@@ -225,9 +218,7 @@ s32 PS4_SYSV_ABI sceNpTusDeleteRequest(int requestId) {
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ID;
     }
     if (it->second.ctx) {
-        if (!it->second.ctx->HasResult()) {
-            LOG_INFO(Lib_NpTus, "request {} still in flight, aborting it", requestId);
-        }
+
         it->second.ctx->SetResult(ORBIS_NP_COMMUNITY_ERROR_ABORTED);
     }
     g_requests.erase(it);
@@ -235,7 +226,6 @@ s32 PS4_SYSV_ABI sceNpTusDeleteRequest(int requestId) {
 }
 
 s32 PS4_SYSV_ABI sceNpTusAbortRequest(int reqId) {
-    LOG_INFO(Lib_NpTus, "reqId = {:#x}", reqId);
 
     std::shared_ptr<TusRequestCtx> ctx;
     {
@@ -257,7 +247,6 @@ s32 PS4_SYSV_ABI sceNpTusAbortRequest(int reqId) {
 // Async functions
 //***********************************
 s32 PS4_SYSV_ABI sceNpTusPollAsync(int reqId, int* result) {
-    LOG_INFO(Lib_NpTus, "reqId = {:#x}", reqId);
 
     std::shared_ptr<TusRequestCtx> ctx;
     {
@@ -286,14 +275,11 @@ s32 PS4_SYSV_ABI sceNpTusPollAsync(int reqId, int* result) {
     if (res < 0) {
         LOG_ERROR(Lib_NpTus, "reqId = {:#x} finished with error {:#x}", reqId,
                   static_cast<u32>(res));
-    } else {
-        LOG_DEBUG(Lib_NpTus, "reqId = {:#x} finished, result = {}", reqId, res);
     }
     return 0;
 }
 
 s32 PS4_SYSV_ABI sceNpTusWaitAsync(int reqId, int* result) {
-    LOG_INFO(Lib_NpTus, "reqId = {:#x}", reqId);
 
     std::shared_ptr<TusRequestCtx> ctx;
     {
@@ -320,8 +306,6 @@ s32 PS4_SYSV_ABI sceNpTusWaitAsync(int reqId, int* result) {
     if (res < 0) {
         LOG_ERROR(Lib_NpTus, "reqId = {:#x} finished with error {:#x}", reqId,
                   static_cast<u32>(res));
-    } else {
-        LOG_DEBUG(Lib_NpTus, "reqId = {:#x} finished, result = {}", reqId, res);
     }
     return ORBIS_OK;
 }
@@ -332,11 +316,6 @@ s32 PS4_SYSV_ABI sceNpTusWaitAsync(int reqId, int* result) {
 s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariableAsync(int reqId, OrbisNpId* npId, s32* slotIds,
                                                    OrbisNpTusVariable* variableArray,
                                                    u64 variablesSize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, npId = {}, slotIds = {}, variableArray = {}, variablesSize = {}, "
-             "arrayLen = {}, option = {}",
-             reqId, npId ? npId->handle.data : "", fmt::ptr(slotIds), fmt::ptr(variableArray),
-             variablesSize, arrayLen, fmt::ptr(option));
     if (!slotIds || !variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -400,10 +379,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariable(int reqId, OrbisNpId* npId, s32* s
 
 s32 PS4_SYSV_ABI sceNpTusSetMultiSlotVariableAsync(int reqId, OrbisNpId* npId, s32* slotIds,
                                                    s64* variables, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, npId = {}, slotIds = {}, variables = {}, arrayLen = {}, option = {}",
-             reqId, npId ? npId->handle.data : "", fmt::ptr(slotIds), fmt::ptr(variables), arrayLen,
-             fmt::ptr(option));
 
     if (!slotIds || !variables) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
@@ -459,11 +434,6 @@ s32 PS4_SYSV_ABI sceNpTusSetMultiSlotVariable(int reqId, OrbisNpId* npId, s32* s
 s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariableAVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* virtualUserId, s32* slotIds,
     OrbisNpTusVariableA* variableArray, u64 variablesSize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, virtualUserId = {}, slotIds = {}, variableArray = {}, "
-             "variablesSize = {}, arrayLen = {}, option = {}",
-             reqId, virtualUserId ? virtualUserId->data : "", fmt::ptr(slotIds),
-             fmt::ptr(variableArray), variablesSize, arrayLen, fmt::ptr(option));
     if (!virtualUserId || !slotIds || !variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -531,11 +501,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariableAVUser(
 s32 PS4_SYSV_ABI sceNpTusSetMultiSlotVariableVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* virtualUserId, s32* slotIds, const s64* variables,
     int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, virtualUserId = {}, slotIds = {}, variables = {}, arrayLen = {}, "
-             "option = {}",
-             reqId, virtualUserId ? virtualUserId->data : "", fmt::ptr(slotIds),
-             fmt::ptr(variables), arrayLen, fmt::ptr(option));
     if (!virtualUserId || !slotIds || !variables) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -597,11 +562,6 @@ sceNpTusSetMultiSlotVariableVUser(int reqId, const OrbisNpTusVirtualUserId* targ
 s32 PS4_SYSV_ABI sceNpTusSetMultiSlotVariableAAsync(int reqId, OrbisNpAccountId targetAccountId,
                                                     s32* slotIds, const s64* variables,
                                                     int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotIds = {}, variables = {}, arrayLen = {}, "
-             "option = {}",
-             reqId, targetAccountId, fmt::ptr(slotIds), fmt::ptr(variables), arrayLen,
-             fmt::ptr(option));
     if (!slotIds || !variables) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -643,11 +603,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariableAAsync(int reqId, OrbisNpAccountId 
                                                     s32* slotIds,
                                                     OrbisNpTusVariableA* variableArray,
                                                     u64 variablesSize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotIds = {}, variableArray = {}, "
-             "variablesSize = {}, arrayLen = {}, option = {}",
-             reqId, targetAccountId, fmt::ptr(slotIds), fmt::ptr(variableArray), variablesSize,
-             arrayLen, fmt::ptr(option));
     if (!slotIds || !variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -696,11 +651,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariableAAsync(int reqId, OrbisNpAccountId 
 s32 PS4_SYSV_ABI sceNpTusGetDataAAsync(int reqId, OrbisNpAccountId targetAccountId, s32 slotId,
                                        OrbisNpTusDataStatusA* dataStatus, u64 dataStatusSize,
                                        void* data, u64 recvSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotId = {}, dataStatus = {}, "
-             "dataStatusSize = {}, data = {}, recvSize = {}, option = {}",
-             reqId, targetAccountId, slotId, fmt::ptr(dataStatus), dataStatusSize, fmt::ptr(data),
-             recvSize, fmt::ptr(option));
     if (option) {
         LOG_ERROR(Lib_NpTus, "invalid argument");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -752,11 +702,6 @@ s32 PS4_SYSV_ABI sceNpTusSetDataAAsync(int reqId, OrbisNpAccountId targetAccount
                                        const OrbisNpAccountId* isLastChangedAuthor,
                                        const Libraries::Rtc::OrbisRtcTick* isLastChangedDate,
                                        void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotId = {}, totalSize = {}, sendSize = {}, "
-             "data = {}, info = {}, infoStructSize = {}, option = {}",
-             reqId, targetAccountId, slotId, totalSize, sendSize, fmt::ptr(data), fmt::ptr(info),
-             infoStructSize, fmt::ptr(option));
     if (option) {
         LOG_ERROR(Lib_NpTus, "Invalid option provided");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -831,11 +776,6 @@ s32 PS4_SYSV_ABI sceNpTusGetDataAVUserAsync(int reqId,
                                             s32 slotId, OrbisNpTusDataStatusA* dataStatus,
                                             u64 dataStatusSize, void* data, u64 recvSize,
                                             void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotId = {}, dataStatus = {}, "
-             "dataStatusSize = {}, data = {}, recvSize = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", slotId,
-             fmt::ptr(dataStatus), dataStatusSize, fmt::ptr(data), recvSize, fmt::ptr(option));
     if (option) {
         LOG_ERROR(Lib_NpTus, "Invalid option provided");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -892,11 +832,6 @@ s32 PS4_SYSV_ABI sceNpTusSetDataAVUserAsync(
     u64 sendSize, const void* data, const OrbisNpTusDataInfo* info, u64 infoStructSize,
     const OrbisNpAccountId* isLastChangedAuthor,
     const Libraries::Rtc::OrbisRtcTick* isLastChangedDate, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotId = {}, totalSize = {}, sendSize = {}, "
-             "data = {}, info = {}, infoStructSize = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", slotId, totalSize,
-             sendSize, fmt::ptr(data), fmt::ptr(info), infoStructSize, fmt::ptr(option));
     if (option) {
         LOG_ERROR(Lib_NpTus, "Invalid option provided");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -993,11 +928,6 @@ s32 PS4_SYSV_ABI sceNpTusAddAndGetVariableAsync(
     int reqId, const OrbisNpId* targetNpId, s32 slotId, s64 inVariable,
     const OrbisNpId* isLastChangedAuthor, const Libraries::Rtc::OrbisRtcTick* isLastChangedDate,
     OrbisNpTusVariable* outVariable, u64 outVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetNpId = {}, slotId = {}, inVariable = {}, outVariable = {}, "
-             "outVariableSize = {}, option = {}",
-             reqId, targetNpId ? targetNpId->handle.data : "", slotId, inVariable,
-             fmt::ptr(outVariable), outVariableSize, fmt::ptr(option));
     if (option) {
         LOG_ERROR(Lib_NpTus, "Invalid argument");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -1064,11 +994,6 @@ s32 PS4_SYSV_ABI sceNpTusAddAndGetVariableVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserId, s32 slotId, s64 inVariable,
     const OrbisNpId* isLastChangedAuthor, const Libraries::Rtc::OrbisRtcTick* isLastChangedDate,
     OrbisNpTusVariable* outVariable, u64 outVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotId = {}, inVariable = {}, "
-             "outVariable = {}, outVariableSize = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", slotId, inVariable,
-             fmt::ptr(outVariable), outVariableSize, fmt::ptr(option));
     if (option) {
         LOG_ERROR(Lib_NpTus, "Invalid argument");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -1123,11 +1048,6 @@ s32 PS4_SYSV_ABI sceNpTusAddAndGetVariableVUserAsync(
 s32 PS4_SYSV_ABI sceNpTusGetDataAsync(int reqId, const OrbisNpId* targetNpId, s32 slotId,
                                       OrbisNpTusDataStatus* dataStatus, u64 dataStatusSize,
                                       void* data, u64 recvSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetNpId = {}, slotId = {}, dataStatus = {}, dataStatusSize = {}, "
-             "data = {}, recvSize = {}, option = {}",
-             reqId, targetNpId ? targetNpId->handle.data : "", slotId, fmt::ptr(dataStatus),
-             dataStatusSize, fmt::ptr(data), recvSize, fmt::ptr(option));
     if (option) {
         LOG_ERROR(Lib_NpTus, "invalid argument");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -1180,11 +1100,6 @@ s32 PS4_SYSV_ABI sceNpTusGetDataVUserAsync(int reqId,
                                            s32 slotId, OrbisNpTusDataStatus* dataStatus,
                                            u64 dataStatusSize, void* data, u64 recvSize,
                                            void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotId = {}, dataStatus = {}, "
-             "dataStatusSize = {}, data = {}, recvSize = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", slotId,
-             fmt::ptr(dataStatus), dataStatusSize, fmt::ptr(data), recvSize, fmt::ptr(option));
     if (option) {
         LOG_ERROR(Lib_NpTus, "invalid argument");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -1256,11 +1171,6 @@ s32 PS4_SYSV_ABI sceNpTusGetFriendsDataStatusAsync(int reqId, s32 slotId, s32 in
                                                    s32 sortType, OrbisNpTusDataStatus* statusArray,
                                                    u64 statusArraySize, int arrayLen,
                                                    void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, slotId = {}, includeSelf = {}, sortType = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, slotId, includeSelf, sortType, fmt::ptr(statusArray), statusArraySize, arrayLen,
-             fmt::ptr(option));
     if (!statusArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -1324,11 +1234,6 @@ s32 PS4_SYSV_ABI sceNpTusGetFriendsVariableAsync(int reqId, s32 slotId, s32 incl
                                                  s32 sortType, OrbisNpTusVariable* variableArray,
                                                  u64 variableArraySize, int arrayLen,
                                                  void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, slotId = {}, includeSelf = {}, sortType = {}, variableArray = {}, "
-             "variableArraySize = {}, arrayLen = {}, option = {}",
-             reqId, slotId, includeSelf, sortType, fmt::ptr(variableArray), variableArraySize,
-             arrayLen, fmt::ptr(option));
     if (!variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -1392,11 +1297,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotDataStatusAsync(int reqId, const OrbisNpId*
                                                      OrbisNpTusDataStatus* statusArray,
                                                      u64 statusArraySize, int arrayLen,
                                                      void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetNpId = {}, slotIds = {}, statusArray = {}, statusArraySize = {}, "
-             "arrayLen = {}, option = {}",
-             reqId, targetNpId ? targetNpId->handle.data : "", fmt::ptr(slotIds),
-             fmt::ptr(statusArray), statusArraySize, arrayLen, fmt::ptr(option));
     if (!targetNpId || !slotIds || !statusArray || arrayLen < 1) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -1459,11 +1359,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotDataStatusVUser(
 s32 PS4_SYSV_ABI sceNpTusGetMultiSlotDataStatusVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserId, s32* slotIds,
     OrbisNpTusDataStatus* statusArray, u64 statusArraySize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotIds = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", fmt::ptr(slotIds),
-             fmt::ptr(statusArray), statusArraySize, arrayLen, fmt::ptr(option));
     if (!targetVirtualUserId || !slotIds || !statusArray || arrayLen < 1) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -1520,11 +1415,6 @@ s32 PS4_SYSV_ABI sceNpTusSetDataAsync(int reqId, const OrbisNpId* targetNpId, s3
                                       const OrbisNpId* isLastChangedAuthor,
                                       const Libraries::Rtc::OrbisRtcTick* isLastChangedDate,
                                       void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetNpId = {}, slotId = {}, totalSize = {}, sendSize = {}, data = {}, "
-             "info = {}, infoStructSize = {}, option = {}",
-             reqId, targetNpId ? targetNpId->handle.data : "", slotId, totalSize, sendSize,
-             fmt::ptr(data), fmt::ptr(info), infoStructSize, fmt::ptr(option));
     if (option) {
         LOG_ERROR(Lib_NpTus, "Invalid argument");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -1600,11 +1490,6 @@ s32 PS4_SYSV_ABI sceNpTusSetDataVUserAsync(int reqId,
                                            u64 infoStructSize, const OrbisNpId* isLastChangedAuthor,
                                            const Libraries::Rtc::OrbisRtcTick* isLastChangedDate,
                                            void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotId = {}, totalSize = {}, sendSize = {}, "
-             "data = {}, info = {}, infoStructSize = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", slotId, totalSize,
-             sendSize, fmt::ptr(data), fmt::ptr(info), infoStructSize, fmt::ptr(option));
     if (option) {
         LOG_ERROR(Lib_NpTus, "Invalid argument");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -1703,12 +1588,6 @@ s32 PS4_SYSV_ABI sceNpTusTryAndSetVariableAsync(
     const s64* compareValue, const OrbisNpId* isLastChangedAuthor,
     const Libraries::Rtc::OrbisRtcTick* isLastChangedDate, OrbisNpTusVariable* resultVariable,
     u64 resultVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetNpId = {}, slotId = {}, opeType = {}, variable = {}, "
-             "compareValue = {}, resultVariable = {}, resultVariableSize = {}, option = {}",
-             reqId, targetNpId ? targetNpId->handle.data : "", slotId, opeType, variable,
-             fmt::ptr(compareValue), fmt::ptr(resultVariable), resultVariableSize,
-             fmt::ptr(option));
     if (!targetNpId || !resultVariable) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -1779,12 +1658,6 @@ s32 PS4_SYSV_ABI sceNpTusTryAndSetVariableVUserAsync(
     s64 variable, const s64* compareValue, const OrbisNpId* isLastChangedAuthor,
     const Libraries::Rtc::OrbisRtcTick* isLastChangedDate, OrbisNpTusVariable* resultVariable,
     u64 resultVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotId = {}, opeType = {}, variable = {}, "
-             "compareValue = {}, resultVariable = {}, resultVariableSize = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", slotId, opeType, variable,
-             fmt::ptr(compareValue), fmt::ptr(resultVariable), resultVariableSize,
-             fmt::ptr(option));
     if (!targetVirtualUserId || !resultVariable) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -1862,11 +1735,6 @@ s32 PS4_SYSV_ABI sceNpTusAddAndGetVariableAAsync(
     const OrbisNpAccountId* isLastChangedAuthor,
     const Libraries::Rtc::OrbisRtcTick* isLastChangedDate, OrbisNpTusVariableA* outVariable,
     u64 outVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotId = {}, inVariable = {}, outVariable = {}, "
-             "outVariableSize = {}, option = {}",
-             reqId, targetAccountId, slotId, inVariable, fmt::ptr(outVariable), outVariableSize,
-             fmt::ptr(option));
     if (option || slotId < 0) {
         LOG_ERROR(Lib_NpTus, "invalid argument");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -1928,11 +1796,6 @@ s32 PS4_SYSV_ABI sceNpTusAddAndGetVariableAVUserAsync(
     const OrbisNpAccountId* isLastChangedAuthor,
     const Libraries::Rtc::OrbisRtcTick* isLastChangedDate, OrbisNpTusVariableA* outVariable,
     u64 outVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotId = {}, inVariable = {}, "
-             "outVariable = {}, outVariableSize = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", slotId, inVariable,
-             fmt::ptr(outVariable), outVariableSize, fmt::ptr(option));
     if (!targetVirtualUserId || !outVariable) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -1994,9 +1857,6 @@ s32 PS4_SYSV_ABI sceNpTusDeleteMultiSlotData(int reqId, const OrbisNpId* targetN
 
 s32 PS4_SYSV_ABI sceNpTusDeleteMultiSlotDataAsync(int reqId, const OrbisNpId* targetNpId,
                                                   s32* slotIds, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus, "reqId = {}, targetNpId = {}, slotIds = {}, arrayLen = {}, option = {}",
-             reqId, targetNpId ? targetNpId->handle.data : "", fmt::ptr(slotIds), arrayLen,
-             fmt::ptr(option));
     if (!targetNpId || !slotIds || arrayLen < 1) {
         LOG_ERROR(Lib_NpTus, "missing required argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -2053,10 +1913,6 @@ sceNpTusDeleteMultiSlotDataVUser(int reqId, const OrbisNpTusVirtualUserId* targe
 s32 PS4_SYSV_ABI
 sceNpTusDeleteMultiSlotDataVUserAsync(int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserId,
                                       s32* slotIds, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotIds = {}, arrayLen = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", fmt::ptr(slotIds),
-             arrayLen, fmt::ptr(option));
     if (!targetVirtualUserId || !slotIds || arrayLen < 1) {
         LOG_ERROR(Lib_NpTus, "missing required argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -2116,9 +1972,6 @@ s32 PS4_SYSV_ABI sceNpTusDeleteMultiSlotVariable(int reqId, const OrbisNpId* tar
 
 s32 PS4_SYSV_ABI sceNpTusDeleteMultiSlotVariableAsync(int reqId, const OrbisNpId* targetNpId,
                                                       s32* slotIds, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus, "reqId = {}, targetNpId = {}, slotIds = {}, arrayLen = {}, option = {}",
-             reqId, targetNpId ? targetNpId->handle.data : "", fmt::ptr(slotIds), arrayLen,
-             fmt::ptr(option));
     if (!targetNpId || !slotIds || arrayLen < 1) {
         LOG_ERROR(Lib_NpTus, "missing required argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -2175,10 +2028,6 @@ sceNpTusDeleteMultiSlotVariableVUser(int reqId, const OrbisNpTusVirtualUserId* t
 s32 PS4_SYSV_ABI sceNpTusDeleteMultiSlotVariableVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserId, s32* slotIds, int arrayLen,
     void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotIds = {}, arrayLen = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", fmt::ptr(slotIds),
-             arrayLen, fmt::ptr(option));
     if (!targetVirtualUserId || !slotIds || arrayLen < 1) {
         LOG_ERROR(Lib_NpTus, "missing required argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -2302,11 +2151,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotDataStatusAAsync(int reqId, OrbisNpAccountI
                                                       OrbisNpTusDataStatusA* statusArray,
                                                       u64 statusArraySize, int arrayLen,
                                                       void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotIds = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, targetAccountId, fmt::ptr(slotIds), fmt::ptr(statusArray), statusArraySize,
-             arrayLen, fmt::ptr(option));
     if (!slotIds || !statusArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -2369,11 +2213,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotDataStatusAVUser(
 s32 PS4_SYSV_ABI sceNpTusGetMultiSlotDataStatusAVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserId, s32* slotIds,
     OrbisNpTusDataStatusA* statusArray, u64 statusArraySize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotIds = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", fmt::ptr(slotIds),
-             fmt::ptr(statusArray), statusArraySize, arrayLen, fmt::ptr(option));
     // NULL targetVirtualUserId is explicitly INSUFFICIENT_ARGUMENT for this variant.
     if (!targetVirtualUserId || !slotIds || !statusArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
@@ -2461,11 +2300,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserDataStatusAsync(int reqId, const OrbisNpId*
                                                      s32 slotId, OrbisNpTusDataStatus* statusArray,
                                                      u64 statusArraySize, int arrayLen,
                                                      void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetNpIdArray = {}, slotId = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetNpIdArray), slotId, fmt::ptr(statusArray), statusArraySize,
-             arrayLen, fmt::ptr(option));
     if (!targetNpIdArray || !statusArray || arrayLen < 1) {
         LOG_ERROR(Lib_NpTus, "missing required argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -2530,11 +2364,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserDataStatusVUser(
 s32 PS4_SYSV_ABI sceNpTusGetMultiUserDataStatusVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserIdArray, s32 slotId,
     OrbisNpTusDataStatus* statusArray, u64 statusArraySize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserIdArray = {}, slotId = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetVirtualUserIdArray), slotId, fmt::ptr(statusArray),
-             statusArraySize, arrayLen, fmt::ptr(option));
     if (!targetVirtualUserIdArray || !statusArray || arrayLen < 1) {
         LOG_ERROR(Lib_NpTus, "missing required argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -2605,11 +2434,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserVariableAsync(int reqId, const OrbisNpId* t
                                                    s32 slotId, OrbisNpTusVariable* variableArray,
                                                    u64 variableArraySize, int arrayLen,
                                                    void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetNpIdArray = {}, slotId = {}, variableArray = {}, "
-             "variableArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetNpIdArray), slotId, fmt::ptr(variableArray), variableArraySize,
-             arrayLen, fmt::ptr(option));
     if (!targetNpIdArray || !variableArray || arrayLen < 1) {
         LOG_ERROR(Lib_NpTus, "missing required argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -2675,11 +2499,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserVariableVUser(
 s32 PS4_SYSV_ABI sceNpTusGetMultiUserVariableVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserIdArray, s32 slotId,
     OrbisNpTusVariable* variableArray, u64 variableArraySize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserIdArray = {}, slotId = {}, variableArray = {}, "
-             "variableArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetVirtualUserIdArray), slotId, fmt::ptr(variableArray),
-             variableArraySize, arrayLen, fmt::ptr(option));
     if (!targetVirtualUserIdArray || !variableArray || arrayLen < 1) {
         LOG_ERROR(Lib_NpTus, "missing required argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -2842,11 +2661,6 @@ s32 PS4_SYSV_ABI sceNpTusTryAndSetVariableAAsync(
     const s64* compareValue, const OrbisNpAccountId* isLastChangedAuthor,
     const Libraries::Rtc::OrbisRtcTick* isLastChangedDate, OrbisNpTusVariableA* resultVariable,
     u64 resultVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotId = {}, opeType = {}, variable = {}, "
-             "compareValue = {}, resultVariable = {}, resultVariableSize = {}, option = {}",
-             reqId, targetAccountId, slotId, opeType, variable, fmt::ptr(compareValue),
-             fmt::ptr(resultVariable), resultVariableSize, fmt::ptr(option));
     if (!resultVariable) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -2914,12 +2728,6 @@ s32 PS4_SYSV_ABI sceNpTusTryAndSetVariableAVUserAsync(
     s64 variable, const s64* compareValue, const OrbisNpAccountId* isLastChangedAuthor,
     const Libraries::Rtc::OrbisRtcTick* isLastChangedDate, OrbisNpTusVariableA* resultVariable,
     u64 resultVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotId = {}, opeType = {}, variable = {}, "
-             "compareValue = {}, resultVariable = {}, resultVariableSize = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", slotId, opeType, variable,
-             fmt::ptr(compareValue), fmt::ptr(resultVariable), resultVariableSize,
-             fmt::ptr(option));
     if (!targetVirtualUserId || !resultVariable) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -2974,9 +2782,6 @@ s32 PS4_SYSV_ABI sceNpTusTryAndSetVariableAVUserAsync(
 
 s32 PS4_SYSV_ABI sceNpTusDeleteMultiSlotDataAAsync(int reqId, OrbisNpAccountId targetAccountId,
                                                    s32* slotIds, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotIds = {}, arrayLen = {}, option = {}", reqId,
-             targetAccountId, fmt::ptr(slotIds), arrayLen, fmt::ptr(option));
     if (!slotIds) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -3043,9 +2848,6 @@ s32 PS4_SYSV_ABI sceNpTusDeleteMultiSlotVariableA(int reqId, OrbisNpAccountId ta
 
 s32 PS4_SYSV_ABI sceNpTusDeleteMultiSlotVariableAAsync(int reqId, OrbisNpAccountId targetAccountId,
                                                        s32* slotIds, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotIds = {}, arrayLen = {}, option = {}", reqId,
-             targetAccountId, fmt::ptr(slotIds), arrayLen, fmt::ptr(option));
     if (!slotIds) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -3102,11 +2904,6 @@ s32 PS4_SYSV_ABI sceNpTusGetFriendsDataStatusA(int reqId, s32 slotId, s32 includ
 s32 PS4_SYSV_ABI sceNpTusGetFriendsDataStatusAAsync(
     int reqId, s32 slotId, s32 includeSelf, s32 sortType, OrbisNpTusDataStatusA* statusArray,
     u64 statusArraySize, int arrayLen, OrbisNpTusGetFriendsDataStatusOptParam* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, slotId = {}, includeSelf = {}, sortType = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, slotId, includeSelf, sortType, fmt::ptr(statusArray), statusArraySize, arrayLen,
-             fmt::ptr(option));
     if (!statusArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -3195,11 +2992,6 @@ s32 PS4_SYSV_ABI sceNpTusGetFriendsVariableAAsync(int reqId, s32 slotId, s32 inc
                                                   s32 sortType, OrbisNpTusVariableA* variableArray,
                                                   u64 variableArraySize, int arrayLen,
                                                   OrbisNpTusGetFriendsVariableOptParam* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, slotId = {}, includeSelf = {}, sortType = {}, variableArray = {}, "
-             "variableArraySize = {}, arrayLen = {}, option = {}",
-             reqId, slotId, includeSelf, sortType, fmt::ptr(variableArray), variableArraySize,
-             arrayLen, fmt::ptr(option));
     if (!variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -3285,11 +3077,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariableVUser(
 s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariableVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserId, s32* slotIds,
     OrbisNpTusVariable* variableArray, u64 variableArraySize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotIds = {}, variableArray = {}, "
-             "variableArraySize = {}, arrayLen = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", fmt::ptr(slotIds),
-             fmt::ptr(variableArray), variableArraySize, arrayLen, fmt::ptr(option));
     if (!targetVirtualUserId || !slotIds || !variableArray || arrayLen < 1) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -3361,11 +3148,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserDataStatusA(int reqId,
 s32 PS4_SYSV_ABI sceNpTusGetMultiUserDataStatusAAsync(
     int reqId, const OrbisNpAccountId* targetAccountIdArray, s32 slotId,
     OrbisNpTusDataStatusA* statusArray, u64 statusArraySize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountIdArray = {}, slotId = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetAccountIdArray), slotId, fmt::ptr(statusArray), statusArraySize,
-             arrayLen, fmt::ptr(option));
     if (!targetAccountIdArray || !statusArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -3429,11 +3211,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserDataStatusAVUser(
 s32 PS4_SYSV_ABI sceNpTusGetMultiUserDataStatusAVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserIdArray, s32 slotId,
     OrbisNpTusDataStatusA* statusArray, u64 statusArraySize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserIdArray = {}, slotId = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetVirtualUserIdArray), slotId, fmt::ptr(statusArray),
-             statusArraySize, arrayLen, fmt::ptr(option));
     if (!targetVirtualUserIdArray || !statusArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -3506,11 +3283,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserVariableAAsync(int reqId,
                                                     s32 slotId, OrbisNpTusVariableA* variableArray,
                                                     u64 variableArraySize, int arrayLen,
                                                     void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountIdArray = {}, slotId = {}, variableArray = {}, "
-             "variableArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetAccountIdArray), slotId, fmt::ptr(variableArray),
-             variableArraySize, arrayLen, fmt::ptr(option));
     if (!targetAccountIdArray || !variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -3575,11 +3347,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserVariableAVUser(
 s32 PS4_SYSV_ABI sceNpTusGetMultiUserVariableAVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserIdArray, s32 slotId,
     OrbisNpTusVariableA* variableArray, u64 variableArraySize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserIdArray = {}, slotId = {}, variableArray = {}, "
-             "variableArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetVirtualUserIdArray), slotId, fmt::ptr(variableArray),
-             variableArraySize, arrayLen, fmt::ptr(option));
     if (!targetVirtualUserIdArray || !variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -3653,11 +3420,6 @@ s32 PS4_SYSV_ABI sceNpTusAddAndGetVariableForCrossSaveAsync(
     const OrbisNpAccountId* isLastChangedAuthor,
     const Libraries::Rtc::OrbisRtcTick* isLastChangedDate,
     OrbisNpTusVariableForCrossSave* outVariable, u64 outVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotId = {}, inVariable = {}, outVariable = {}, "
-             "outVariableSize = {}, option = {}",
-             reqId, targetAccountId, slotId, inVariable, fmt::ptr(outVariable), outVariableSize,
-             fmt::ptr(option));
     if (option || slotId < 0) {
         LOG_ERROR(Lib_NpTus, "invalid argument");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -3720,11 +3482,6 @@ s32 PS4_SYSV_ABI sceNpTusAddAndGetVariableForCrossSaveVUserAsync(
     const OrbisNpAccountId* isLastChangedAuthor,
     const Libraries::Rtc::OrbisRtcTick* isLastChangedDate,
     OrbisNpTusVariableForCrossSave* outVariable, u64 outVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotId = {}, inVariable = {}, "
-             "outVariable = {}, outVariableSize = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", slotId, inVariable,
-             fmt::ptr(outVariable), outVariableSize, fmt::ptr(option));
     if (!targetVirtualUserId || !outVariable) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -3794,11 +3551,6 @@ s32 PS4_SYSV_ABI sceNpTusGetDataForCrossSaveAsync(int reqId, OrbisNpAccountId ta
                                                   OrbisNpTusDataStatusForCrossSave* dataStatus,
                                                   u64 dataStatusSize, void* data, u64 recvSize,
                                                   void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotId = {}, dataStatus = {}, "
-             "dataStatusSize = {}, data = {}, recvSize = {}, option = {}",
-             reqId, targetAccountId, slotId, fmt::ptr(dataStatus), dataStatusSize, fmt::ptr(data),
-             recvSize, fmt::ptr(option));
     if (option || slotId < 0) {
         LOG_ERROR(Lib_NpTus, "invalid argument");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -3867,11 +3619,6 @@ s32 PS4_SYSV_ABI
 sceNpTusGetDataForCrossSaveVUserAsync(int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserId,
                                       s32 slotId, OrbisNpTusDataStatusForCrossSave* dataStatus,
                                       u64 dataStatusSize, void* data, u64 recvSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotId = {}, dataStatus = {}, "
-             "dataStatusSize = {}, data = {}, recvSize = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", slotId,
-             fmt::ptr(dataStatus), dataStatusSize, fmt::ptr(data), recvSize, fmt::ptr(option));
     if (option || slotId < 0) {
         LOG_ERROR(Lib_NpTus, "invalid argument");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -3947,11 +3694,6 @@ s32 PS4_SYSV_ABI sceNpTusGetFriendsDataStatusForCrossSaveAsync(
     int reqId, s32 slotId, s32 includeSelf, s32 sortType,
     OrbisNpTusDataStatusForCrossSave* statusArray, u64 statusArraySize, int arrayLen,
     OrbisNpTusGetFriendsDataStatusOptParam* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, slotId = {}, includeSelf = {}, sortType = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, slotId, includeSelf, sortType, fmt::ptr(statusArray), statusArraySize, arrayLen,
-             fmt::ptr(option));
     if (!statusArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4040,11 +3782,6 @@ s32 PS4_SYSV_ABI sceNpTusGetFriendsVariableForCrossSaveAsync(
     int reqId, s32 slotId, s32 includeSelf, s32 sortType,
     OrbisNpTusVariableForCrossSave* variableArray, u64 variableArraySize, int arrayLen,
     OrbisNpTusGetFriendsVariableOptParam* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, slotId = {}, includeSelf = {}, sortType = {}, variableArray = {}, "
-             "variableArraySize = {}, arrayLen = {}, option = {}",
-             reqId, slotId, includeSelf, sortType, fmt::ptr(variableArray), variableArraySize,
-             arrayLen, fmt::ptr(option));
     if (!variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4132,11 +3869,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotDataStatusForCrossSaveAsync(
     int reqId, OrbisNpAccountId targetAccountId, s32* slotIds,
     OrbisNpTusDataStatusForCrossSave* statusArray, u64 statusArraySize, int arrayLen,
     void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotIds = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, targetAccountId, fmt::ptr(slotIds), fmt::ptr(statusArray), statusArraySize,
-             arrayLen, fmt::ptr(option));
     if (!slotIds || !statusArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4202,11 +3934,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotDataStatusForCrossSaveVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserId, s32* slotIds,
     OrbisNpTusDataStatusForCrossSave* statusArray, u64 statusArraySize, int arrayLen,
     void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotIds = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", fmt::ptr(slotIds),
-             fmt::ptr(statusArray), statusArraySize, arrayLen, fmt::ptr(option));
     if (!targetVirtualUserId || !slotIds || !statusArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4277,11 +4004,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariableForCrossSave(
 s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariableForCrossSaveAsync(
     int reqId, OrbisNpAccountId targetAccountId, s32* slotIds,
     OrbisNpTusVariableForCrossSave* variableArray, u64 variablesSize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotIds = {}, variableArray = {}, "
-             "variablesSize = {}, arrayLen = {}, option = {}",
-             reqId, targetAccountId, fmt::ptr(slotIds), fmt::ptr(variableArray), variablesSize,
-             arrayLen, fmt::ptr(option));
     if (!slotIds || !variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4345,11 +4067,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariableForCrossSaveVUser(
 s32 PS4_SYSV_ABI sceNpTusGetMultiSlotVariableForCrossSaveVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* virtualUserId, s32* slotIds,
     OrbisNpTusVariableForCrossSave* variableArray, u64 variablesSize, int arrayLen, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, virtualUserId = {}, slotIds = {}, variableArray = {}, "
-             "variablesSize = {}, arrayLen = {}, option = {}",
-             reqId, virtualUserId ? virtualUserId->data : "", fmt::ptr(slotIds),
-             fmt::ptr(variableArray), variablesSize, arrayLen, fmt::ptr(option));
     if (!virtualUserId || !slotIds || !variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4421,11 +4138,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserDataStatusForCrossSaveAsync(
     int reqId, const OrbisNpAccountId* targetAccountIdArray, s32 slotId,
     OrbisNpTusDataStatusForCrossSave* statusArray, u64 statusArraySize, int arrayLen,
     void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountIdArray = {}, slotId = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetAccountIdArray), slotId, fmt::ptr(statusArray), statusArraySize,
-             arrayLen, fmt::ptr(option));
     if (!targetAccountIdArray || !statusArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4493,11 +4205,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserDataStatusForCrossSaveVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserIdArray, s32 slotId,
     OrbisNpTusDataStatusForCrossSave* statusArray, u64 statusArraySize, int arrayLen,
     void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserIdArray = {}, slotId = {}, statusArray = {}, "
-             "statusArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetVirtualUserIdArray), slotId, fmt::ptr(statusArray),
-             statusArraySize, arrayLen, fmt::ptr(option));
     if (!targetVirtualUserIdArray || !statusArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4570,11 +4277,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserVariableForCrossSaveAsync(
     int reqId, const OrbisNpAccountId* targetAccountIdArray, s32 slotId,
     OrbisNpTusVariableForCrossSave* variableArray, u64 variableArraySize, int arrayLen,
     void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountIdArray = {}, slotId = {}, variableArray = {}, "
-             "variableArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetAccountIdArray), slotId, fmt::ptr(variableArray),
-             variableArraySize, arrayLen, fmt::ptr(option));
     if (!targetAccountIdArray || !variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4642,11 +4344,6 @@ s32 PS4_SYSV_ABI sceNpTusGetMultiUserVariableForCrossSaveVUserAsync(
     int reqId, const OrbisNpTusVirtualUserId* targetVirtualUserIdArray, s32 slotId,
     OrbisNpTusVariableForCrossSave* variableArray, u64 variableArraySize, int arrayLen,
     void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserIdArray = {}, slotId = {}, variableArray = {}, "
-             "variableArraySize = {}, arrayLen = {}, option = {}",
-             reqId, fmt::ptr(targetVirtualUserIdArray), slotId, fmt::ptr(variableArray),
-             variableArraySize, arrayLen, fmt::ptr(option));
     if (!targetVirtualUserIdArray || !variableArray) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4721,11 +4418,6 @@ s32 PS4_SYSV_ABI sceNpTusTryAndSetVariableForCrossSaveAsync(
     const s64* compareValue, const OrbisNpAccountId* isLastChangedAuthor,
     const Libraries::Rtc::OrbisRtcTick* isLastChangedDate,
     OrbisNpTusVariableForCrossSave* resultVariable, u64 resultVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetAccountId = {}, slotId = {}, opeType = {}, variable = {}, "
-             "compareValue = {}, resultVariable = {}, resultVariableSize = {}, option = {}",
-             reqId, targetAccountId, slotId, opeType, variable, fmt::ptr(compareValue),
-             fmt::ptr(resultVariable), resultVariableSize, fmt::ptr(option));
     if (!resultVariable) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4794,12 +4486,6 @@ s32 PS4_SYSV_ABI sceNpTusTryAndSetVariableForCrossSaveVUserAsync(
     s64 variable, const s64* compareValue, const OrbisNpAccountId* isLastChangedAuthor,
     const Libraries::Rtc::OrbisRtcTick* isLastChangedDate,
     OrbisNpTusVariableForCrossSave* resultVariable, u64 resultVariableSize, void* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {}, targetVirtualUserId = {}, slotId = {}, opeType = {}, variable = {}, "
-             "compareValue = {}, resultVariable = {}, resultVariableSize = {}, option = {}",
-             reqId, targetVirtualUserId ? targetVirtualUserId->data : "", slotId, opeType, variable,
-             fmt::ptr(compareValue), fmt::ptr(resultVariable), resultVariableSize,
-             fmt::ptr(option));
     if (!targetVirtualUserId || !resultVariable) {
         LOG_ERROR(Lib_NpTus, "insufficient argument");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4859,11 +4545,6 @@ s32 PS4_SYSV_ABI sceNpTusTryAndSetVariableForCrossSaveVUserAsync(
 s32 PS4_SYSV_ABI sceNpTssGetDataAsync(int reqId, s32 slotId, OrbisNpTssDataStatus* dataStatus,
                                       u64 dataStatusSize, void* data, u64 recvSize,
                                       OrbisNpTssGetDataOptParam* option) {
-    LOG_INFO(Lib_NpTus,
-             "reqId = {:#x}, slotId = {}, dataStatus = {}, dataStatusSize = {}, data = {}, "
-             "recvSize = {}, option = {}",
-             reqId, slotId, fmt::ptr(dataStatus), dataStatusSize, fmt::ptr(data), recvSize,
-             fmt::ptr(option));
     if (!dataStatus) {
         LOG_ERROR(Lib_NpTus, "insufficient argument: dataStatus is NULL");
         return ORBIS_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
@@ -4953,8 +4634,6 @@ s32 PS4_SYSV_ABI sceNpTssGetData(int reqId, s32 slotId, OrbisNpTssDataStatus* da
 
 s32 PS4_SYSV_ABI sceNpTssGetSmallStorageAsync(int reqId, void* data, u64 maxSize,
                                               u64* contentLength, void* option) {
-    LOG_INFO(Lib_NpTus, "reqId = {:#x}, data = {}, maxSize = {}, contentLength = {}, option = {}",
-             reqId, fmt::ptr(data), maxSize, fmt::ptr(contentLength), fmt::ptr(option));
     if (option) {
         LOG_ERROR(Lib_NpTus, "invalid argument: option must be NULL");
         return ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;

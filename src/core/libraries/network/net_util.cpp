@@ -9,8 +9,8 @@
 typedef SOCKET net_socket;
 typedef int socklen_t;
 #else
-#include <cerrno>
 #include <arpa/inet.h>
+#include <cerrno>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netdb.h>
@@ -31,23 +31,21 @@ typedef int net_socket;
 #include <sstream>
 #endif
 
-#include <map>
-#include <memory>
-#include <mutex>
-#include <vector>
-#include <string.h>
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
 #include "net.h"
 #include "net_error.h"
 #include "net_util.h"
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string.h>
+#include <vector>
 
 namespace NetUtil {
 
-const std::array<u8, 6>& NetUtilInternal::GetEthernetAddr() const {
-    return ether_address;
-}
+const std::array<u8, 6>& NetUtilInternal::GetEthernetAddr() const { return ether_address; }
 
 bool NetUtilInternal::RetrieveEthernetAddr() {
     std::scoped_lock lock{m_mutex};
@@ -56,8 +54,9 @@ bool NetUtilInternal::RetrieveEthernetAddr() {
     ULONG size_infos = sizeof(IP_ADAPTER_INFO);
 
     if (GetAdaptersInfo(reinterpret_cast<PIP_ADAPTER_INFO>(adapter_infos.data()), &size_infos) ==
-        ERROR_BUFFER_OVERFLOW)
+        ERROR_BUFFER_OVERFLOW) {
         adapter_infos.resize(size_infos);
+    }
 
     if (GetAdaptersInfo(reinterpret_cast<PIP_ADAPTER_INFO>(adapter_infos.data()), &size_infos) ==
             NO_ERROR &&
@@ -90,13 +89,15 @@ bool NetUtilInternal::RetrieveEthernetAddr() {
     int success = 0;
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-    if (sock == -1)
+    if (sock == -1) {
         return false;
+    }
 
     ifc.ifc_len = sizeof(buf);
     ifc.ifc_buf = buf;
-    if (ioctl(sock, SIOCGIFCONF, &ifc) == -1)
+    if (ioctl(sock, SIOCGIFCONF, &ifc) == -1) {
         return false;
+    }
 
     ifreq* it = ifc.ifc_req;
     const ifreq* const end = it + (ifc.ifc_len / sizeof(ifreq));
@@ -123,9 +124,7 @@ bool NetUtilInternal::RetrieveEthernetAddr() {
     return false;
 }
 
-const std::string& NetUtilInternal::GetDefaultGateway() const {
-    return default_gateway;
-}
+const std::string& NetUtilInternal::GetDefaultGateway() const { return default_gateway; }
 
 bool NetUtilInternal::RetrieveDefaultGateway() {
     std::scoped_lock lock{m_mutex};
@@ -146,8 +145,9 @@ bool NetUtilInternal::RetrieveDefaultGateway() {
 
     for (PIP_ADAPTER_ADDRESSES adapter = adapter_addresses; adapter != nullptr;
          adapter = adapter->Next) {
-        if (adapter->OperStatus != IfOperStatusUp)
+        if (adapter->OperStatus != IfOperStatusUp) {
             continue;
+        }
 
         IP_ADAPTER_GATEWAY_ADDRESS_LH* gateway = adapter->FirstGatewayAddress;
         while (gateway) {
@@ -260,9 +260,7 @@ bool NetUtilInternal::RetrieveDefaultGateway() {
     return false;
 }
 
-const std::string& NetUtilInternal::GetNetmask() const {
-    return netmask;
-}
+const std::string& NetUtilInternal::GetNetmask() const { return netmask; }
 
 bool NetUtilInternal::RetrieveNetmask() {
     std::scoped_lock lock{m_mutex};
@@ -284,13 +282,15 @@ bool NetUtilInternal::RetrieveNetmask() {
         result = GetAdaptersAddresses(family, flags, nullptr, adapter_addresses, &buffer_size);
     }
 
-    if (result != NO_ERROR)
+    if (result != NO_ERROR) {
         return false;
+    }
 
     for (auto adapter = adapter_addresses; adapter != nullptr; adapter = adapter->Next) {
         // Skip loopback and down interfaces
-        if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK || adapter->OperStatus != IfOperStatusUp)
+        if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK || adapter->OperStatus != IfOperStatusUp) {
             continue;
+        }
 
         for (auto unicast = adapter->FirstUnicastAddress; unicast != nullptr;
              unicast = unicast->Next) {
@@ -330,21 +330,13 @@ bool NetUtilInternal::RetrieveNetmask() {
     return success;
 }
 
-const std::string& NetUtilInternal::GetIp() const {
-    return ip;
-}
+const std::string& NetUtilInternal::GetIp() const { return ip; }
 
-u32 NetUtilInternal::GetExternalIp() const {
-    return external_ip;
-}
+u32 NetUtilInternal::GetExternalIp() const { return external_ip; }
 
-void NetUtilInternal::SetExternalIp(u32 addr) {
-    external_ip = addr;
-}
+void NetUtilInternal::SetExternalIp(u32 addr) { external_ip = addr; }
 
-u32 NetUtilInternal::GetNatType() const {
-    return nat_type;
-}
+u32 NetUtilInternal::GetNatType() const { return nat_type; }
 
 bool NetUtilInternal::RetrieveIp() {
     std::scoped_lock lock{m_mutex};
@@ -404,7 +396,6 @@ int NetUtilInternal::ResolveHostname(const char* hostname, Libraries::Net::Orbis
     } else {
         ASSERT(info && info->ai_addr);
         in_addr resolved_addr = ((sockaddr_in*)info->ai_addr)->sin_addr;
-        LOG_DEBUG(Lib_Net, "resolved address for {}: {}", hostname, inet_ntoa(resolved_addr));
         addr->inaddr_addr = resolved_addr.s_addr;
     }
 

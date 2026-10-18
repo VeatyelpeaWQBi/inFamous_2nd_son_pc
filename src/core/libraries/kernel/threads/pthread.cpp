@@ -9,7 +9,6 @@
 #include <csignal>
 #include <pthread.h>
 #endif
-#include "core/debug_state.h"
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/kernel/orbis_error.h"
 #include "core/libraries/kernel/posix_error.h"
@@ -38,9 +37,7 @@ void _thread_cleanupspecific();
 using ThreadDtor = void PS4_SYSV_ABI (*)();
 static ThreadDtor ThreadDtors{};
 
-void PS4_SYSV_ABI _sceKernelSetThreadDtors(ThreadDtor dtor) {
-    ThreadDtors = dtor;
-}
+void PS4_SYSV_ABI _sceKernelSetThreadDtors(ThreadDtor dtor) { ThreadDtors = dtor; }
 
 static void ExitThread() {
     Pthread* curthread = g_curthread;
@@ -257,7 +254,6 @@ static void* RunThread(void* arg) {
     auto* curthread = static_cast<Pthread*>(arg);
     g_curthread = curthread;
     Common::SetCurrentThreadName(curthread->name.c_str());
-    DebugState.AddCurrentThreadToGuestList();
     Core::InitializeTLS();
 
     curthread->native_thr->Initialize();
@@ -272,7 +268,6 @@ static void* RunThread(void* arg) {
     void* ret = _runOnAnotherStack(curthread->arg, (void*)curthread->start_routine, stack);
 
     /* Remove thread from tracking */
-    DebugState.RemoveCurrentThreadFromGuestList();
     posix_pthread_exit(ret);
 #ifdef WIN32
     return 0;
@@ -373,9 +368,7 @@ int PS4_SYSV_ABI posix_pthread_create(PthreadT* thread, const PthreadAttrT* attr
     return posix_pthread_create_name_np(thread, attr, start_routine, arg, nullptr);
 }
 
-int PS4_SYSV_ABI posix_pthread_getthreadid_np() {
-    return g_curthread->tid;
-}
+int PS4_SYSV_ABI posix_pthread_getthreadid_np() { return g_curthread->tid; }
 
 int PS4_SYSV_ABI posix_pthread_getname_np(PthreadT thread, char* name) {
     if (thread == g_curthread) {
@@ -408,21 +401,13 @@ int PS4_SYSV_ABI posix_pthread_equal(PthreadT thread1, PthreadT thread2) {
     return (thread1 == thread2 ? 1 : 0);
 }
 
-PthreadT PS4_SYSV_ABI posix_pthread_self() {
-    return g_curthread;
-}
+PthreadT PS4_SYSV_ABI posix_pthread_self() { return g_curthread; }
 
-void PS4_SYSV_ABI posix_pthread_yield() {
-    std::this_thread::yield();
-}
+void PS4_SYSV_ABI posix_pthread_yield() { std::this_thread::yield(); }
 
-void PS4_SYSV_ABI sched_yield() {
-    std::this_thread::yield();
-}
+void PS4_SYSV_ABI sched_yield() { std::this_thread::yield(); }
 
-int PS4_SYSV_ABI posix_getpid() {
-    return GLOBAL_PID;
-}
+int PS4_SYSV_ABI posix_getpid() { return GLOBAL_PID; }
 
 int PS4_SYSV_ABI posix_pthread_once(PthreadOnce* once_control,
                                     void PS4_SYSV_ABI (*init_routine)()) {
@@ -490,7 +475,6 @@ int PS4_SYSV_ABI posix_sched_get_priority_min(SchedPolicy policy) {
 }
 
 int PS4_SYSV_ABI posix_pthread_rename_np(PthreadT thread, const char* name) {
-    LOG_INFO(Kernel_Pthread, "name = {}", name ? name : "(null)");
     auto* thread_state = ThrState::Instance();
     auto* memory = Core::Memory::Instance();
 
@@ -645,9 +629,7 @@ enum class PthreadCancelType : u32 {
 namespace {
 
 #ifdef _WIN32
-void PthreadCancelApc(void*, void*, void*, PCONTEXT) {
-    PthreadCancelInterrupt();
-}
+void PthreadCancelApc(void*, void*, void*, PCONTEXT) { PthreadCancelInterrupt(); }
 #else
 int HostPthreadCancelSignal() noexcept {
 #if defined(__APPLE__) || defined(__FreeBSD__)
@@ -665,9 +647,7 @@ void UnblockPthreadCancelSignal() {
                "Failed to unblock pthread cancellation signal");
 }
 
-void HostPthreadCancelSignalHandler(int, siginfo_t*, void*) {
-    PthreadCancelInterrupt();
-}
+void HostPthreadCancelSignalHandler(int, siginfo_t*, void*) { PthreadCancelInterrupt(); }
 
 void InstallPthreadCancelSignalHandler() {
     struct sigaction action{};
@@ -806,9 +786,7 @@ int PS4_SYSV_ABI posix_pthread_setcanceltype(PthreadCancelType type, PthreadCanc
     return 0;
 }
 
-void PS4_SYSV_ABI posix_pthread_testcancel() {
-    PthreadTestCancel();
-}
+void PS4_SYSV_ABI posix_pthread_testcancel() { PthreadTestCancel(); }
 
 int PS4_SYSV_ABI scePthreadCancel(PthreadT thread) {
     const int ret = posix_pthread_cancel(thread);
@@ -825,13 +803,9 @@ int PS4_SYSV_ABI scePthreadSetcanceltype(PthreadCancelType type, PthreadCancelTy
     return ret == 0 ? ORBIS_OK : ErrnoToSceKernelError(ret);
 }
 
-void PS4_SYSV_ABI scePthreadTestcancel() {
-    PthreadTestCancel();
-}
+void PS4_SYSV_ABI scePthreadTestcancel() { PthreadTestCancel(); }
 
-static void SigIgnHandler(int sig) {
-    LOG_DEBUG(Lib_Kernel, "called, sig: {}", sig);
-}
+static void SigIgnHandler(int sig) { ; }
 
 static bool SigDflHandler(int sig) {
     switch (sig) {
@@ -862,8 +836,7 @@ static bool SigDflHandler(int sig) {
     case POSIX_SIGUSR2:
     case POSIX_SIGTRAP:
         return false;
-    default:
-        LOG_DEBUG(Lib_Kernel, "called, sig: {}", sig);
+    default:;
         return true;
     }
 }
@@ -934,9 +907,7 @@ bool Pthread::HasPendingSignal() const {
     return false;
 }
 
-bool Pthread::HasDeliverableSignal() const {
-    return FindPendingUnblockedSignal() != 0;
-}
+bool Pthread::HasDeliverableSignal() const { return FindPendingUnblockedSignal() != 0; }
 
 #ifdef _WIN32
 static void ExceptionHandler(void*, void*, void*, PCONTEXT ctx) {

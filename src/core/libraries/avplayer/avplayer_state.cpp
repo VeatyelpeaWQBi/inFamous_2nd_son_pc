@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/avplayer/avplayer_state.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "common/thread.h"
 #include "core/libraries/avplayer/avplayer_error.h"
-#include "core/libraries/avplayer/avplayer_state.h"
 #include "core/libraries/kernel/process.h"
 
 #include <magic_enum/magic_enum.hpp>
@@ -227,9 +227,7 @@ bool AvPlayerState::Resume() {
     return true;
 }
 
-void AvPlayerState::SetAvSyncMode(AvPlayerAvSyncMode sync_mode) {
-    m_sync_mode = sync_mode;
-}
+void AvPlayerState::SetAvSyncMode(AvPlayerAvSyncMode sync_mode) { m_sync_mode = sync_mode; }
 
 void AvPlayerState::AvControllerThread(std::stop_token stop) {
     using std::chrono::milliseconds;
@@ -352,18 +350,14 @@ void AvPlayerState::OnWarning(u32 id) {
     WarningEvent(id);
 }
 
-AvPlayerAvSyncMode AvPlayerState::GetSyncMode() {
-    return m_sync_mode;
-}
+AvPlayerAvSyncMode AvPlayerState::GetSyncMode() { return m_sync_mode; }
 
 void AvPlayerState::OnError() {
     SetState(AvState::Error);
     OnPlaybackStateChanged(AvState::Error);
 }
 
-void AvPlayerState::OnEOF() {
-    SetState(AvState::EndOfFile);
-}
+void AvPlayerState::OnEOF() { SetState(AvState::EndOfFile); }
 
 void AvPlayerState::UpdateEndOfFileState() {
     std::shared_lock lock(m_source_mutex);
@@ -428,7 +422,6 @@ std::optional<bool> AvPlayerState::OnBufferingCheckEvent(u32 num_frames) {
 
 // Called inside CONTROLLER thread
 void AvPlayerState::EmitEvent(AvPlayerEvents event_id, void* event_data) {
-    LOG_INFO(Lib_AvPlayer, "Sending event to the game: id = {}", magic_enum::enum_name(event_id));
     const auto callback = m_init_data.event_replacement.event_callback;
     if (callback) {
         const auto ptr = m_init_data.event_replacement.object_ptr;

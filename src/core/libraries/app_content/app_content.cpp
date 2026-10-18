@@ -61,7 +61,6 @@ int PS4_SYSV_ABI sceAppContentAddcontEnqueueDownloadSp() {
 int PS4_SYSV_ABI sceAppContentAddcontMount(u32 service_label,
                                            const OrbisNpUnifiedEntitlementLabel* entitlement_label,
                                            OrbisAppContentMountPoint* mount_point) {
-    LOG_INFO(Lib_AppContent, "called");
 
     const auto& addon_path = EmulatorSettings.GetAddonInstallDir() / title_id;
     auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
@@ -146,8 +145,9 @@ int PS4_SYSV_ABI sceAppContentAddcontUnmount() {
 }
 
 int PS4_SYSV_ABI sceAppContentAppParamGetInt(OrbisAppContentAppParamId paramId, s32* out_value) {
-    if (out_value == nullptr)
+    if (out_value == nullptr) {
         return ORBIS_APP_CONTENT_ERROR_PARAMETER;
+    }
     auto* param_sfo = Common::Singleton<PSF>::Instance();
     std::optional<s32> value;
     switch (paramId) {
@@ -219,7 +219,6 @@ int PS4_SYSV_ABI sceAppContentGetAddcontDownloadProgress() {
 int PS4_SYSV_ABI sceAppContentGetAddcontInfo(u32 service_label,
                                              const OrbisNpUnifiedEntitlementLabel* entitlementLabel,
                                              OrbisAppContentAddcontInfo* info) {
-    LOG_INFO(Lib_AppContent, "called");
 
     if (entitlementLabel == nullptr || info == nullptr) {
         return ORBIS_APP_CONTENT_ERROR_PARAMETER;
@@ -231,7 +230,7 @@ int PS4_SYSV_ABI sceAppContentGetAddcontInfo(u32 service_label,
             continue;
         }
 
-        LOG_INFO(Lib_AppContent, "found DLC {}", entitlementLabel->data);
+        ;
 
         strncpy(info->entitlement_label.data, addcont_info[i].entitlement_label,
                 ORBIS_NP_UNIFIED_ENTITLEMENT_LABEL_SIZE);
@@ -245,7 +244,6 @@ int PS4_SYSV_ABI sceAppContentGetAddcontInfo(u32 service_label,
 int PS4_SYSV_ABI sceAppContentGetAddcontInfoList(u32 service_label,
                                                  OrbisAppContentAddcontInfo* list, u32 list_num,
                                                  u32* hit_num) {
-    LOG_INFO(Lib_AppContent, "called");
 
     if (list_num == 0 || list == nullptr) {
         if (hit_num == nullptr) {
@@ -273,7 +271,6 @@ int PS4_SYSV_ABI sceAppContentGetAddcontInfoList(u32 service_label,
 int PS4_SYSV_ABI sceAppContentGetEntitlementKey(
     u32 service_label, const OrbisNpUnifiedEntitlementLabel* entitlement_label,
     OrbisAppContentGetEntitlementKey* key) {
-    LOG_INFO(Lib_AppContent, "called");
 
     if (entitlement_label == nullptr || key == nullptr) {
         return ORBIS_APP_CONTENT_ERROR_PARAMETER;
@@ -369,7 +366,6 @@ int PS4_SYSV_ABI sceAppContentInitialize(const OrbisAppContentInitParam* initPar
 
             auto entitlement_id =
                 content_id.value().substr(ORBIS_APP_CONTENT_ENTITLEMENT_LABEL_OFFSET);
-            LOG_INFO(Lib_AppContent, "Entitlement {} found", entitlement_id);
 
             // Save the additional content info in addcont_info.
             auto& info = addcont_info[addcont_count++];
@@ -390,12 +386,9 @@ int PS4_SYSV_ABI sceAppContentInitialize(const OrbisAppContentInitParam* initPar
 
         if (std::filesystem::exists(ridx_path) && std::filesystem::exists(rifa_path)) {
             if (RIF rif; rif.Open(ridx_path, rifa_path)) {
-                LOG_INFO(Lib_AppContent, "Checking license {} for additional entitlements",
-                         service_id);
 
                 const std::vector<std::string>& entitlements = rif.GetLicenseOnlyEntitlements();
                 for (const auto& entitlement_id : entitlements) {
-                    LOG_INFO(Lib_AppContent, "License-only entitlement {} found", entitlement_id);
 
                     auto& info = addcont_info[addcont_count++];
                     entitlement_id.copy(info.entitlement_label, entitlement_id.length());
@@ -468,8 +461,6 @@ int PS4_SYSV_ABI sceAppContentTemporaryDataMount2(OrbisAppContentTemporaryDataOp
     static constexpr std::string_view TmpMount = "/temp0";
     TmpMount.copy(mountPoint->data, TmpMount.size());
     mountPoint->data[TmpMount.size()] = '\0';
-    LOG_INFO(Lib_AppContent, "sceAppContentTemporaryDataMount2: option = {}, mountPoint = {}",
-             option, mountPoint->data);
     return ORBIS_OK;
 }
 

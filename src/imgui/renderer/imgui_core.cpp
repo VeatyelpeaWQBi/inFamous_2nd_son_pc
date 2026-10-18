@@ -1,17 +1,16 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <SDL3/SDL_events.h>
 #include <algorithm>
 #include <atomic>
 #include <bit>
 #include <cstdint>
-#include <SDL3/SDL_events.h>
 #include <imgui.h>
 
 #include "common/path_util.h"
-#include "core/debug_state.h"
-#include "core/devtools/layer.h"
 #include "core/emulator_settings.h"
+#include "core/game_ui.h"
 #include "font_data.h"
 #include "font_stack.h"
 #include "imgui/imgui_layer.h"
@@ -115,7 +114,6 @@ void Initialize(const ::Vulkan::Instance& instance, const Frontend::WindowSDL& w
 
     StyleColorsDark();
 
-    ::Core::Devtools::Layer::SetupSettings();
     Sdl::Init(window.GetSDLWindow());
 
     const Vulkan::InitInfo vk_info{
@@ -148,9 +146,7 @@ void Initialize(const ::Vulkan::Instance& instance, const Frontend::WindowSDL& w
     std::at_quick_exit([] { SaveIniSettingsToDisk(GetIO().IniFilename); });
 }
 
-void OnResize() {
-    Sdl::OnResize();
-}
+void OnResize() { Sdl::OnResize(); }
 
 void OnSurfaceFormatChange(vk::Format surface_format) {
     Vulkan::OnSurfaceFormatChange(surface_format);
@@ -241,7 +237,7 @@ ImGuiID NewFrame(bool is_reusing_frame) {
 
     ImGuiWindowFlags flags =
         ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_AutoHideTabBar;
-    if (!DebugState.IsShowingDebugMenuBar()) {
+    {
         flags |= ImGuiDockNodeFlags_NoTabBar;
     }
     ImGuiID dockId = DockSpaceOverViewport(0, GetMainViewport(), flags);

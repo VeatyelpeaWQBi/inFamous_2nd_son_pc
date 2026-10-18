@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/web_browser_dialog/webbrowserdialog.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
-#include "core/libraries/web_browser_dialog/webbrowserdialog.h"
 #include "magic_enum/magic_enum.hpp"
 
 namespace Libraries::WebBrowserDialog {
@@ -15,8 +15,7 @@ Libraries::CommonDialog::Error PS4_SYSV_ABI sceWebBrowserDialogClose() {
     LOG_ERROR(Lib_WebBrowserDialog, "(STUBBED) called");
     if (g_status != Libraries::CommonDialog::Status::RUNNING) {
         return Libraries::CommonDialog::Error::NOT_RUNNING;
-    }
-    LOG_INFO(Lib_NpProfileDialog, "TODO: close npprofile ui dialog"); // TODO close Ui dialog
+    }; // TODO close Ui dialog
     return Libraries::CommonDialog::Error::OK;
 }
 
@@ -31,7 +30,6 @@ s32 PS4_SYSV_ABI sceWebBrowserDialogGetResult() {
 }
 
 Libraries::CommonDialog::Status PS4_SYSV_ABI sceWebBrowserDialogGetStatus() {
-    LOG_TRACE(Lib_WebBrowserDialog, "called status={}", magic_enum::enum_name(g_status));
     return g_status;
 }
 
@@ -59,7 +57,6 @@ s32 PS4_SYSV_ABI sceWebBrowserDialogNavigate() {
 Libraries::CommonDialog::Error PS4_SYSV_ABI sceWebBrowserDialogOpen() {
     if (g_status != Libraries::CommonDialog::Status::INITIALIZED &&
         g_status != Libraries::CommonDialog::Status::FINISHED) {
-        LOG_INFO(Lib_WebBrowserDialog, "called without initialize");
         return Libraries::CommonDialog::Error::INVALID_STATE;
     }
     LOG_ERROR(Lib_WebBrowserDialog, "(STUBBED) called"); // TODO open ui dialog
@@ -100,7 +97,6 @@ Libraries::CommonDialog::Error PS4_SYSV_ABI sceWebBrowserDialogTerminate() {
 }
 
 Libraries::CommonDialog::Status PS4_SYSV_ABI sceWebBrowserDialogUpdateStatus() {
-    LOG_TRACE(Lib_WebBrowserDialog, "called status={}", magic_enum::enum_name(g_status));
     if (g_status == Libraries::CommonDialog::Status::RUNNING) {
         g_status = Libraries::CommonDialog::Status::FINISHED; // TODO removed it when implementing
                                                               // real dialog

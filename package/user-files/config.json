@@ -1,0 +1,31 @@
+{
+  "General": {
+    "neo_mode": true,
+    "show_fps_counter": false,
+    "console_language": 10,
+    "volume_slider": 100,
+    "extra_dmem_in_mbytes": 512,
+    "redzone_patches": true,
+    "trophy_popup_disabled": true
+  },
+  "Log": {
+    "enable": true,
+    "filter": "*:Warning",
+    "sync": false
+  },
+  "GPU": {
+    "readbacks_mode": 2,
+    "hdr_allowed": false,
+    "dump_shaders": false,
+    "full_screen": true,
+    "full_screen_mode": "Borderless",
+    "window_width": 3840,
+    "window_height": 2160,
+    "direct_memory_access_enabled": true,
+    "present_mode": "Mailbox",
+    "fsr_enabled": false
+  },
+  "Vulkan": {
+    "pipeline_cache_enabled": true
+  }
+}

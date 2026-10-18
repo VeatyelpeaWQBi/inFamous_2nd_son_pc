@@ -3,15 +3,15 @@
 
 #pragma once
 
-#include <cstring>
 #include "common/assert.h"
 #include "common/bit_field.h"
-#include "common/perf_stats.h"
 #include "common/types.h"
 #include "common/uint128.h"
 #include "core/libraries/gnmdriver/gnmdriver.h"
 #include "core/libraries/kernel/time.h"
+#include "core/runtime_policy.h"
 #include "video_core/amdgpu/pm4_opcodes.h"
+#include <cstring>
 
 namespace AmdGpu {
 
@@ -31,9 +31,7 @@ union PM4Type0Header {
     BitField<16, 14, u32> count; ///< Count of DWORDs in the *information* body (N - 1 for N dwords)
     BitField<30, 2, u32> type;   ///< Packet identifier. It should be 0 for type 0 packets.
 
-    u32 NumWords() const {
-        return count + 1;
-    }
+    u32 NumWords() const { return count + 1; }
 };
 
 union PM4Type3Header {
@@ -50,9 +48,7 @@ union PM4Type3Header {
         type.Assign(3);
     }
 
-    u32 NumWords() const {
-        return (count + 1) & 0x3fff;
-    }
+    u32 NumWords() const { return (count + 1) & 0x3fff; }
 
     u32 raw;
     BitField<0, 1, PM4Predicate> predicate;    ///< Predicated version of packet when set
@@ -80,8 +76,7 @@ constexpr u32* WriteHeader(u32* cmdbuf, u32 size,
 }
 
 // Write arguments
-template <typename... Args>
-constexpr u32* WriteBody(u32* cmdbuf, Args... data) {
+template <typename... Args> constexpr u32* WriteBody(u32* cmdbuf, Args... data) {
     const std::array<u32, sizeof...(Args)> args{data...};
     std::memcpy(cmdbuf, args.data(), sizeof(args));
     cmdbuf += args.size();
@@ -192,9 +187,7 @@ struct PM4CmdSetData {
     };
     u32 data[0];
 
-    [[nodiscard]] u32 Size() const {
-        return header.count << 2u;
-    }
+    [[nodiscard]] u32 Size() const { return header.count << 2u; }
 
     template <PM4ShaderType type = PM4ShaderType::ShaderGraphics, typename... Args>
     static constexpr u32* SetContextReg(u32* cmdbuf, Args... data) {
@@ -222,9 +215,7 @@ struct PM4CmdSetQueueReg {
     };
     u32 data[0];
 
-    [[nodiscard]] u32 Size() const {
-        return header.count << 2u;
-    }
+    [[nodiscard]] u32 Size() const { return header.count << 2u; }
 };
 
 struct PM4CmdNop {
@@ -274,14 +265,12 @@ struct PM4CmdStrmoutBufferUpdate {
     };
     u32 src_address_hi;
 
-    template <typename T = u64>
-    T DstAddress() const {
+    template <typename T = u64> T DstAddress() const {
         ASSERT(update_memory.Value() == 1);
         return reinterpret_cast<T>(dst_address_lo.Value() | u64(dst_address_hi & 0xFFFF) << 32);
     }
 
-    template <typename T = u64>
-    T SrcAddress() const {
+    template <typename T = u64> T SrcAddress() const {
         ASSERT(source_select.Value() == SourceSelect::SrcAddress);
         return reinterpret_cast<T>(src_address_lo.Value() | u64(src_address_hi & 0xFFFF) << 32);
     }
@@ -384,7 +373,7 @@ struct FrameLockedGpuClock {
             last_value = host_value + offset;
             return last_value;
         }
-        const u64 frame = Common::Perf::GuestFrameCounter().load(std::memory_order_relaxed);
+        const u64 frame = Core::Runtime::GuestFrameCounter().load(std::memory_order_relaxed);
         if (!active) {
             active = true;
             last_frame = frame;
@@ -407,10 +396,9 @@ static u64 GetGpuClock64() {
     auto ticks = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
     static ScaledGpuClock clock;
     static FrameLockedGpuClock locked;
-    const auto& tuning = Common::Perf::GetTuning();
-    const u64 scaled =
-        clock(static_cast<u64>(ticks), tuning.gpu_clock_div.load(std::memory_order_relaxed));
-    return locked(scaled, tuning.gpu_clock_frame_us.load(std::memory_order_relaxed), 1000);
+    const auto& tuning = Core::Runtime::GetPolicy();
+    const u64 scaled = clock(static_cast<u64>(ticks), tuning.gpu_clock_div);
+    return locked(scaled, tuning.gpu_clock_frame_us, 1000);
 }
 
 static u64 GetGpuPerfCounter() {
@@ -422,10 +410,9 @@ static u64 GetGpuPerfCounter() {
 
     static ScaledGpuClock clock;
     static FrameLockedGpuClock locked;
-    const auto& tuning = Common::Perf::GetTuning();
-    const u64 scaled = clock(gpu_cycles, tuning.gpu_clock_div.load(std::memory_order_relaxed));
-    return locked(scaled, tuning.gpu_clock_frame_us.load(std::memory_order_relaxed),
-                  gpu_freq / 1'000'000);
+    const auto& tuning = Core::Runtime::GetPolicy();
+    const u64 scaled = clock(gpu_cycles, tuning.gpu_clock_div);
+    return locked(scaled, tuning.gpu_clock_frame_us, gpu_freq / 1'000'000);
 }
 
 // VGT_EVENT_INITIATOR.EVENT_TYPE
@@ -501,8 +488,7 @@ struct PM4CmdEventWrite {
     };
     u32 address[];
 
-    template <typename T>
-    T Address() const {
+    template <typename T> T Address() const {
         ASSERT(event_index.Value() >= EventIndex::ZpassDone &&
                event_index.Value() <= EventIndex::SampleStreamoutStatSx);
         return std::bit_cast<T>((u64(address[1]) << 32u) | u64(address[0]));
@@ -526,18 +512,13 @@ struct PM4CmdEventWriteEop {
     u32 data_lo; ///< Value that will be written to memory when event occurs
     u32 data_hi; ///< Value that will be written to memory when event occurs
 
-    template <typename T>
-    T* Address() const {
+    template <typename T> T* Address() const {
         return reinterpret_cast<T*>(address_lo | u64(address_hi) << 32);
     }
 
-    u32 DataDWord() const {
-        return data_lo;
-    }
+    u32 DataDWord() const { return data_lo; }
 
-    u64 DataQWord() const {
-        return data_lo | u64(data_hi) << 32;
-    }
+    u64 DataQWord() const { return data_lo | u64(data_hi) << 32; }
 
     void SignalFence(auto&& write_mem, auto&& signal_irq) const {
         u32* address = Address<u32>();
@@ -646,19 +627,15 @@ struct PM4DmaData {
         u32 reserved5 : 1;
     } command;
 
-    template <typename T>
-    T SrcAddress() const {
+    template <typename T> T SrcAddress() const {
         return std::bit_cast<T>(src_addr_lo | u64(src_addr_hi) << 32);
     }
 
-    template <typename T>
-    T DstAddress() const {
+    template <typename T> T DstAddress() const {
         return std::bit_cast<T>(dst_addr_lo | u64(dst_addr_hi) << 32);
     }
 
-    u32 NumBytes() const noexcept {
-        return command.num_bytes;
-    }
+    u32 NumBytes() const noexcept { return command.num_bytes; }
 };
 
 enum class CopyDataSrc : u32 {
@@ -705,13 +682,11 @@ struct PM4CmdCopyData {
     u32 dst_addr_lo;
     u32 dst_addr_hi;
 
-    template <typename T>
-    T SrcAddress() const {
+    template <typename T> T SrcAddress() const {
         return std::bit_cast<T>(src_addr_lo | u64(src_addr_hi) << 32);
     }
 
-    template <typename T>
-    T DstAddress() const {
+    template <typename T> T DstAddress() const {
         return std::bit_cast<T>(dst_addr_lo | u64(dst_addr_hi) << 32);
     }
 };
@@ -724,9 +699,7 @@ struct PM4CmdRewind {
         BitField<31, 1, u32> valid;          ///< Set when subsequent packets are valid
     };
 
-    bool Valid() const {
-        return valid;
-    }
+    bool Valid() const { return valid; }
 };
 
 struct PM4CmdWaitRegMem {
@@ -761,14 +734,11 @@ struct PM4CmdWaitRegMem {
     u32 mask;
     u32 poll_interval;
 
-    template <typename T = u32*>
-    T Address() const {
+    template <typename T = u32*> T Address() const {
         return std::bit_cast<T>((uintptr_t(poll_addr_hi) << 32) | (poll_addr_lo << 2));
     }
 
-    u32 Reg() const {
-        return reg.Value();
-    }
+    u32 Reg() const { return reg.Value(); }
 
     bool Test(std::span<const u32> regs) const {
         return TestValue(mem_space.Value() == MemSpace::Memory ? *Address() : regs[Reg()]);
@@ -847,19 +817,11 @@ struct PM4CmdWriteData {
     };
     u32 data[0];
 
-    u32 Size() const {
-        return (header.count.Value() - 2) * 4;
-    }
+    u32 Size() const { return (header.count.Value() - 2) * 4; }
 
-    template <typename T>
-    void Address(T addr) {
-        addr64 = static_cast<u64>(addr);
-    }
+    template <typename T> void Address(T addr) { addr64 = static_cast<u64>(addr); }
 
-    template <typename T>
-    T Address() const {
-        return reinterpret_cast<T>(addr64);
-    }
+    template <typename T> T Address() const { return reinterpret_cast<T>(addr64); }
 };
 
 struct PM4CmdEventWriteEos {
@@ -887,14 +849,11 @@ struct PM4CmdEventWriteEos {
         BitField<16, 16, u32> size; ///< Number of DWs to read from the GDS
     };
 
-    template <typename T = u32*>
-    T Address() const {
+    template <typename T = u32*> T Address() const {
         return reinterpret_cast<T>(address_lo | u64(address_hi) << 32);
     }
 
-    u32 DataDWord() const {
-        return this->data;
-    }
+    u32 DataDWord() const { return this->data; }
 
     void SignalFence(auto&& write_mem) const {
         const auto cmd = command.Value();
@@ -922,13 +881,9 @@ struct PM4WriteConstRam {
     };
     u32 data[0];
 
-    [[nodiscard]] u32 Offset() const {
-        return offset.Value();
-    }
+    [[nodiscard]] u32 Offset() const { return offset.Value(); }
 
-    [[nodiscard]] u32 Size() const {
-        return header.count << 2u;
-    }
+    [[nodiscard]] u32 Size() const { return header.count << 2u; }
 };
 
 struct PM4DumpConstRam {
@@ -946,18 +901,13 @@ struct PM4DumpConstRam {
     u32 addr_lo;
     u32 addr_hi;
 
-    template <typename T>
-    T Address() const {
+    template <typename T> T Address() const {
         return std::bit_cast<T>((u64(addr_hi) << 32u) | addr_lo);
     }
 
-    [[nodiscard]] u32 Offset() const {
-        return offset.Value();
-    }
+    [[nodiscard]] u32 Offset() const { return offset.Value(); }
 
-    [[nodiscard]] u32 Size() const {
-        return num_dw.Value() << 2u;
-    }
+    [[nodiscard]] u32 Size() const { return num_dw.Value() << 2u; }
 };
 
 struct PM4CmdDispatchDirect {
@@ -998,8 +948,7 @@ struct PM4CmdIndirectBuffer {
         u32 dw2;
     };
 
-    template <typename T>
-    T* Address() const {
+    template <typename T> T* Address() const {
         return reinterpret_cast<T*>((u64(ibase_hi) << 32u) | ibase_lo);
     }
 };
@@ -1035,19 +984,14 @@ struct PM4CmdReleaseMem {
     };
     u32 data_hi;
 
-    template <typename T>
-    T Address() const {
+    template <typename T> T Address() const {
         u64 full_address = address_lo | (u64(address_hi) << 32);
         return std::bit_cast<T>(full_address);
     }
 
-    u32 DataDWord() const {
-        return data_lo;
-    }
+    u32 DataDWord() const { return data_lo; }
 
-    u64 DataQWord() const {
-        return data_lo | u64(data_hi) << 32;
-    }
+    u64 DataQWord() const { return data_lo | u64(data_hi) << 32; }
 
     void SignalFence(auto&& signal_irq, auto&& gds_to_mem) const {
         switch (data_sel.Value()) {
@@ -1110,8 +1054,7 @@ struct PM4CmdSetBase {
     u32 address0;
     u32 address1;
 
-    template <typename T>
-    T Address() const {
+    template <typename T> T Address() const {
         ASSERT(base_index == BaseIndex::DisplayListPatchTable ||
                base_index == BaseIndex::DrawIndexIndirPatchTable);
         return reinterpret_cast<T>(address0 | (u64(address1 & 0xffff) << 32u));
@@ -1136,8 +1079,7 @@ struct PM4CmdDispatchIndirectMec {
     u32 address1;
     u32 dispatch_initiator; ///< Dispatch Initiator Register
 
-    template <typename T>
-    T Address() const {
+    template <typename T> T Address() const {
         return std::bit_cast<T>(address0 | (u64(address1 & 0xffff) << 32u));
     }
 };
@@ -1283,22 +1225,15 @@ struct PM4CmdMemSemaphore {
         BitField<29, 3, Select> sem_sel; ///< Indicates whether to do a signal or wait operation
     };
 
-    template <typename T>
-    [[nodiscard]] T Address() const {
+    template <typename T> [[nodiscard]] T Address() const {
         return std::bit_cast<T>(u64(addr_lo) << 3 | (u64(addr_hi) << 32));
     }
 
-    [[nodiscard]] bool IsSignaling() const {
-        return sem_sel == Select::SignalSemaphore;
-    }
+    [[nodiscard]] bool IsSignaling() const { return sem_sel == Select::SignalSemaphore; }
 
-    [[nodiscard]] bool Signaled() const {
-        return *Address<u64*>() > 0;
-    }
+    [[nodiscard]] bool Signaled() const { return *Address<u64*>() > 0; }
 
-    void Decrement() const {
-        *Address<u64*>() -= 1;
-    }
+    void Decrement() const { *Address<u64*>() -= 1; }
 
     void Signal() const {
         auto* ptr = Address<u64*>();

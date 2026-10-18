@@ -22,7 +22,7 @@ struct SysModules {
 };
 
 class Emulator {
-public:
+  public:
     Emulator();
     ~Emulator();
 
@@ -30,7 +30,6 @@ public:
              std::optional<std::filesystem::path> game_folder = {},
              std::vector<std::pair<std::filesystem::path, std::string>> mounts = {},
              std::vector<std::string> const& env_vars = {}, bool append_log = false);
-    void UpdatePlayTime(const std::string_view serial);
     void Shutdown();
 
     /**
@@ -46,17 +45,14 @@ public:
     [[noreturn]] void Relaunch(std::vector<std::string> args);
 
     const char* executableName;
-    bool waitForDebuggerBeforeRun{false};
 
-private:
+  private:
     void LoadSystemModules(const std::string& game_serial);
 
     Core::MemoryManager* memory;
     Input::GameControllers* controllers;
     Core::Linker* linker;
     std::unique_ptr<Frontend::WindowSDL> window;
-    std::chrono::steady_clock::time_point start_time;
-    std::jthread play_time_thread;
 };
 
 } // namespace Core

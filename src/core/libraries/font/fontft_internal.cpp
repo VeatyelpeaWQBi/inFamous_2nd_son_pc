@@ -14,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <ft2build.h>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -21,7 +22,6 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
-#include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MODULE_H
 #include FT_SYSTEM_H
@@ -177,9 +177,7 @@ static bool IsArabicLikeCodepoint(u32 cp) {
            (cp >= 0xFE70u && cp <= 0xFEFFu);
 }
 
-static bool IsThaiLikeCodepoint(u32 cp) {
-    return (cp >= 0x0E00u && cp <= 0x0E7Fu);
-}
+static bool IsThaiLikeCodepoint(u32 cp) { return (cp >= 0x0E00u && cp <= 0x0E7Fu); }
 
 static bool IsSymbolLikeCodepoint(u32 cp) {
     return (cp >= 0x25A0u && cp <= 0x25FFu) || (cp >= 0x2600u && cp <= 0x26FFu) ||
@@ -201,9 +199,7 @@ static float FlipSignBitF32(float v) {
     return std::bit_cast<float>(bits);
 }
 
-static bool OrderedLtF32(float a, float b) {
-    return !std::isnan(a) && !std::isnan(b) && (a < b);
-}
+static bool OrderedLtF32(float a, float b) { return !std::isnan(a) && !std::isnan(b) && (a < b); }
 
 static float MaxSsCompat(float a, float b) {
     if (std::isnan(a) || std::isnan(b)) {
@@ -1696,18 +1692,19 @@ static StyleFrameScaleState ResolveStyleFrameScaleFromCachedStyle(const OrbisFon
 
 namespace {
 
-static inline RenderSurfaceSystemUse* GetSurfaceSystemUse(
-    Libraries::Font::OrbisFontRenderSurface* surf) {
+static inline RenderSurfaceSystemUse*
+GetSurfaceSystemUse(Libraries::Font::OrbisFontRenderSurface* surf) {
     return surf ? reinterpret_cast<RenderSurfaceSystemUse*>(surf->reserved_q) : nullptr;
 }
-static inline const RenderSurfaceSystemUse* GetSurfaceSystemUse(
-    const Libraries::Font::OrbisFontRenderSurface* surf) {
+static inline const RenderSurfaceSystemUse*
+GetSurfaceSystemUse(const Libraries::Font::OrbisFontRenderSurface* surf) {
     return surf ? reinterpret_cast<const RenderSurfaceSystemUse*>(surf->reserved_q) : nullptr;
 }
 
-static const StyleStateBlock* ResolveSurfaceStyleState(
-    const StyleStateBlock* cached_style_state, const Libraries::Font::OrbisFontRenderSurface* surf,
-    const RenderSurfaceSystemUse* sys, StyleStateBlock& tmp_out) {
+static const StyleStateBlock*
+ResolveSurfaceStyleState(const StyleStateBlock* cached_style_state,
+                         const Libraries::Font::OrbisFontRenderSurface* surf,
+                         const RenderSurfaceSystemUse* sys, StyleStateBlock& tmp_out) {
     if (!cached_style_state) {
         return nullptr;
     }
@@ -1944,9 +1941,10 @@ static s32 RenderGlyphIndexToSurface(FontObj& font_obj, u32 glyph_index,
     return ORBIS_OK;
 }
 
-static StyleFrameScaleState ResolveMergedStyleFrameScale(
-    const Libraries::Font::OrbisFontStyleFrame* base,
-    const Libraries::Font::OrbisFontStyleFrame* over, const FontState& st) {
+static StyleFrameScaleState
+ResolveMergedStyleFrameScale(const Libraries::Font::OrbisFontStyleFrame* base,
+                             const Libraries::Font::OrbisFontStyleFrame* over,
+                             const FontState& st) {
     StyleFrameScaleState resolved = ResolveStyleFrameScale(base, st);
     if (!ValidateStyleFramePtr(over)) {
         return resolved;
@@ -2103,13 +2101,7 @@ s32 RenderCharGlyphImageCore(Libraries::Font::OrbisFontHandle fontHandle, u32 co
         if (force_diag || count < 5) {
             if (!force_diag) {
                 ++count;
-            }
-            LOG_DEBUG(Lib_Font,
-                      "SysfontRender: handle={} code=U+{:04X} mapped=U+{:04X} font_id={} "
-                      "scale_unit={} dpi_x={} dpi_y={} scale_w={} scale_h={} sys_scale_factor={} "
-                      "shift_y_units={}",
-                      static_cast<const void*>(fontHandle), code, mapped_code, font_id, scale_unit,
-                      dpi_x, dpi_y, scale_x_in, scale_y_in, sys_scale_factor, shift_y_units);
+            };
         }
     }
 
@@ -2553,9 +2545,7 @@ static s64 round_fixed_mul_s64(s64 value, s64 fixed_16_16) {
     return static_cast<s64>(static_cast<s32>(static_cast<u64>(tmp) >> 16));
 }
 
-static float to_f26dot6_s64(s64 value) {
-    return static_cast<float>(value) * kOneOver64;
-}
+static float to_f26dot6_s64(s64 value) { return static_cast<float>(value) * kOneOver64; }
 
 static constexpr u32 MakeTag(char a, char b, char c, char d) {
     return (static_cast<u32>(static_cast<u8>(a)) << 24) |
@@ -2784,9 +2774,7 @@ const Libraries::FontFt::OrbisFontRendererSelection* GetRendererSelectionTable()
     return &g_renderer_table;
 }
 
-u32 PS4_SYSV_ABI LibraryGetPixelResolutionStub() {
-    return 0x40;
-}
+u32 PS4_SYSV_ABI LibraryGetPixelResolutionStub() { return 0x40; }
 
 s32 PS4_SYSV_ABI LibraryInitStub(const void* memory, void* library) {
     if (!memory || !library) {

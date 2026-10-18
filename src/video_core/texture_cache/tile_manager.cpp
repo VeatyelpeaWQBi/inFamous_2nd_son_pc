@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "video_core/texture_cache/tile_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -8,7 +9,6 @@
 #include "video_core/texture_cache/image.h"
 #include "video_core/texture_cache/image_info.h"
 #include "video_core/texture_cache/image_view.h"
-#include "video_core/texture_cache/tile_manager.h"
 
 #include "video_core/host_shaders/tiling_macro_128_comp.h"
 #include "video_core/host_shaders/tiling_macro_16_comp.h"
@@ -169,8 +169,6 @@ vk::Pipeline TileManager::GetTilingPipeline(const ImageInfo& info, bool is_tiler
 
     const auto module_name = fmt::format("{}_{} {}", magic_enum::enum_name(info.tile_mode),
                                          info.num_bits, is_tiler ? "tiler" : "detiler");
-    LOG_INFO(Render_Vulkan, "Creating tiling pipeline {}", module_name);
-    Vulkan::SetObjectName(device, module, module_name);
 
     const vk::PipelineShaderStageCreateInfo shader_ci = {
         .stage = vk::ShaderStageFlagBits::eCompute,
@@ -268,17 +266,6 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
     cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pl_layout, 0, set_writes);
 
     const auto dim_x = (info.guest_size / (info.num_bits / 8)) / 64;
-    if (Vulkan::GpuCrashDiag::Enabled()) {
-        Vulkan::GpuCrashDiag::Mark(
-            cmdbuf, scheduler.CurrentTick(),
-            Vulkan::GpuCrashDiag::Entry{
-                .kind = Vulkan::GpuCrashDiag::Kind::Detile,
-                .count = static_cast<u32>(dim_x),
-                .dims = {info.size.width, info.size.height,
-                         info.props.is_volume ? info.size.depth : info.resources.layers},
-                .address = info.guest_address,
-            });
-    }
     cmdbuf.dispatch(dim_x, 1, 1);
 
     runtime.AccessBuffer(staging.buffer, staging.offset, info.guest_size,
@@ -371,17 +358,6 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
     cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pl_layout, 0, set_writes);
 
     const auto dim_x = (info.guest_size / (info.num_bits / 8)) / 64;
-    if (Vulkan::GpuCrashDiag::Enabled()) {
-        Vulkan::GpuCrashDiag::Mark(
-            cmdbuf, scheduler.CurrentTick(),
-            Vulkan::GpuCrashDiag::Entry{
-                .kind = Vulkan::GpuCrashDiag::Kind::Tile,
-                .count = static_cast<u32>(dim_x),
-                .dims = {info.size.width, info.size.height,
-                         info.props.is_volume ? info.size.depth : info.resources.layers},
-                .address = info.guest_address,
-            });
-    }
     cmdbuf.dispatch(dim_x, 1, 1);
 
     runtime.AccessBuffer(out_buffer, out_offset, info.guest_size,

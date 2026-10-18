@@ -3,7 +3,7 @@
 
 #include <boost/container/small_vector.hpp>
 
-#include "common/perf_stats.h"
+#include "core/runtime_policy.h"
 #include "shader_recompiler/info.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_driver_cache.h"
@@ -19,12 +19,10 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
                                  SerializationSupport& sdata, bool preloading /*=false*/,
                                  bool defer_compile /*=false*/,
                                  std::span<const u32> cached_image_bindings /*={}*/)
-    : Pipeline{instance, scheduler, desc_heap, profile, pipeline_cache, true},
-      restored{preloading}, compute_key{compute_key_}, module{module_},
-      vk_pipeline_cache{pipeline_cache} {
+    : Pipeline{instance, scheduler, desc_heap, profile, pipeline_cache, true}, restored{preloading},
+      compute_key{compute_key_}, module{module_}, vk_pipeline_cache{pipeline_cache} {
     auto& info = stages[int(Shader::SwStage::Compute)];
     info = &info_;
-    const auto debug_str = GetDebugString();
 
     u32 binding{};
     boost::container::small_vector<vk::DescriptorSetLayoutBinding, 32> bindings;
@@ -100,7 +98,6 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
     ASSERT_MSG(layout_result == vk::Result::eSuccess,
                "Failed to create compute pipeline layout: {}", vk::to_string(layout_result));
     pipeline_layout = std::move(layout);
-    SetObjectName(device, *pipeline_layout, "Compute PipelineLayout {}", debug_str);
 
     // Everything that reads the guest state is done above, on the command processor thread.
     // Creating the pipeline object only needs the module and the layout, so it can be deferred
@@ -112,16 +109,9 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
 
 ComputePipeline::~ComputePipeline() = default;
 
-void ComputePipeline::NoteFirstUse() {
-    if (!first_use_recorded) {
-        first_use_recorded = true;
-        Common::Perf::Add(restored ? Common::Perf::ComputeWarmFirstUses
-                                  : Common::Perf::ComputeColdFirstUses);
-    }
-}
+
 
 void ComputePipeline::Compile() {
-    const u64 start_ns = Common::Perf::NowNs();
     const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_size_ci = {
         .requiredSubgroupSize = 64,
     };
@@ -143,14 +133,9 @@ void ComputePipeline::Compile() {
     ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create compute pipeline: {}",
                vk::to_string(pipeline_result));
     pipeline = std::move(pipe);
-    SetObjectName(device, *pipeline, "Compute Pipeline {}", GetDebugString());
-    Common::Perf::Add(Common::Perf::PipelineCreates);
-    const u64 elapsed = Common::Perf::NowNs() - start_ns;
-    Common::Perf::Add(Common::Perf::PipelineCreateNs, elapsed);
-    Common::Perf::Add(Common::Perf::ComputeDriverCompiles);
-    Common::Perf::Add(Common::Perf::ComputeDriverCompileNs, elapsed);
-    if (driver_cache)
+    if (driver_cache) {
         driver_cache->Compiled();
+    }
     MarkReady();
 }
 

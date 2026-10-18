@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "sdl_mouse.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/kernel/time.h"
-#include "sdl_mouse.h"
 
 namespace Libraries::Mouse {
 
@@ -44,7 +44,6 @@ bool PushSDLEvent(SDL_Event const& e) {
     default:
         return false;
     case SDL_EVENT_MOUSE_ADDED: {
-        LOG_INFO(Lib_Mouse, "Mouse added, id: {}", e.mdevice.which);
         u64 index = GetIndexFromSdlHandle(e.mdevice.which);
         if (index != 2) {
             return true;
@@ -56,7 +55,6 @@ bool PushSDLEvent(SDL_Event const& e) {
         break;
     }
     case SDL_EVENT_MOUSE_REMOVED: {
-        LOG_INFO(Lib_Mouse, "Mouse removed, id: {}", e.mdevice.which);
         if (g_is_merged_mode) {
             break;
         }
@@ -75,7 +73,6 @@ bool PushSDLEvent(SDL_Event const& e) {
         if (index == 2) {
             index = GetIndexFromSdlHandle(-1);
             if (index < 2) {
-                LOG_INFO(Lib_Mouse, "mouse {} = sdl id {}", index, e.motion.which);
                 mouse_sdl_handles[index] = e.motion.which;
             } else {
                 return false;
@@ -92,8 +89,9 @@ bool PushSDLEvent(SDL_Event const& e) {
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
         u64 index = GetIndexFromSdlHandle(e.button.which);
-        if (index >= 2)
+        if (index >= 2) {
             return false;
+        }
 
         auto& s = current_state[index];
         s.x_axis = 0;
@@ -107,8 +105,9 @@ bool PushSDLEvent(SDL_Event const& e) {
     }
     case SDL_EVENT_MOUSE_BUTTON_UP: {
         u64 index = GetIndexFromSdlHandle(e.button.which);
-        if (index >= 2)
+        if (index >= 2) {
             return false;
+        }
 
         auto& s = current_state[index];
         s.x_axis = 0;
@@ -122,8 +121,9 @@ bool PushSDLEvent(SDL_Event const& e) {
     }
     case SDL_EVENT_MOUSE_WHEEL: {
         u64 index = GetIndexFromSdlHandle(e.wheel.which);
-        if (index >= 2)
+        if (index >= 2) {
             return false;
+        }
 
         auto& s = current_state[index];
         s.x_axis = 0;

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/sysmodule/sysmodule_internal.h"
 #include "common/assert.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
@@ -21,7 +22,6 @@
 #include "core/libraries/rtc/rtc.h"
 #include "core/libraries/rudp/rudp.h"
 #include "core/libraries/sysmodule/sysmodule_error.h"
-#include "core/libraries/sysmodule/sysmodule_internal.h"
 #include "core/libraries/sysmodule/sysmodule_table.h"
 #include "core/libraries/system_gesture/system_gesture.h"
 #include "core/linker.h"
@@ -196,8 +196,6 @@ s32 loadModuleInternal(s32 index, s32 argc, const void* argv, s32* res_out) {
                 sys_module_path / game_info->GameSerial() / mod_name;
             if (std::filesystem::exists(game_specific_module_path)) {
                 // The requested module is present in the game-specific sys_modules, load it.
-                LOG_INFO(Loader, "Loading {} from game serial file {}", mod_name,
-                         game_info->GameSerial());
                 s32 handle = linker->LoadAndStartModule(game_specific_module_path, argc, argv,
                                                         &start_result);
                 ASSERT_MSG(handle >= 0, "Failed to load module {}", mod_name);
@@ -266,7 +264,6 @@ s32 loadModuleInternal(s32 index, s32 argc, const void* argv, s32* res_out) {
         // Allowed module, check if it exists
         const auto& module_path = sys_module_path / mod_name;
         if (std::filesystem::exists(module_path)) {
-            LOG_INFO(Loader, "Loading {}", mod_name);
             s32 handle = linker->LoadAndStartModule(module_path, argc, argv, &start_result);
             ASSERT_MSG(handle >= 0, "Failed to load module {}", mod_name);
             mod.handle = handle;
@@ -274,14 +271,11 @@ s32 loadModuleInternal(s32 index, s32 argc, const void* argv, s32* res_out) {
             // Allowed LLE that isn't present, log message
             auto& [name, init_func] = *it;
             if (init_func) {
-                LOG_INFO(Loader, "Can't Load {} switching to HLE", mod_name);
                 init_func(&linker->GetHLESymbols());
 
                 // When loading HLEs, we need to relocate imports
                 // This ensures later module loads can see our HLE functions.
                 linker->RelocateAllImports();
-            } else {
-                LOG_INFO(Loader, "No HLE available for {} module", mod_name);
             }
             mod.handle = stub_handle++;
         }
@@ -317,7 +311,7 @@ s32 loadModule(s32 id, s32 argc, const void* argv, s32* res_out) {
         return ORBIS_SYSMODULE_LOCK_FAILED;
     }
 
-    LOG_INFO(Lib_SysModule, "Loading {}", requested_module.name);
+    ;
 
     // Loop through every module that requires loading, in reverse order
     for (s64 i = requested_module.num_to_load - 1; i >= 0; i--) {

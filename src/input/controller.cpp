@@ -148,20 +148,20 @@ void GameController::SetMouseInput(const MouseSample& sample, bool roll_mode) {
     m_mouse_motion_active = motion;
     m_mouse_touch_active = touch;
     m_mouse_trigger = motion && sample.trigger;
-    m_mouse_motion_report = m_mouse_motion.Step(Libraries::Kernel::sceKernelGetProcessTime(),
-        motion, sample.center, sample.dx, sample.dy, 0.003f, roll_mode);
+    m_mouse_motion_report =
+        m_mouse_motion.Step(Libraries::Kernel::sceKernelGetProcessTime(), motion, sample.center,
+                            sample.dx, sample.dy, 0.003f, roll_mode);
     const u64 now = Libraries::Kernel::sceKernelGetProcessTime();
-    if (motion && (changed_mode || now-m_mouse_motion_log_time >= 1000000)) {
+    if (motion && (changed_mode || now - m_mouse_motion_log_time >= 1000000)) {
         const auto& q = m_mouse_motion_report.orientation;
         const auto& a = m_mouse_motion_report.acceleration;
         const auto& w = m_mouse_motion_report.angular_velocity;
-        LOG_DEBUG(Input, "Mouse motion report: q={},{},{},{} g={},{},{} rad/s={},{},{} R2={} sensors={}",
-                  q[0], q[1], q[2], q[3], a[0], a[1], a[2], w[0], w[1], w[2],
-                  m_mouse_trigger, m_motion_sensor_enabled);
         m_mouse_motion_log_time = now;
     }
     if (touch && sample.touch != m_last_mouse_touch) {
-        if (m_pending_mouse_touches.size() == 32) m_pending_mouse_touches.pop_front();
+        if (m_pending_mouse_touches.size() == 32) {
+            m_pending_mouse_touches.pop_front();
+        }
         m_pending_mouse_touches.push_back(sample.touch);
         m_last_mouse_touch = sample.touch;
     }
@@ -187,12 +187,18 @@ State GameController::ReportStateLocked(bool advance_touch) {
         const auto& w = m_mouse_motion_report.angular_velocity;
         report.orientation = {q[0], q[1], q[2], q[3]};
         // libScePad scales SDL acceleration by 0.098. The ported model already uses g.
-        report.acceleration = {a[0]/0.098f, a[1]/0.098f, a[2]/0.098f};
+        report.acceleration = {a[0] / 0.098f, a[1] / 0.098f, a[2] / 0.098f};
         report.angularVelocity = {w[0], w[1], w[2]};
         if (m_angular_velocity_deadband) {
-            if (std::abs(report.angularVelocity.x) < 0.001f) report.angularVelocity.x = 0;
-            if (std::abs(report.angularVelocity.y) < 0.001f) report.angularVelocity.y = 0;
-            if (std::abs(report.angularVelocity.z) < 0.001f) report.angularVelocity.z = 0;
+            if (std::abs(report.angularVelocity.x) < 0.001f) {
+                report.angularVelocity.x = 0;
+            }
+            if (std::abs(report.angularVelocity.y) < 0.001f) {
+                report.angularVelocity.y = 0;
+            }
+            if (std::abs(report.angularVelocity.z) < 0.001f) {
+                report.angularVelocity.z = 0;
+            }
         }
     }
     if (!m_motion_sensor_enabled) {
@@ -218,9 +224,12 @@ State GameController::ReportStateLocked(bool advance_touch) {
             const auto& contact = m_mouse_touch.contacts[i];
             report.touchpad[i] = {contact.id, i < m_mouse_touch.count, contact.x, contact.y};
         }
-        if (m_mouse_touch.clicked) report.buttonsState |= OrbisPadButtonDataOffset::TouchPad;
-        report.touch_time_since_held_down = m_mouse_touch_start
-            ? Libraries::Kernel::sceKernelGetProcessTime()-m_mouse_touch_start : 0;
+        if (m_mouse_touch.clicked) {
+            report.buttonsState |= OrbisPadButtonDataOffset::TouchPad;
+        }
+        report.touch_time_since_held_down =
+            m_mouse_touch_start ? Libraries::Kernel::sceKernelGetProcessTime() - m_mouse_touch_start
+                                : 0;
     }
     return report;
 }
@@ -331,13 +340,9 @@ void GameController::SetLightBarRGB(u8 const r, u8 const g, u8 const b) {
     }
 }
 
-void GameController::SetLightBarRGB(Colour const c) {
-    SetLightBarRGB(c.r, c.g, c.b);
-}
+void GameController::SetLightBarRGB(Colour const c) { SetLightBarRGB(c.r, c.g, c.b); }
 
-Colour GameController::GetLightBarRGB() {
-    return colour;
-}
+Colour GameController::GetLightBarRGB() { return colour; }
 
 void GameController::PollLightColour() {
     if (m_sdl_gamepad != nullptr) {
@@ -375,7 +380,6 @@ void GameControllers::TryOpenSDLControllers() {
     using namespace Libraries::UserService;
     int controller_count;
     SDL_JoystickID* new_joysticks = SDL_GetGamepads(&controller_count);
-    LOG_INFO(Input, "{} controllers are currently connected", controller_count);
 
     std::unordered_set<SDL_JoystickID> assigned_ids;
     std::array<bool, 4> slot_taken{false, false, false, false};
@@ -404,8 +408,9 @@ void GameControllers::TryOpenSDLControllers() {
 
     for (int j = 0; j < controller_count; j++) {
         SDL_JoystickID id = new_joysticks[j];
-        if (assigned_ids.contains(id))
+        if (assigned_ids.contains(id)) {
             continue;
+        }
 
         SDL_Gamepad* pad = SDL_OpenGamepad(id);
         if (!pad) {
@@ -416,13 +421,10 @@ void GameControllers::TryOpenSDLControllers() {
             if (!slot_taken[i]) {
                 auto u = UserManagement.GetUserByPlayerIndex(i + 1);
                 if (!u) {
-                    LOG_INFO(Input, "User {} not found", i + 1);
                     continue; // for now, if you don't specify who Player N is in the config,
                               // Player N won't be registered at all
                 }
                 auto* c = controllers[i];
-                LOG_INFO(Input, "Gamepad registered for slot {}! Handle: {}", i,
-                         SDL_GetGamepadID(pad));
                 slot_taken[i] = true;
                 c->user_id = u->user_id;
                 UserManagement.LoginUser(u, i + 1);
@@ -431,7 +433,6 @@ void GameControllers::TryOpenSDLControllers() {
                     if (SDL_SetGamepadSensorEnabled(c->m_sdl_gamepad, SDL_SENSOR_GYRO, true)) {
                         const float poll_rate =
                             SDL_GetGamepadSensorDataRate(c->m_sdl_gamepad, SDL_SENSOR_GYRO);
-                        LOG_INFO(Input, "Gyro initialized, poll rate: {}", poll_rate);
                     } else {
                         LOG_ERROR(Input, "Failed to initialize gyro controls for gamepad {}",
                                   c->user_id);
@@ -439,7 +440,6 @@ void GameControllers::TryOpenSDLControllers() {
                     if (SDL_SetGamepadSensorEnabled(c->m_sdl_gamepad, SDL_SENSOR_ACCEL, true)) {
                         const float poll_rate =
                             SDL_GetGamepadSensorDataRate(c->m_sdl_gamepad, SDL_SENSOR_ACCEL);
-                        LOG_INFO(Input, "Accel initialized, poll rate: {}", poll_rate);
                     } else {
                         LOG_ERROR(Input, "Failed to initialize accel controls for gamepad {}",
                                   c->user_id);

@@ -1,22 +1,18 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
+#include "shader_recompiler/frontend/control_flow_graph.h"
 #include "common/assert.h"
 #include "common/logging/log.h"
-#include "shader_recompiler/frontend/control_flow_graph.h"
 #include "shader_recompiler/ir/condition.h"
+#include <algorithm>
 
 namespace Shader::Gcn {
 
 struct Compare {
-    bool operator()(const Block& lhs, u32 rhs) const noexcept {
-        return lhs.begin < rhs;
-    }
+    bool operator()(const Block& lhs, u32 rhs) const noexcept { return lhs.begin < rhs; }
 
-    bool operator()(u32 lhs, const Block& rhs) const noexcept {
-        return lhs < rhs.begin;
-    }
+    bool operator()(u32 lhs, const Block& rhs) const noexcept { return lhs < rhs.begin; }
 
     bool operator()(const Block& lhs, const Block& rhs) const noexcept {
         return lhs.begin < rhs.begin;
@@ -80,14 +76,17 @@ static std::optional<u32> ResolveSetPcTarget(std::span<const GcnInst> list, u32 
 
     if (getpc.opcode != Opcode::S_GETPC_B64 ||
         !(arith.opcode == Opcode::S_ADD_U32 || arith.opcode == Opcode::S_SUB_U32) ||
-        setpc.opcode != Opcode::S_SETPC_B64)
+        setpc.opcode != Opcode::S_SETPC_B64) {
         return std::nullopt;
+    }
 
-    if (getpc.dst[0].code != setpc.src[0].code || arith.dst[0].code != setpc.src[0].code)
+    if (getpc.dst[0].code != setpc.src[0].code || arith.dst[0].code != setpc.src[0].code) {
         return std::nullopt;
+    }
 
-    if (arith.src_count < 2 || arith.src[1].field != OperandField::LiteralConst)
+    if (arith.src_count < 2 || arith.src[1].field != OperandField::LiteralConst) {
         return std::nullopt;
+    }
 
     const u32 imm = arith.src[1].code;
 
@@ -97,7 +96,6 @@ static std::optional<u32> ResolveSetPcTarget(std::span<const GcnInst> list, u32 
     const u32 base_pc = pc_map[setpc_index - 3] + getpc.length;
 
     const u32 result_pc = static_cast<u32>(static_cast<s32>(base_pc) + signed_offset);
-    LOG_DEBUG(Render_Recompiler, "SetPC target: {} + {} = {}", base_pc, signed_offset, result_pc);
     return result_pc & ~0x3u;
 }
 

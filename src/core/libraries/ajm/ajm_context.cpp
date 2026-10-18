@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "core/libraries/ajm/ajm_context.h"
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "common/thread.h"
 #include "core/libraries/ajm/ajm.h"
 #include "core/libraries/ajm/ajm_at9.h"
-#include "core/libraries/ajm/ajm_context.h"
 #include "core/libraries/ajm/ajm_error.h"
 #include "core/libraries/ajm/ajm_instance.h"
 #include "core/libraries/ajm/ajm_instance_statistics.h"
@@ -76,8 +76,6 @@ void AjmContext::WorkerThread(std::stop_token stop) {
 void AjmContext::ProcessBatch(u32 id, std::span<AjmJob> jobs) {
     // Perform operation requested by control flags.
     for (auto& job : jobs) {
-        LOG_TRACE(Lib_Ajm, "Processing job {} for instance {}. flags = {:#x}", id, job.instance_id,
-                  job.flags.raw);
 
         if (job.instance_id == AJM_INSTANCE_STATISTICS) {
             AjmInstanceStatistics::Getinstance().ExecuteJob(job);
@@ -179,7 +177,6 @@ s32 AjmContext::InstanceCreate(AjmCodecType codec_type, AjmInstanceFlags flags, 
     }
     *out_instance = opt_index.value() | (static_cast<u32>(codec_type) << 14);
 
-    LOG_INFO(Lib_Ajm, "instance = {}", *out_instance);
     return ORBIS_OK;
 }
 

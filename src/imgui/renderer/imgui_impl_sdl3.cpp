@@ -3,14 +3,13 @@
 
 // Based on imgui_impl_sdl3.cpp from Dear ImGui repository
 
-#include <imgui.h>
-#include "core/debug_state.h"
+#include "imgui_impl_sdl3.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
-#include "imgui_impl_sdl3.h"
 #include "input/controller.h"
 #include "input/input_handler.h"
 #include "sdl_window.h"
+#include <imgui.h>
 
 // SDL
 #include <SDL3/SDL.h>
@@ -31,7 +30,6 @@ struct SdlData {
     SDL_Window* window{};
     SDL_WindowID window_id{};
     Uint64 time{};
-    Uint64 nonReusedtime{};
     const char* clipboard_text_data{};
 
     // IME handling
@@ -52,9 +50,6 @@ struct SdlData {
     bool want_update_gamepads_list{};
 
     // Framerate counting (based on ImGui impl)
-    std::array<float, 60> framerateSecPerFrame;
-    int framerateSecPerFrameIdx{};
-    float framerateSecPerFrameAcc{};
 };
 
 // Backend data stored in io.BackendPlatformUserData to allow support for multiple Dear ImGui
@@ -66,16 +61,15 @@ static SdlData* GetBackendData() {
 
 static const char* GetClipboardText(ImGuiContext*) {
     SdlData* bd = GetBackendData();
-    if (bd->clipboard_text_data)
+    if (bd->clipboard_text_data) {
         SDL_free((void*)bd->clipboard_text_data);
+    }
     const char* sdl_clipboard_text = SDL_GetClipboardText();
     bd->clipboard_text_data = sdl_clipboard_text;
     return bd->clipboard_text_data;
 }
 
-static void SetClipboardText(ImGuiContext*, const char* text) {
-    SDL_SetClipboardText(text);
-}
+static void SetClipboardText(ImGuiContext*, const char* text) { SDL_SetClipboardText(text); }
 
 static void PlatformSetImeData(ImGuiContext*, ImGuiViewport* viewport, ImGuiPlatformImeData* data) {
     SdlData* bd = GetBackendData();
@@ -386,8 +380,9 @@ bool ProcessEvent(const SDL_Event* event) {
 
     switch (event->type) {
     case SDL_EVENT_MOUSE_MOTION: {
-        if (GetViewportForWindowId(event->motion.windowID) == NULL)
+        if (GetViewportForWindowId(event->motion.windowID) == NULL) {
             return false;
+        }
         ImVec2 mouse_pos((float)event->motion.x, (float)event->motion.y);
         io.AddMouseSourceEvent(event->motion.which == SDL_TOUCH_MOUSEID
                                    ? ImGuiMouseSource_TouchScreen
@@ -403,8 +398,9 @@ bool ProcessEvent(const SDL_Event* event) {
         return true;
     }
     case SDL_EVENT_MOUSE_WHEEL: {
-        if (GetViewportForWindowId(event->wheel.windowID) == NULL)
+        if (GetViewportForWindowId(event->wheel.windowID) == NULL) {
             return false;
+        }
         // IMGUI_DEBUG_LOG("wheel %.2f %.2f, precise %.2f %.2f\n", (float)event->wheel.x,
         // (float)event->wheel.y, event->wheel.preciseX, event->wheel.preciseY);
         float wheel_x = -event->wheel.x;
@@ -420,8 +416,9 @@ bool ProcessEvent(const SDL_Event* event) {
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP: {
-        if (GetViewportForWindowId(event->button.windowID) == NULL)
+        if (GetViewportForWindowId(event->button.windowID) == NULL) {
             return false;
+        }
         int mouse_button = -1;
         if (event->button.button == SDL_BUTTON_LEFT) {
             mouse_button = 0;
@@ -438,8 +435,9 @@ bool ProcessEvent(const SDL_Event* event) {
         if (event->button.button == SDL_BUTTON_X2) {
             mouse_button = 4;
         }
-        if (mouse_button == -1)
+        if (mouse_button == -1) {
             break;
+        }
         io.AddMouseSourceEvent(event->button.which == SDL_TOUCH_MOUSEID
                                    ? ImGuiMouseSource_TouchScreen
                                    : ImGuiMouseSource_Mouse);
@@ -450,15 +448,17 @@ bool ProcessEvent(const SDL_Event* event) {
         return true;
     }
     case SDL_EVENT_TEXT_INPUT: {
-        if (GetViewportForWindowId(event->text.windowID) == NULL)
+        if (GetViewportForWindowId(event->text.windowID) == NULL) {
             return false;
+        }
         io.AddInputCharactersUTF8(event->text.text);
         return true;
     }
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
-        if (GetViewportForWindowId(event->key.windowID) == NULL)
+        if (GetViewportForWindowId(event->key.windowID) == NULL) {
             return false;
+        }
         // IMGUI_DEBUG_LOG("SDL_EVENT_KEY_%d: key=%d, scancode=%d, mod=%X\n", (event->type ==
         // SDL_EVENT_KEY_DOWN) ? "DOWN" : "UP", event->key.key, event->key.scancode,
         // event->key.mod);
@@ -472,8 +472,9 @@ bool ProcessEvent(const SDL_Event* event) {
         return true;
     }
     case SDL_EVENT_WINDOW_MOUSE_ENTER: {
-        if (GetViewportForWindowId(event->window.windowID) == NULL)
+        if (GetViewportForWindowId(event->window.windowID) == NULL) {
             return false;
+        }
         bd->mouse_window_id = event->window.windowID;
         bd->mouse_pending_leave_frame = 0;
         bd->lastCursorMoveTime = bd->time;
@@ -486,16 +487,18 @@ bool ProcessEvent(const SDL_Event* event) {
     //   issue #5012 for details.
     // FIXME: Unconfirmed whether this is still needed with SDL3.
     case SDL_EVENT_WINDOW_MOUSE_LEAVE: {
-        if (GetViewportForWindowId(event->window.windowID) == NULL)
+        if (GetViewportForWindowId(event->window.windowID) == NULL) {
             return false;
+        }
         bd->mouse_pending_leave_frame = ImGui::GetFrameCount() + 1;
         bd->lastCursorMoveTime = bd->time;
         return true;
     }
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
     case SDL_EVENT_WINDOW_FOCUS_LOST: {
-        if (GetViewportForWindowId(event->window.windowID) == NULL)
+        if (GetViewportForWindowId(event->window.windowID) == NULL) {
             return false;
+        }
         io.AddFocusEvent(event->type == SDL_EVENT_WINDOW_FOCUS_GAINED);
         return true;
     }
@@ -596,8 +599,9 @@ void Shutdown() {
     if (bd->clipboard_text_data) {
         SDL_free((void*)bd->clipboard_text_data);
     }
-    for (ImGuiMouseCursor cursor_n = 0; cursor_n < ImGuiMouseCursor_COUNT; cursor_n++)
+    for (ImGuiMouseCursor cursor_n = 0; cursor_n < ImGuiMouseCursor_COUNT; cursor_n++) {
         SDL_DestroyCursor(bd->mouse_cursors[cursor_n]);
+    }
     CloseGamepads();
 
     io.BackendPlatformName = nullptr;
@@ -622,8 +626,9 @@ static void UpdateMouseData() {
     if (is_app_focused) {
         // (Optional) Set OS mouse position from Dear ImGui if requested (rarely used, only when
         // ImGuiConfigFlags_NavEnableSetMousePos is enabled by user)
-        if (io.WantSetMousePos)
+        if (io.WantSetMousePos) {
             SDL_WarpMouseInWindow(bd->window, io.MousePos.x, io.MousePos.y);
+        }
 
         // (Optional) Fallback to provide mouse position when focused (SDL_EVENT_MOUSE_MOTION
         // already provides this when hovered or captured)
@@ -652,8 +657,9 @@ static void UpdateMouseData() {
 
 static void UpdateMouseCursor() {
     ImGuiIO& io = ImGui::GetIO();
-    if (io.ConfigFlags & ImGuiConfigFlags_NoMouseCursorChange)
+    if (io.ConfigFlags & ImGuiConfigFlags_NoMouseCursorChange) {
         return;
+    }
     SdlData* bd = GetBackendData();
 
     s16 cursorState = EmulatorSettings.GetCursorState();
@@ -690,9 +696,11 @@ static void UpdateMouseCursor() {
 
 static void CloseGamepads() {
     SdlData* bd = GetBackendData();
-    if (bd->gamepad_mode != ImGui_ImplSDL3_GamepadMode_Manual)
-        for (SDL_Gamepad* gamepad : bd->gamepads)
+    if (bd->gamepad_mode != ImGui_ImplSDL3_GamepadMode_Manual) {
+        for (SDL_Gamepad* gamepad : bd->gamepads) {
             SDL_CloseGamepad(gamepad);
+        }
+    }
     bd->gamepads.resize(0);
 }
 
@@ -702,8 +710,9 @@ void SetGamepadMode(GamepadMode mode, SDL_Gamepad** manual_gamepads_array,
     CloseGamepads();
     if (mode == ImGui_ImplSDL3_GamepadMode_Manual) {
         IM_ASSERT(manual_gamepads_array != nullptr && manual_gamepads_count > 0);
-        for (int n = 0; n < manual_gamepads_count; n++)
+        for (int n = 0; n < manual_gamepads_count; n++) {
             bd->gamepads.push_back(manual_gamepads_array[n]);
+        }
     } else {
         IM_ASSERT(manual_gamepads_array == nullptr && manual_gamepads_count <= 0);
         bd->want_update_gamepads_list = true;
@@ -714,21 +723,21 @@ void SetGamepadMode(GamepadMode mode, SDL_Gamepad** manual_gamepads_array,
 static void UpdateGamepadButton(SdlData* bd, ImGuiIO& io, ImGuiKey key,
                                 SDL_GamepadButton button_no) {
     bool merged_value = false;
-    for (SDL_Gamepad* gamepad : bd->gamepads)
+    for (SDL_Gamepad* gamepad : bd->gamepads) {
         merged_value |= SDL_GetGamepadButton(gamepad, button_no) != 0;
+    }
     io.AddKeyEvent(key, merged_value);
 }
 
-static inline float Saturate(float v) {
-    return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v;
-}
+static inline float Saturate(float v) { return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }
 static void UpdateGamepadAnalog(SdlData* bd, ImGuiIO& io, ImGuiKey key, SDL_GamepadAxis axis_no,
                                 float v0, float v1) {
     float merged_value = 0.0f;
     for (SDL_Gamepad* gamepad : bd->gamepads) {
         float vn = Saturate((float)(SDL_GetGamepadAxis(gamepad, axis_no) - v0) / (float)(v1 - v0));
-        if (merged_value < vn)
+        if (merged_value < vn) {
             merged_value = vn;
+        }
     }
     io.AddKeyAnalogEvent(key, merged_value > 0.1f, merged_value);
 }
@@ -748,22 +757,26 @@ static void UpdateGamepads() {
             CloseGamepads();
             int sdl_gamepads_count = 0;
             const SDL_JoystickID* sdl_gamepads = SDL_GetGamepads(&sdl_gamepads_count);
-            for (int n = 0; n < sdl_gamepads_count; n++)
+            for (int n = 0; n < sdl_gamepads_count; n++) {
                 if (SDL_Gamepad* gamepad = SDL_OpenGamepad(sdl_gamepads[n])) {
                     bd->gamepads.push_back(gamepad);
-                    if (bd->gamepad_mode == ImGui_ImplSDL3_GamepadMode_AutoFirst)
+                    if (bd->gamepad_mode == ImGui_ImplSDL3_GamepadMode_AutoFirst) {
                         break;
+                    }
                 }
+            }
             bd->want_update_gamepads_list = false;
         }
     }
 
     // FIXME: Technically feeding gamepad shouldn't depend on this now that they are regular inputs.
-    if ((io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad) == 0)
+    if ((io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad) == 0) {
         return;
+    }
     io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
-    if (bd->gamepads.Size == 0)
+    if (bd->gamepads.Size == 0) {
         return;
+    }
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
 
     // Update gamepad inputs
@@ -816,31 +829,12 @@ void NewFrame(bool is_reusing_frame) {
     // in VMs and Emscripten, see #6189, #6114, #3644)
     static Uint64 frequency = SDL_GetPerformanceFrequency();
     Uint64 current_time = SDL_GetPerformanceCounter();
-    if (current_time <= bd->time)
+    if (current_time <= bd->time) {
         current_time = bd->time + 1;
+    }
     io.DeltaTime = bd->time > 0 ? (float)((double)(current_time - bd->time) / (double)frequency)
                                 : 1.0f / 60.0f;
     bd->time = current_time;
-
-    if (!is_reusing_frame) {
-        if (current_time <= bd->nonReusedtime)
-            current_time = bd->nonReusedtime + 1;
-        float deltaTime =
-            bd->nonReusedtime > 0
-                ? (float)((double)(current_time - bd->nonReusedtime) / (double)frequency)
-                : 1.0f / 60.0f;
-        bd->nonReusedtime = current_time;
-        DebugState.FrameDeltaTime = deltaTime;
-
-        int& frameIdx = bd->framerateSecPerFrameIdx;
-        float& framerateSec = bd->framerateSecPerFrame[frameIdx];
-        float& acc = bd->framerateSecPerFrameAcc;
-        int count = bd->framerateSecPerFrame.size();
-        acc += deltaTime - framerateSec;
-        framerateSec = deltaTime;
-        frameIdx = (frameIdx + 1) % count;
-        DebugState.Framerate = acc > 0.0f ? 1.0f / (acc / (float)count) : FLT_MAX;
-    }
 
     if (bd->mouse_pending_leave_frame && bd->mouse_pending_leave_frame >= ImGui::GetFrameCount() &&
         bd->mouse_buttons_down == 0) {

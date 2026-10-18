@@ -32,22 +32,13 @@ u32 g_peer_netinfo_next_id = 1;
 u32 g_peak_connection_count = 0;
 u32 g_last_assigned_context_id = 0;
 u32 g_connection_id_seed = 0;
-bool g_initialized = false;
 Libraries::Kernel::PthreadMutexT g_mutex_storage{};
 
-void InitSignalingMutex() {
-    NpCommon::sceNpLwMutexInit(&g_mutex_storage, "SceNpSignalingLock", 1);
-}
-void DestroySignalingMutex() {
-    NpCommon::sceNpLwMutexDestroy(&g_mutex_storage);
-}
+void InitSignalingMutex() { NpCommon::sceNpLwMutexInit(&g_mutex_storage, "SceNpSignalingLock", 1); }
+void DestroySignalingMutex() { NpCommon::sceNpLwMutexDestroy(&g_mutex_storage); }
 
-SignalingMutexGuard::SignalingMutexGuard() {
-    NpCommon::sceNpLwMutexLock(&g_mutex_storage);
-}
-SignalingMutexGuard::~SignalingMutexGuard() {
-    NpCommon::sceNpLwMutexUnlock(&g_mutex_storage);
-}
+SignalingMutexGuard::SignalingMutexGuard() { NpCommon::sceNpLwMutexLock(&g_mutex_storage); }
+SignalingMutexGuard::~SignalingMutexGuard() { NpCommon::sceNpLwMutexUnlock(&g_mutex_storage); }
 
 std::multimap<std::chrono::steady_clock::time_point, QueuedDispatch> g_dispatch_queue;
 std::mutex g_dispatch_mutex;
@@ -154,9 +145,7 @@ std::string OnlineIdToString(const OrbisNpOnlineId& online_id_in) {
     return online_id;
 }
 
-std::string OnlineIdFromNpId(const OrbisNpId& np_id) {
-    return OnlineIdToString(np_id.handle);
-}
+std::string OnlineIdFromNpId(const OrbisNpId& np_id) { return OnlineIdToString(np_id.handle); }
 
 OrbisNpId NpIdFromOnlineId(const OrbisNpOnlineId& online_id) {
     OrbisNpId npid{};
@@ -718,8 +707,6 @@ void CloseConnectionAndDispatchDead(s32 conn_id, s32 error_code) {
         fire = true;
     }
     if (fire) {
-        LOG_DEBUG(Lib_NpSignaling, "Connection {} -> DEAD (errorCode={:#x})", conn_id,
-                  static_cast<u32>(error_code));
         DispatchConnectionEvent(conn_id, ORBIS_NP_SIGNALING_EVENT_DEAD, error_code);
         SignalingMutexGuard lock;
         RemoveConnectionLocked(conn_id);
@@ -786,10 +773,7 @@ void EstablishConnection(s32 conn_id, bool peer_activated_hint) {
     if (send_established) {
         Stubs::ControlSendTo(&established_pkt, sizeof(established_pkt), peer_addr, peer_port);
     }
-    if (first_establish) {
-        LOG_DEBUG(Lib_NpSignaling, "Connection {} -> ESTABLISHED ({})", conn_id,
-                  fire_established ? "owner" : "answerer/non-owner");
-    }
+
     if (fire_peer_activated) {
         DispatchPeerActivatedEvent(conn_id);
     }
@@ -819,9 +803,6 @@ void DeactivateConnectionFaithful(s32 conn_id) {
             ci.deactivate_lingering = true;
             CancelStepCalloutLocked(ci);
             ArmTimeoutCalloutLocked(ci, 60'000'000);
-            LOG_DEBUG(Lib_NpSignaling,
-                      "Connection {} deactivated (established) -> 60s keepalive linger before DEAD",
-                      conn_id);
         } else if (!ci.dead_fired) {
             transient_close = true;
         }
@@ -867,8 +848,6 @@ void SendHandshakeLocked(ConnectionInfo& ci, const SignalingHandshake& pkt) {
     }
     ci.last_handshake_send_us = NowUs();
     const int sent = Stubs::SignalingSendTo(&pkt, sizeof(pkt), ci.addr, ci.port);
-    LOG_DEBUG(Lib_NpSignaling, "Handshake[{}] SEND kind={} -> {:#x}:{} ({} bytes, rc={})",
-              ci.conn_id, pkt.kind, ci.addr, sceNetNtohs(ci.port), sizeof(pkt), sent);
 }
 
 } // namespace
@@ -893,9 +872,7 @@ void StartHandshakeInitiator(OrbisNpSignalingConnectionId conn_id) {
         SendHandshakeLocked(ci, offer);
         send = true;
     }
-    if (send) {
-        LOG_DEBUG(Lib_NpSignaling, "Handshake[{}]: -> SENDING_OFFER", conn_id);
-    }
+
 }
 
 void QueueActivationLocked(OrbisNpSignalingConnectionId conn_id, std::string_view peer_online_id,
@@ -944,9 +921,6 @@ void ProcessPendingActivations() {
             it->second.port = peer_port;
             SendActivationRequestLocked(it->second);
             already_established = it->second.state == ConnState::Established;
-            LOG_INFO(Lib_NpSignaling, "connection {} sent local activation to '{}' at {:#x}:{}{}",
-                     act.conn_id, act.peer_online_id, peer_addr, sceNetNtohs(peer_port),
-                     act.start_handshake ? "" : " (existing connection)");
         }
         if (act.start_handshake) {
             StartHandshakeInitiator(act.conn_id);
@@ -1173,8 +1147,6 @@ void SendControlCloseLocked(const ConnectionInfo& ci, ControlReason reason) {
     SignalingControl pkt = MakeControlLocked(ci, ControlKind::Close);
     pkt.reason = static_cast<u16>(reason);
     const int rc = Stubs::ControlSendTo(&pkt, sizeof(pkt), ci.addr, ci.port);
-    LOG_INFO(Lib_NpSignaling, "Control Close SEND: connId={} reason={} dst={:#x}:{} rc={}",
-             ci.conn_id, static_cast<u16>(reason), ci.addr, sceNetNtohs(ci.port), rc);
 }
 
 void HandleControlPacket(u32 from_addr, u16 from_port, const SignalingControl& pkt) {
@@ -1235,9 +1207,6 @@ void HandleControlPacket(u32 from_addr, u16 from_port, const SignalingControl& p
                 ci.npid.handle = ci.online_id;
                 g_connections[conn_id] = std::move(ci);
                 g_npid_to_conn[MakeCtxNpIdKey(ctx_id, g_connections[conn_id].npid)] = conn_id;
-                LOG_INFO(Lib_NpSignaling,
-                         "Control: ActivationRequest from '{}' -> created answerer connection {}",
-                         from_id, conn_id);
             }
             ConnectionInfo& ci = g_connections[conn_id];
             ci.peer_activated = true;
@@ -1254,9 +1223,6 @@ void HandleControlPacket(u32 from_addr, u16 from_port, const SignalingControl& p
             ack_addr = ci.addr;
             ack_port = ci.port;
         } else if (conn_id == 0) {
-            LOG_INFO(Lib_NpSignaling,
-                     "Control RECV ignored: kind={} from='{}' src={:#x}:{} no matching connection",
-                     pkt.kind, from_id, from_addr, sceNetNtohs(from_port));
             return;
         } else if (kind == ControlKind::ActivationAck) {
             ConnectionInfo& ci = g_connections[conn_id];
@@ -1273,10 +1239,6 @@ void HandleControlPacket(u32 from_addr, u16 from_port, const SignalingControl& p
         } else if (kind == ControlKind::Close) {
             ConnectionInfo& ci = g_connections[conn_id];
             const ControlReason reason = static_cast<ControlReason>(pkt.reason);
-            LOG_INFO(Lib_NpSignaling,
-                     "Control Close RECV: connId={} from='{}' reason={} src={:#x}:{} state={}",
-                     conn_id, from_id, pkt.reason, from_addr, sceNetNtohs(from_port),
-                     static_cast<s32>(ci.state));
             if (reason == ControlReason::Deactivate && ci.state == ConnState::Established) {
                 peer_deactivated_conn = conn_id;
             } else {
@@ -1337,8 +1299,6 @@ void SendStunPing(s32 ctx_id) {
     std::memcpy(ping.online_id, online_id.data, ORBIS_NP_ONLINEID_MAX_LENGTH);
     ping.local_ip = Stubs::AdvertisedAddr();
 
-    LOG_DEBUG(Lib_NpSignaling, "ctxId={} online_id='{}' server={:#x}:{} local_ip={:#x}", ctx_id,
-              OnlineIdToString(online_id), server_addr, sceNetNtohs(server_udp), ping.local_ip);
 
     Stubs::SignalingSendTo(&ping, sizeof(ping), server_addr, server_udp);
 }
@@ -1378,10 +1338,12 @@ bool GetPeerAddress(std::string_view online_id, u32* out_addr, u16* out_port) {
     SignalingMutexGuard lock;
     for (const auto& [conn_id, ci] : g_connections) {
         if (OnlineIdEqualsString(ci.online_id, online_id)) {
-            if (out_addr)
+            if (out_addr) {
                 *out_addr = ci.addr;
-            if (out_port)
+            }
+            if (out_port) {
                 *out_port = ci.port;
+            }
             return true;
         }
     }

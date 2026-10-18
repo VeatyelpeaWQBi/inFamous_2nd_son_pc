@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <cstring>
+#include "audioin.h"
+#include "audioin_backend.h"
 #include <SDL3/SDL.h>
 #include <common/logging/log.h>
 #include <core/emulator_settings.h>
-#include "audioin.h"
-#include "audioin_backend.h"
+#include <cstring>
 
 namespace Libraries::AudioIn {
 
 class SDLInPortBackend : public PortInBackend {
-public:
+  public:
     explicit SDLInPortBackend(const PortIn& port) : port(port) {
         SDL_AudioFormat sampleFormat = SDL_AUDIO_S16; // PS4 uses S16 format
 
@@ -25,14 +25,11 @@ public:
         uint32_t devId = 0;
         if (micDevStr == "None") {
             nullDevice = true;
-            LOG_INFO(Lib_AudioIn, "Audio input disabled by configuration");
         } else if (micDevStr == "Default Device") {
             devId = SDL_AUDIO_DEVICE_DEFAULT_RECORDING;
-            LOG_INFO(Lib_AudioIn, "Using default audio input device");
         } else {
             try {
                 devId = static_cast<uint32_t>(std::stoul(micDevStr));
-                LOG_INFO(Lib_AudioIn, "Using audio input device ID: {}", devId);
             } catch (const std::exception& e) {
                 nullDevice = true;
                 LOG_WARNING(Lib_AudioIn, "Invalid device ID '{}', disabling input", micDevStr);
@@ -43,8 +40,6 @@ public:
             stream = SDL_OpenAudioDeviceStream(devId, &fmt, nullptr, nullptr);
             if (stream) {
                 if (SDL_ResumeAudioStreamDevice(stream)) {
-                    LOG_INFO(Lib_AudioIn, "Audio input opened: {} Hz, {} channels, format {}",
-                             port.freq, port.channels_num, static_cast<u32>(port.format));
                 } else {
                     SDL_DestroyAudioStream(stream);
                     stream = nullptr;
@@ -62,7 +57,6 @@ public:
             if (internal_buffer) {
                 // Fill with silence
                 std::memset(internal_buffer, 0, bufferSize);
-                LOG_INFO(Lib_AudioIn, "Created null audio input buffer of {} bytes", bufferSize);
             }
         }
     }
@@ -121,7 +115,7 @@ public:
         }
     }
 
-private:
+  private:
     const PortIn& port;
     SDL_AudioStream* stream = nullptr;
     void* internal_buffer = nullptr;

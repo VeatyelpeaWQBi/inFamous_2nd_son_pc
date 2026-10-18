@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <AL/al.h>
+#include <AL/alc.h>
+#include <alext.h>
 #include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <memory>
 #include <thread>
 #include <vector>
-#include <AL/al.h>
-#include <AL/alc.h>
-#include <alext.h>
 
 // Fallbacks in case the alext.h in use predates these extensions.
 #ifndef ALC_SOFT_output_mode
@@ -26,13 +26,13 @@
 #ifndef AL_SOFT_direct_channels_remix
 #define AL_REMIX_UNMATCHED_SOFT 0x0002
 #endif
-#include <queue>
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/audio/audioout.h"
 #include "core/libraries/audio/audioout_backend.h"
 #include "core/libraries/audio/openal_manager.h"
 #include "core/libraries/kernel/threads.h"
+#include <queue>
 
 // SIMD support detection
 #if defined(__x86_64__) || defined(_M_X64)
@@ -72,7 +72,7 @@ enum ChannelPos : u8 {
 };
 
 class OpenALPortBackend : public PortBackend {
-public:
+  public:
     explicit OpenALPortBackend(const PortOut& port)
         : frame_size(port.format_info.FrameSize()), guest_buffer_size(port.BufferSize()),
           buffer_frames(port.buffer_frames), sample_rate(port.sample_rate),
@@ -155,8 +155,6 @@ public:
         alGetSourcei(source, AL_BUFFERS_QUEUED, &queued);
 
         if (state != AL_PLAYING && queued > 0) {
-            LOG_DEBUG(Lib_AudioOut, "Audio underrun detected (queued: {}), restarting source",
-                      queued);
             alSourcePlay(source);
         }
 
@@ -201,26 +199,19 @@ public:
         ALenum error = alGetError();
         if (error == AL_NO_ERROR) {
             current_gain.store(total_gain, std::memory_order_release);
-            LOG_DEBUG(Lib_AudioOut,
-                      "Set combined audio gain to {:.3f} (channel: {:.3f}, slider: {:.3f})",
-                      total_gain, max_channel_gain, slider_gain);
         } else {
             LOG_ERROR(Lib_AudioOut, "Failed to set OpenAL source gain: {}",
                       GetALErrorString(error));
         }
     }
 
-    u64 GetLastOutputTime() const {
-        return last_output_time.load(std::memory_order_acquire);
-    }
+    u64 GetLastOutputTime() const { return last_output_time.load(std::memory_order_acquire); }
 
-private:
+  private:
     bool Initialize(OrbisAudioOutPort type) {
         // Register this port with the device manager
         if (!OpenALDevice::GetInstance().RegisterPort(device_name)) {
             if (device_name == "None") {
-                LOG_INFO(Lib_AudioOut, "Audio device disabled for port type {}",
-                         static_cast<int>(type));
             } else {
                 LOG_ERROR(Lib_AudioOut, "Failed to register OpenAL device '{}'", device_name);
             }
@@ -238,17 +229,14 @@ private:
         }
 
         // Log device info
-        LOG_INFO(Lib_AudioOut, "Using OpenAL device for port type {}: '{}'", static_cast<int>(type),
-                 device_name);
+        ;
 
         // Calculate timing parameters
         period_us = (1000000ULL * buffer_frames + sample_rate / 2) / sample_rate;
 
         // Check for AL_EXT_FLOAT32 extension
         has_float_ext = alIsExtensionPresent("AL_EXT_FLOAT32");
-        if (has_float_ext && is_float) {
-            LOG_INFO(Lib_AudioOut, "AL_EXT_FLOAT32 extension detected - using native float format");
-        }
+
 
         // Determine OpenAL format
         if (!DetermineOpenALFormat()) {
@@ -267,9 +255,7 @@ private:
                                     output_mode == ALC_SURROUND_6_1_SOFT ||
                                     output_mode == ALC_SURROUND_7_1_SOFT;
         fold_lfe = know_output_mode && !output_has_lfe && num_channels >= 6 && !downmix_to_stereo;
-        if (fold_lfe) {
-            LOG_INFO(Lib_AudioOut, "Output has no LFE channel; folding buffer LFE into fronts");
-        }
+
         if (alc_dev && alcIsExtensionPresent(alc_dev, "ALC_SOFT_HRTF")) {
             ALCint hrtf_on = 0;
             alcGetIntegerv(alc_dev, ALC_HRTF_SOFT, 1, &hrtf_on);
@@ -286,8 +272,6 @@ private:
             use_native_float = has_float_ext;
             format = has_float_ext ? AL_FORMAT_STEREO_FLOAT32 : AL_FORMAT_STEREO16;
             fold_lfe = false; // The downmix converters already carry LFE.
-            LOG_INFO(Lib_AudioOut, "Stereo output: using internal {}ch->stereo downmix ({})",
-                     num_channels, has_float_ext ? "float" : "int16");
         }
 
         // Allocate buffers based on format
@@ -335,10 +319,6 @@ private:
 
         alSourcePlay(source);
 
-        LOG_INFO(Lib_AudioOut,
-                 "Initialized OpenAL backend ({} Hz, {} ch, {} format, {}) for device '{}'",
-                 sample_rate, num_channels, is_float ? "float" : "int16",
-                 use_native_float ? "native" : "converted", device_name);
         return true;
     }
 
@@ -398,7 +378,6 @@ private:
             ALenum error = alGetError();
             if (error == AL_NO_ERROR) {
                 current_gain.store(config_volume, std::memory_order_release);
-                LOG_DEBUG(Lib_AudioOut, "Updated audio gain to {:.3f}", config_volume);
             } else {
                 LOG_ERROR(Lib_AudioOut, "Failed to set audio gain: {}", GetALErrorString(error));
             }
@@ -573,7 +552,7 @@ private:
             }
         }
 
-        LOG_DEBUG(Lib_AudioOut, "Created OpenAL source {} with {} buffers", source, buffers.size());
+        ;
         return true;
     }
 
@@ -680,16 +659,19 @@ private:
     using ConverterFunc = void (*)(const void* src, void* dst, u32 frames, const float* volumes);
 
     static inline s16 OrbisFloatToS16(float v) {
-        if (std::abs(v) < 1.0e-20f)
+        if (std::abs(v) < 1.0e-20f) {
             v = 0.0f;
+        }
 
         // Sony behavior: +1.0f -> 32767, -1.0f -> -32768
         const float scaled = v * 32768.0f;
 
-        if (scaled >= 32767.0f)
+        if (scaled >= 32767.0f) {
             return 32767;
-        if (scaled <= -32768.0f)
+        }
+        if (scaled <= -32768.0f) {
             return -32768;
+        }
 
         return static_cast<s16>(scaled + (scaled >= 0 ? 0.5f : -0.5f));
     }
@@ -912,8 +894,9 @@ private:
         const float* s = static_cast<const float*>(src);
         s16* d = static_cast<s16*>(dst);
 
-        for (u32 i = 0; i < frames; i++)
+        for (u32 i = 0; i < frames; i++) {
             d[i] = OrbisFloatToS16(s[i]);
+        }
     }
 #ifdef HAS_SSE2
     static void ConvertF32ToS16StereoSIMD(const void* src, void* dst, u32 frames, const float*) {
@@ -963,8 +946,9 @@ private:
         s16* d = static_cast<s16*>(dst);
 
         const u32 num_samples = frames << 1;
-        for (u32 i = 0; i < num_samples; i++)
+        for (u32 i = 0; i < num_samples; i++) {
             d[i] = OrbisFloatToS16(s[i]);
+        }
     }
 #endif
 
@@ -1007,8 +991,9 @@ private:
         s16* d = static_cast<s16*>(dst);
 
         const u32 num_samples = frames << 3;
-        for (u32 i = 0; i < num_samples; i++)
+        for (u32 i = 0; i < num_samples; i++) {
             d[i] = OrbisFloatToS16(s[i]);
+        }
     }
 #endif
     static void ConvertF32ToS16Std8CH(const void* src, void* dst, u32 frames, const float*) {

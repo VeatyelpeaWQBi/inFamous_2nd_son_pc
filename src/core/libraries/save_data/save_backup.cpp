@@ -145,16 +145,12 @@ static void BackupThreadBody() {
         }
         g_backup_status = WorkerStatus::Running;
 
-        LOG_INFO(Lib_SaveData, "Backing up the following directory: {}",
-                 fmt::UTF(req.save_path.u8string()));
         try {
             backup(req.save_path);
         } catch (const std::filesystem::filesystem_error& err) {
             LOG_ERROR(Lib_SaveData, "Failed to backup {}: {}", fmt::UTF(req.save_path.u8string()),
                       err.what());
-        }
-        LOG_DEBUG(Lib_SaveData, "Backing up the following directory: {} finished",
-                  fmt::UTF(req.save_path.u8string()));
+        };
         {
             std::scoped_lock lk{g_backup_queue_mutex};
             g_backup_queue.front().done = true;
@@ -177,8 +173,7 @@ static void BackupThreadBody() {
 void StartThread() {
     if (g_backup_status != WorkerStatus::NotStarted) {
         return;
-    }
-    LOG_DEBUG(Lib_SaveData, "Starting backup thread");
+    };
     g_backup_status = WorkerStatus::Waiting;
     g_backup_thread = std::jthread{BackupThreadBody};
 }
@@ -186,8 +181,7 @@ void StartThread() {
 void StopThread() {
     if (g_backup_status == WorkerStatus::NotStarted || g_backup_status == WorkerStatus::Stopping) {
         return;
-    }
-    LOG_DEBUG(Lib_SaveData, "Stopping backup thread");
+    };
     g_backup_status = WorkerStatus::Stopping;
     {
         std::scoped_lock lk{g_backup_queue_mutex};
@@ -212,7 +206,6 @@ bool NewRequest(Libraries::UserService::OrbisUserServiceUserId user_id, std::str
         std::scoped_lock lk{g_backup_queue_mutex};
         for (const auto& it : g_backup_queue) {
             if (it.dir_name == dir_name) {
-                LOG_TRACE(Lib_SaveData, "Backup request to {} ignored. Already queued", dir_name);
                 return false;
             }
         }
@@ -229,7 +222,6 @@ bool NewRequest(Libraries::UserService::OrbisUserServiceUserId user_id, std::str
 }
 
 bool Restore(const std::filesystem::path& save_path) {
-    LOG_INFO(Lib_SaveData, "Restoring backup for {}", fmt::UTF(save_path.u8string()));
     std::unique_lock lk{g_backup_running_mutex};
     if (!fs::exists(save_path) || !fs::exists(save_path / backup_dir)) {
         return false;
@@ -249,9 +241,7 @@ bool Restore(const std::filesystem::path& save_path) {
     return true;
 }
 
-WorkerStatus GetWorkerStatus() {
-    return g_backup_status;
-}
+WorkerStatus GetWorkerStatus() { return g_backup_status; }
 
 bool IsBackupExecutingFor(const std::filesystem::path& save_path) {
     std::scoped_lock lk{g_backup_queue_mutex};
@@ -282,12 +272,8 @@ void PushBackupEvent(BackupRequest&& req) {
     }
 }
 
-float GetProgress() {
-    return static_cast<float>(g_backup_progress) / 100.0f;
-}
+float GetProgress() { return static_cast<float>(g_backup_progress) / 100.0f; }
 
-void ClearProgress() {
-    g_backup_progress = 0;
-}
+void ClearProgress() { g_backup_progress = 0; }
 
 } // namespace Libraries::SaveData::Backup

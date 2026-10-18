@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <cstddef>
-#include <cstring>
+#include "np_commerce.h"
 #include "common/logging/log.h"
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
 #include "core/libraries/np/np_commerce/np_commerce_ui.h"
 #include "core/libraries/system/commondialog.h"
 #include "core/libraries/system/userservice.h"
-#include "np_commerce.h"
+#include <cstddef>
+#include <cstring>
 
 namespace Libraries::Np::NpCommerce {
 
@@ -19,7 +19,6 @@ static CommerceDialogState g_state;
 static CommerceDialogUi g_dialog;
 
 s32 PS4_SYSV_ABI sceNpCommerceDialogInitialize() {
-    LOG_INFO(Lib_NpCommerce, "called");
     if (g_dialog_status != Status::NONE) {
         return static_cast<s32>(Error::ALREADY_INITIALIZED);
     }
@@ -28,7 +27,6 @@ s32 PS4_SYSV_ABI sceNpCommerceDialogInitialize() {
 }
 
 s32 PS4_SYSV_ABI sceNpCommerceDialogTerminate() {
-    LOG_INFO(Lib_NpCommerce, "called");
     if (g_dialog_status == Status::NONE) {
         return static_cast<s32>(Error::NOT_INITIALIZED);
     }
@@ -38,7 +36,6 @@ s32 PS4_SYSV_ABI sceNpCommerceDialogTerminate() {
 }
 
 s32 PS4_SYSV_ABI sceNpCommerceDialogClose() {
-    LOG_INFO(Lib_NpCommerce, "called");
     switch (g_dialog_status) {
     case Status::NONE:
         return static_cast<s32>(Error::NOT_INITIALIZED);
@@ -54,17 +51,14 @@ s32 PS4_SYSV_ABI sceNpCommerceDialogClose() {
 }
 
 s8 PS4_SYSV_ABI sceNpCommerceDialogGetStatus() {
-    LOG_DEBUG(Lib_NpCommerce, "called, status = {}", static_cast<u32>(g_dialog_status));
     return static_cast<s8>(g_dialog_status);
 }
 
 s32 PS4_SYSV_ABI sceNpCommerceDialogInitializeInternal() {
-    LOG_INFO(Lib_NpCommerce, "called");
     return sceNpCommerceDialogInitialize();
 }
 
 s32 PS4_SYSV_ABI sceNpCommerceDialogUpdateStatus() {
-    LOG_DEBUG(Lib_NpCommerce, "called, status = {}", static_cast<u32>(g_dialog_status));
     return static_cast<s32>(g_dialog_status);
 }
 
@@ -80,12 +74,10 @@ s32 PS4_SYSV_ABI sceNpCommerceDialogGetResult(OrbisNpCommerceDialogResult* resul
     result->authorized = g_state.mode == CommerceMode::PLUS &&
                          g_result_code == ORBIS_NP_COMMERCE_DIALOG_RESULT_PURCHASED;
     result->userData = g_state.user_data;
-    LOG_INFO(Lib_NpCommerce, "result={} authorized={}", result->result, result->authorized);
     return g_result_code;
 }
 
 s32 PS4_SYSV_ABI sceNpCommerceDialogOpen(const OrbisNpCommerceDialogParam* param) {
-    LOG_INFO(Lib_NpCommerce, "called, param = {}", static_cast<const void*>(param));
     if (g_dialog_status != Status::INITIALIZED && g_dialog_status != Status::FINISHED) {
         LOG_WARNING(Lib_NpCommerce, "Open in bad state {}", static_cast<u32>(g_dialog_status));
         return static_cast<s32>(Error::NOT_INITIALIZED);
@@ -129,11 +121,7 @@ s32 PS4_SYSV_ABI sceNpCommerceDialogOpen(const OrbisNpCommerceDialogParam* param
                 g_state.targets.emplace_back(label, strnlen(label, MAX_LABEL_LEN));
             }
         }
-    }
-    LOG_INFO(Lib_NpCommerce,
-             "open: mode={} user_id={} serviceLabel={:#x} numTargets={} features={:#x} first='{}'",
-             param->mode, g_state.user_id, g_state.service_label, param->numTargets,
-             g_state.features, g_state.targets.empty() ? "" : g_state.targets.front());
+    };
 
     g_dialog_status = Status::RUNNING;
     g_result_code = ORBIS_COMMON_DIALOG_RESULT_USER_CANCELED;
@@ -142,13 +130,11 @@ s32 PS4_SYSV_ABI sceNpCommerceDialogOpen(const OrbisNpCommerceDialogParam* param
 }
 
 s32 PS4_SYSV_ABI sceNpCommerceHidePsStoreIcon() {
-    LOG_INFO(Lib_NpCommerce, "called");
     PsStoreIconLayer::Instance().Hide();
     return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceNpCommerceSetPsStoreIconLayout(s32 layout) {
-    LOG_INFO(Lib_NpCommerce, "called, layout = {}", layout);
     if (layout < 0 || layout > 2) {
         LOG_WARNING(Lib_NpCommerce, "invalid layout {}, ignoring", layout);
         return ORBIS_OK;
@@ -158,7 +144,6 @@ s32 PS4_SYSV_ABI sceNpCommerceSetPsStoreIconLayout(s32 layout) {
 }
 
 s32 PS4_SYSV_ABI sceNpCommerceShowPsStoreIcon(s32 pos) {
-    LOG_INFO(Lib_NpCommerce, "called, pos = {}", pos);
     const auto p =
         (pos >= 0 && pos <= 2) ? static_cast<PsStoreIconPos>(pos) : PsStoreIconPos::CENTER;
     PsStoreIconLayer::Instance().Show(p);

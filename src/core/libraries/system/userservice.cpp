@@ -5,8 +5,6 @@
 
 #include "common/logging/log.h"
 
-#include <core/user_settings.h>
-#include <queue>
 #include "common/singleton.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/libs.h"
@@ -16,6 +14,8 @@
 #include "core/libraries/system/userservice_error.h"
 #include "core/tls.h"
 #include "input/controller.h"
+#include <core/user_settings.h>
+#include <queue>
 
 namespace Libraries::UserService {
 
@@ -119,12 +119,10 @@ int PS4_SYSV_ABI sceUserServiceGetDiscPlayerFlag() {
 std::queue<OrbisUserServiceEvent> user_service_event_queue = {};
 
 void AddUserServiceEvent(const OrbisUserServiceEvent e) {
-    LOG_DEBUG(Lib_UserService, "Event added to queue: {} {}", (u8)e.event, e.userId);
     user_service_event_queue.push(e);
 }
 
 s32 PS4_SYSV_ABI sceUserServiceGetEvent(OrbisUserServiceEvent* event) {
-    LOG_TRACE(Lib_UserService, "called");
 
     if (!user_service_event_queue.empty()) {
         OrbisUserServiceEvent& temp = user_service_event_queue.front();
@@ -132,8 +130,6 @@ s32 PS4_SYSV_ABI sceUserServiceGetEvent(OrbisUserServiceEvent* event) {
         event->userId = temp.userId;
         user_service_event_queue.pop();
         Libraries::Np::NpManager::NotifyNpStateFromUserServiceEvent(temp.event, temp.userId);
-        LOG_INFO(Lib_UserService, "Event processed by the game: {} {}", (u8)temp.event,
-                 temp.userId);
         return ORBIS_OK;
     }
 
@@ -511,7 +507,6 @@ int PS4_SYSV_ABI sceUserServiceGetImeRunCount() {
 }
 
 s32 PS4_SYSV_ABI sceUserServiceGetInitialUser(int* user_id) {
-    LOG_DEBUG(Lib_UserService, "called");
     if (user_id == nullptr) {
         LOG_ERROR(Lib_UserService, "user_id is null");
         return ORBIS_USER_SERVICE_ERROR_INVALID_ARGUMENT;
@@ -604,8 +599,6 @@ s32 PS4_SYSV_ABI sceUserServiceGetLoginUserIdList(OrbisUserServiceLoginUserIdLis
         s32 id =
             logged_in_users[i] ? logged_in_users[i]->user_id : ORBIS_USER_SERVICE_USER_ID_INVALID;
         userIdList->user_id[i] = id;
-        LOG_DEBUG(Lib_UserService, "Slot {}: User ID {} (port {})", i, id,
-                  logged_in_users[i] ? logged_in_users[i]->player_index : -1);
     }
     return ORBIS_OK;
 }
@@ -1071,7 +1064,6 @@ int PS4_SYSV_ABI sceUserServiceGetTraditionalChineseInputType() {
 
 s32 PS4_SYSV_ABI sceUserServiceGetUserColor(int user_id, OrbisUserServiceUserColor* color) {
     // TODO fix me better
-    LOG_DEBUG(Lib_UserService, "called user_id = {}", user_id);
     if (color == nullptr) {
         LOG_ERROR(Lib_UserService, "color is null");
         return ORBIS_USER_SERVICE_ERROR_INVALID_ARGUMENT;
@@ -1096,7 +1088,6 @@ int PS4_SYSV_ABI sceUserServiceGetUserGroupNum() {
 }
 
 s32 PS4_SYSV_ABI sceUserServiceGetUserName(int user_id, char* user_name, std::size_t size) {
-    LOG_DEBUG(Lib_UserService, "called user_id = {}, size = {} ", user_id, size);
     if (user_id == ORBIS_USER_SERVICE_USER_ID_INVALID) {
         LOG_ERROR(Lib_UserService, "invalid user_id");
         return ORBIS_USER_SERVICE_ERROR_INVALID_ARGUMENT;

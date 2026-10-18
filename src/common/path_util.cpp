@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <array>
-#include <fstream>
-#include <cstdlib>
-#include <stdexcept>
-#include <unordered_map>
-#include "common/logging/log.h"
 #include "common/path_util.h"
+#include "common/logging/log.h"
 #include "common/scope_exit.h"
 #include "common/types.h"
 #include "core/file_sys/ifile.h"
+#include <array>
+#include <cstdlib>
+#include <fstream>
+#include <stdexcept>
+#include <unordered_map>
 
 #ifdef __APPLE__
 #include <CoreFoundation/CFBundle.h>
@@ -43,9 +43,7 @@ using CreateOriginalPathForURLFunc = CFURLRef __nullable (*)(CFURLRef translocat
 static CFURLRef UntranslocateBundlePath(const CFURLRef bundle_path) {
     if (void* security_handle =
             dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY)) {
-        SCOPE_EXIT {
-            dlclose(security_handle);
-        };
+        SCOPE_EXIT { dlclose(security_handle); };
 
         const auto IsTranslocatedURL = reinterpret_cast<IsTranslocatedURLFunc>(
             dlsym(security_handle, "SecTranslocateIsTranslocatedURL"));
@@ -64,9 +62,7 @@ static CFURLRef UntranslocateBundlePath(const CFURLRef bundle_path) {
 static std::optional<std::filesystem::path> GetBundleParentDirectory() {
     if (CFBundleRef bundle_ref = CFBundleGetMainBundle()) {
         if (CFURLRef bundle_url_ref = CFBundleCopyBundleURL(bundle_ref)) {
-            SCOPE_EXIT {
-                CFRelease(bundle_url_ref);
-            };
+            SCOPE_EXIT { CFRelease(bundle_url_ref); };
 
             CFURLRef untranslocated_url_ref = UntranslocateBundlePath(bundle_url_ref);
             SCOPE_EXIT {
@@ -89,9 +85,7 @@ static std::optional<std::filesystem::path> GetBundleParentDirectory() {
 #endif
 
 static auto UserPaths = [] {
-    // Independent project: every user file stays below this project, even when a future
-    // standalone EXE is launched from another working directory. The BAT baseline uses
-    // the same path by setting its working directory and creating its portable user first.
+// User data and runtime caches stay within the project beside this executable.
 #ifndef IFSS_PROJECT_LOCAL_USER_DATA
 #error "Build this runtime through the independent project's root CMakeLists.txt"
 #endif
@@ -99,7 +93,7 @@ static auto UserPaths = [] {
     // The build machine's source path must not become a runtime dependency.
     std::array<wchar_t, 32768> executable_path{};
     const auto length = GetModuleFileNameW(nullptr, executable_path.data(),
-                                          static_cast<DWORD>(executable_path.size()));
+                                           static_cast<DWORD>(executable_path.size()));
     if (length == 0 || length >= executable_path.size()) {
         throw std::runtime_error("Cannot locate this project's executable");
     }
@@ -111,24 +105,7 @@ static auto UserPaths = [] {
         }
         project_root = parent;
     }
-    auto user_dir = project_root / "state" / "runtime" / "user";
-    if (const char* selected = std::getenv("IFSS_USER_ROOT")) {
-        const auto normalized_root = fs::weakly_canonical(project_root);
-        const fs::path selected_path{selected};
-        if (selected_path.has_root_path()) {
-            throw std::runtime_error("IFSS_USER_ROOT must be relative to this project");
-        }
-        const auto candidate = (project_root / selected_path).lexically_normal();
-        const auto relative = candidate.lexically_relative(normalized_root);
-        if (relative.empty() || relative.is_absolute() || *relative.begin() == "..") {
-            throw std::runtime_error("IFSS_USER_ROOT must stay inside this project");
-        }
-        user_dir = candidate;
-    }
-    const auto state_relative = user_dir.lexically_relative(project_root / "state");
-    if (state_relative.empty() || state_relative.is_absolute() || *state_relative.begin() == "..") {
-        throw std::runtime_error("User data must stay below this project's state directory");
-    }
+    const auto user_dir = project_root / "state" / "play" / "user";
     for (auto path = user_dir; path != project_root; path = path.parent_path()) {
         const auto attributes = GetFileAttributesW(path.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
@@ -140,14 +117,14 @@ static auto UserPaths = [] {
     std::unordered_map<PathType, fs::path> paths;
 
     const auto create_path = [&](PathType shad_path, const fs::path& new_path) {
-        std::filesystem::create_directory(new_path);
+        std::filesystem::create_directories(new_path);
         paths.insert_or_assign(shad_path, new_path);
     };
 
     create_path(PathType::UserDir, user_dir);
     create_path(PathType::LogDir, user_dir / LOG_DIR);
     create_path(PathType::ScreenshotsDir, user_dir / SCREENSHOTS_DIR);
-    create_path(PathType::ShaderDir, user_dir / SHADER_DIR);
+    create_path(PathType::ShaderDir, project_root / "state" / "runtime" / SHADER_DIR);
     create_path(PathType::GameDataDir, user_dir / GAMEDATA_DIR);
     create_path(PathType::TempDataDir, user_dir / TEMPDATA_DIR);
     create_path(PathType::SysModuleDir, user_dir / SYSMODULES_DIR);
@@ -158,10 +135,10 @@ static auto UserPaths = [] {
     create_path(PathType::MetaDataDir, user_dir / METADATA_DIR);
     create_path(PathType::CustomTrophy, user_dir / CUSTOM_TROPHY);
     create_path(PathType::CustomConfigs, user_dir / CUSTOM_CONFIGS);
-    create_path(PathType::CacheDir, user_dir / CACHE_DIR);
+    create_path(PathType::CacheDir, project_root / "state" / "runtime" / CACHE_DIR);
     create_path(PathType::FontsDir, user_dir / FONTS_DIR);
     create_path(PathType::TrophyDir, user_dir / TROPHY_DIR);
-    create_path(PathType::HomeDir, user_dir / HOME_DIR);
+    create_path(PathType::HomeDir, project_root / "state" / "play" / "home");
     create_path(PathType::CustomModulesDir, user_dir / CUSTOM_MODULES_DIR);
     create_path(PathType::LicensesDir, user_dir / LICENSES_DIR);
 
@@ -209,9 +186,7 @@ std::string PathToUTF8String(const std::filesystem::path& path) {
     return std::string{u8_string.begin(), u8_string.end()};
 }
 
-const fs::path& GetUserPath(PathType shad_path) {
-    return UserPaths.at(shad_path);
-}
+const fs::path& GetUserPath(PathType shad_path) { return UserPaths.at(shad_path); }
 
 std::string GetUserPathString(PathType shad_path) {
     return PathToUTF8String(GetUserPath(shad_path));

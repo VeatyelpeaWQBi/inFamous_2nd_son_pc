@@ -44,7 +44,6 @@ bool TRP::Extract(const std::filesystem::path& trophyPath, std::string npCommId,
         KeyManager::GetInstance()->GetAllKeys().TrophyKeySet.ReleaseTrophyKey;
 
     if (user_key_vec.size() != 16) {
-        LOG_INFO(Common_Filesystem, "Trophy decryption key is not specified");
         return false;
     }
 
@@ -129,9 +128,6 @@ bool TRP::Extract(const std::filesystem::path& trophyPath, std::string npCommId,
                                 "Skipping encrypted XML entry - invalid NPCommID");
                     // Skip this entry but continue
                 }
-            } else {
-                LOG_DEBUG(Common_Filesystem, "Unknown entry flag: {} for {}",
-                          static_cast<u32>(entry.flag), name);
             }
             trpFileIndex++;
         }
@@ -151,8 +147,7 @@ bool TRP::Extract(const std::filesystem::path& trophyPath, std::string npCommId,
         return false;
     }
 
-    LOG_INFO(Common_Filesystem, "Successfully extracted {} trophy files for {}", trpFileIndex,
-             npCommId);
+    ;
     return true;
 }
 

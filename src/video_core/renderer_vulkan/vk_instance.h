@@ -8,9 +8,6 @@
 
 #include "video_core/renderer_vulkan/vk_platform.h"
 
-#define TRACY_VK_USE_SYMBOL_TABLE
-#include <tracy/TracyVulkan.hpp>
-
 namespace Frontend {
 class WindowSDL;
 }
@@ -20,7 +17,7 @@ VK_DEFINE_HANDLE(VmaAllocator)
 namespace Vulkan {
 
 class Instance {
-public:
+  public:
     explicit Instance(bool validation = false, bool crash_diagnostic = false);
     explicit Instance(Frontend::WindowSDL& window, s32 physical_device_index,
                       bool enable_validation = false, bool enable_crash_diagnostic = false);
@@ -34,144 +31,84 @@ public:
                                                 vk::FormatFeatureFlags2 flags) const;
 
     /// Returns the Vulkan instance
-    vk::Instance GetInstance() const {
-        return *instance;
-    }
+    vk::Instance GetInstance() const { return *instance; }
 
     /// Returns the current physical device
-    vk::PhysicalDevice GetPhysicalDevice() const {
-        return physical_device;
-    }
+    vk::PhysicalDevice GetPhysicalDevice() const { return physical_device; }
 
     /// Returns the Vulkan device
-    vk::Device GetDevice() const {
-        return *device;
-    }
+    vk::Device GetDevice() const { return *device; }
 
     /// Returns the VMA allocator handle
-    VmaAllocator GetAllocator() const {
-        return allocator;
-    }
+    VmaAllocator GetAllocator() const { return allocator; }
 
     /// Returns a list of the available physical devices
-    std::span<const vk::PhysicalDevice> GetPhysicalDevices() const {
-        return physical_devices;
-    }
+    std::span<const vk::PhysicalDevice> GetPhysicalDevices() const { return physical_devices; }
 
     /// Retrieve queue information
-    u32 GetGraphicsQueueFamilyIndex() const {
-        return queue_family_index;
-    }
+    u32 GetGraphicsQueueFamilyIndex() const { return queue_family_index; }
 
-    u32 GetPresentQueueFamilyIndex() const {
-        return queue_family_index;
-    }
+    u32 GetPresentQueueFamilyIndex() const { return queue_family_index; }
 
-    vk::Queue GetGraphicsQueue() const {
-        return graphics_queue;
-    }
+    vk::Queue GetGraphicsQueue() const { return graphics_queue; }
 
-    vk::Queue GetPresentQueue() const {
-        return present_queue;
-    }
+    vk::Queue GetPresentQueue() const { return present_queue; }
 
     /// Second queue of the graphics family used for GPU readback copies, if available.
-    bool HasReadbackQueue() const {
-        return has_readback_queue;
-    }
+    bool HasReadbackQueue() const { return has_readback_queue; }
 
-    vk::Queue GetReadbackQueue() const {
-        return readback_queue;
-    }
+    vk::Queue GetReadbackQueue() const { return readback_queue; }
 
     /// Third queue of the graphics family, for the compute work of the asynchronous compute
     /// queues of the guest (asc_queue), if available.
-    bool HasComputeQueue() const {
-        return has_compute_queue;
-    }
+    bool HasComputeQueue() const { return has_compute_queue; }
 
-    vk::Queue GetComputeQueue() const {
-        return compute_queue;
-    }
-
-    TracyVkCtx GetProfilerContext() const {
-        return profiler_context;
-    }
+    vk::Queue GetComputeQueue() const { return compute_queue; }
 
     /// Returns true if anisotropic filtering is supported
-    bool IsAnisotropicFilteringSupported() const {
-        return features.samplerAnisotropy;
-    }
+    bool IsAnisotropicFilteringSupported() const { return features.samplerAnisotropy; }
 
     /// Returns true if depth bounds testing is supported
-    bool IsDepthBoundsSupported() const {
-        return features.depthBounds;
-    }
+    bool IsDepthBoundsSupported() const { return features.depthBounds; }
 
     /// Returns true if 16-bit floats are supported in shaders
-    bool IsShaderFloat16Supported() const {
-        return vk12_features.shaderFloat16;
-    }
+    bool IsShaderFloat16Supported() const { return vk12_features.shaderFloat16; }
 
     /// Returns true if 64-bit floats are supported in shaders
-    bool IsShaderFloat64Supported() const {
-        return features.shaderFloat64;
-    }
+    bool IsShaderFloat64Supported() const { return features.shaderFloat64; }
 
     /// Returns true if 64-bit ints are supported in shaders
-    bool IsShaderInt64Supported() const {
-        return features.shaderInt64;
-    }
+    bool IsShaderInt64Supported() const { return features.shaderInt64; }
 
     /// Returns true if 16-bit ints are supported in shaders
-    bool IsShaderInt16Supported() const {
-        return features.shaderInt16;
-    }
+    bool IsShaderInt16Supported() const { return features.shaderInt16; }
 
     /// Returns true if 8-bit ints are supported in shaders
-    bool IsShaderInt8Supported() const {
-        return vk12_features.shaderInt8;
-    }
+    bool IsShaderInt8Supported() const { return vk12_features.shaderInt8; }
 
     /// Returns true if VK_KHR_maintenance8 is supported
-    bool IsMaintenance8Supported() const {
-        return maintenance_8;
-    }
+    bool IsMaintenance8Supported() const { return maintenance_8; }
 
     /// Returns true if VK_EXT_attachment_feedback_loop_layout is supported
-    bool IsAttachmentFeedbackLoopLayoutSupported() const {
-        return attachment_feedback_loop;
-    }
+    bool IsAttachmentFeedbackLoopLayoutSupported() const { return attachment_feedback_loop; }
 
     /// Returns true when VK_EXT_custom_border_color is supported
-    bool IsCustomBorderColorSupported() const {
-        return custom_border_color;
-    }
+    bool IsCustomBorderColorSupported() const { return custom_border_color; }
 
     /// Returns true when VK_EXT_shader_stencil_export is supported
-    bool IsShaderStencilExportSupported() const {
-        return shader_stencil_export;
-    }
+    bool IsShaderStencilExportSupported() const { return shader_stencil_export; }
 
     /// Returns true when VK_EXT_depth_clip_control is supported
-    bool IsDepthClipControlSupported() const {
-        return depth_clip_control;
-    }
+    bool IsDepthClipControlSupported() const { return depth_clip_control; }
 
     /// Returns true when VK_EXT_depth_clip_enable is supported
-    bool IsDepthClipEnableSupported() const {
-        return depth_clip_enable;
-    }
+    bool IsDepthClipEnableSupported() const { return depth_clip_enable; }
 
     /// Returns true when VK_EXT_depth_range_unrestricted is supported
-    bool IsDepthRangeUnrestrictedSupported() const {
-        return depth_range_unrestricted;
-    }
+    bool IsDepthRangeUnrestrictedSupported() const { return depth_range_unrestricted; }
 
     /// Returns true when VK_EXT_extended_dynamic_state3 is supported
-    bool IsExtendedDynamicState3Supported() const {
-        return dynamic_state_3;
-    }
+    bool IsExtendedDynamicState3Supported() const { return dynamic_state_3; }
 
     /// Returns true when the extendedDynamicState3ColorWriteMask feature of
     /// VK_EXT_extended_dynamic_state3 is supported.
@@ -180,14 +117,10 @@ public:
     }
 
     /// Returns true when VK_EXT_vertex_input_dynamic_state is supported.
-    bool IsVertexInputDynamicState() const {
-        return vertex_input_dynamic_state;
-    }
+    bool IsVertexInputDynamicState() const { return vertex_input_dynamic_state; }
 
     /// Returns true when VK_KHR_fragment_shader_barycentric is supported.
-    bool IsFragmentShaderBarycentricSupported() const {
-        return fragment_shader_barycentric;
-    }
+    bool IsFragmentShaderBarycentricSupported() const { return fragment_shader_barycentric; }
 
     /// Returns true when VK_AMD_shader_explicit_vertex_parameter is supported.
     bool IsAmdShaderExplicitVertexParameterSupported() const {
@@ -205,24 +138,16 @@ public:
     }
 
     /// Returns true when VK_EXT_provoking_vertex is supported.
-    bool IsProvokingVertexSupported() const {
-        return provoking_vertex;
-    }
+    bool IsProvokingVertexSupported() const { return provoking_vertex; }
 
     /// Returns true when VK_AMD_shader_image_load_store_lod is supported.
-    bool IsImageLoadStoreLodSupported() const {
-        return image_load_store_lod;
-    }
+    bool IsImageLoadStoreLodSupported() const { return image_load_store_lod; }
 
     /// Returns true when VK_AMD_gcn_shader is supported.
-    bool IsAmdGcnShaderSupported() const {
-        return amd_gcn_shader;
-    }
+    bool IsAmdGcnShaderSupported() const { return amd_gcn_shader; }
 
     /// Returns true when VK_AMD_shader_trinary_minmax is supported.
-    bool IsAmdShaderTrinaryMinMaxSupported() const {
-        return amd_shader_trinary_minmax;
-    }
+    bool IsAmdShaderTrinaryMinMaxSupported() const { return amd_shader_trinary_minmax; }
 
     /// Returns true when the shaderBufferFloat32AtomicMinMax feature of
     /// VK_EXT_shader_atomic_float2 is supported.
@@ -238,24 +163,16 @@ public:
     }
 
     /// Returns true if 64-bit integer atomic operations can be used on buffers
-    bool IsBufferInt64AtomicsSupported() const {
-        return vk12_features.shaderBufferInt64Atomics;
-    }
+    bool IsBufferInt64AtomicsSupported() const { return vk12_features.shaderBufferInt64Atomics; }
 
     /// Returns true if 64-bit integer atomic operations can be used on shared memory
-    bool IsSharedInt64AtomicsSupported() const {
-        return vk12_features.shaderSharedInt64Atomics;
-    }
+    bool IsSharedInt64AtomicsSupported() const { return vk12_features.shaderSharedInt64Atomics; }
 
     /// Returns true if occlusion queries can return exact sample counts
-    bool IsOcclusionQueryPreciseSupported() const {
-        return features.occlusionQueryPrecise;
-    }
+    bool IsOcclusionQueryPreciseSupported() const { return features.occlusionQueryPrecise; }
 
     /// Returns true if queries can be reset from the host
-    bool IsHostQueryResetSupported() const {
-        return vk12_features.hostQueryReset;
-    }
+    bool IsHostQueryResetSupported() const { return vk12_features.hostQueryReset; }
 
     /// Returns true if the subgroup size can be set to match guest subgroup size
     bool IsSubgroupSize64Supported() const {
@@ -275,19 +192,13 @@ public:
     }
 
     /// Returns true if VK_AMD_mixed_attachment_samples is supported
-    bool IsMixedAnySamplesSupported() const {
-        return amd_mixed_attachment_samples;
-    }
+    bool IsMixedAnySamplesSupported() const { return amd_mixed_attachment_samples; }
 
     /// Returns true when geometry shaders are supported by the device
-    bool IsGeometryStageSupported() const {
-        return features.geometryShader;
-    }
+    bool IsGeometryStageSupported() const { return features.geometryShader; }
 
     /// Returns true when tessellation is supported by the device
-    bool IsTessellationSupported() const {
-        return features.tessellationShader;
-    }
+    bool IsTessellationSupported() const { return features.tessellationShader; }
 
     /// Returns true when the shaderSubgroupClock feature of
     /// VK_KHR_shader_clock is supported.
@@ -296,44 +207,28 @@ public:
     }
 
     /// Returns the vendor ID of the physical device
-    u32 GetVendorID() const {
-        return properties.vendorID;
-    }
+    u32 GetVendorID() const { return properties.vendorID; }
 
     /// Returns the device ID of the physical device
-    u32 GetDeviceID() const {
-        return properties.deviceID;
-    }
+    u32 GetDeviceID() const { return properties.deviceID; }
 
     /// Returns the driver ID.
-    vk::DriverId GetDriverID() const {
-        return driver_id;
-    }
+    vk::DriverId GetDriverID() const { return driver_id; }
 
     /// Returns the current driver version provided in Vulkan-formatted version numbers.
-    u32 GetDriverVersion() const {
-        return properties.driverVersion;
-    }
+    u32 GetDriverVersion() const { return properties.driverVersion; }
 
     /// Returns the current Vulkan API version provided in Vulkan-formatted version numbers.
-    u32 ApiVersion() const {
-        return properties.apiVersion;
-    }
+    u32 ApiVersion() const { return properties.apiVersion; }
 
     /// Returns the vendor name reported from Vulkan.
-    std::string_view GetVendorName() const {
-        return vendor_name;
-    }
+    std::string_view GetVendorName() const { return vendor_name; }
 
     /// Returns the list of available extensions.
-    std::span<const std::string> GetAvailableExtensions() const {
-        return available_extensions;
-    }
+    std::span<const std::string> GetAvailableExtensions() const { return available_extensions; }
 
     /// Returns the device name.
-    std::string_view GetModelName() const {
-        return properties.deviceName;
-    }
+    std::string_view GetModelName() const { return properties.deviceName; }
 
     /// Returns if the device is an integrated GPU.
     bool IsIntegrated() const {
@@ -341,9 +236,7 @@ public:
     }
 
     /// Returns the pipeline cache unique identifier
-    const auto GetPipelineCacheUUID() const {
-        return properties.pipelineCacheUUID;
-    }
+    const auto GetPipelineCacheUUID() const { return properties.pipelineCacheUUID; }
 
     /// Returns the minimum required alignment for uniforms
     vk::DeviceSize UniformMinAlignment() const {
@@ -356,39 +249,25 @@ public:
     }
 
     /// Returns the minimum alignment required for accessing host-mapped device memory
-    vk::DeviceSize NonCoherentAtomSize() const {
-        return properties.limits.nonCoherentAtomSize;
-    }
+    vk::DeviceSize NonCoherentAtomSize() const { return properties.limits.nonCoherentAtomSize; }
 
     /// Returns the subgroup size of the selected physical device.
-    u32 SubgroupSize() const {
-        return vk11_props.subgroupSize;
-    }
+    u32 SubgroupSize() const { return vk11_props.subgroupSize; }
 
     /// Returns the maximum size of compute shared memory.
-    u32 MaxComputeSharedMemorySize() const {
-        return properties.limits.maxComputeSharedMemorySize;
-    }
+    u32 MaxComputeSharedMemorySize() const { return properties.limits.maxComputeSharedMemorySize; }
 
     /// Returns the maximum sampler LOD bias.
-    float MaxSamplerLodBias() const {
-        return properties.limits.maxSamplerLodBias;
-    }
+    float MaxSamplerLodBias() const { return properties.limits.maxSamplerLodBias; }
 
     /// Returns the maximum sampler anisotropy.
-    float MaxSamplerAnisotropy() const {
-        return properties.limits.maxSamplerAnisotropy;
-    }
+    float MaxSamplerAnisotropy() const { return properties.limits.maxSamplerAnisotropy; }
 
     /// Returns the maximum number of push descriptors.
-    u32 MaxPushDescriptors() const {
-        return push_descriptor_props.maxPushDescriptors;
-    }
+    u32 MaxPushDescriptors() const { return push_descriptor_props.maxPushDescriptors; }
 
     /// Returns the maximum size of a single VkDeviceMemory
-    vk::DeviceSize MaxMemoryAllocationSize() const {
-        return vk11_props.maxMemoryAllocationSize;
-    }
+    vk::DeviceSize MaxMemoryAllocationSize() const { return vk11_props.maxMemoryAllocationSize; }
 
     /// Returns the vulkan 1.2 physical device properties.
     const vk::PhysicalDeviceVulkan12Properties& GetVk12Properties() const noexcept {
@@ -401,29 +280,19 @@ public:
     }
 
     /// Returns true if shaders can declare the ClipDistance attribute
-    bool IsShaderClipDistanceSupported() const {
-        return features.shaderClipDistance;
-    }
+    bool IsShaderClipDistanceSupported() const { return features.shaderClipDistance; }
 
     /// Returns the maximim viewport width.
-    u32 GetMaxViewportWidth() const {
-        return properties.limits.maxViewportDimensions[0];
-    }
+    u32 GetMaxViewportWidth() const { return properties.limits.maxViewportDimensions[0]; }
 
     /// Returns the maximum viewport height.
-    u32 GetMaxViewportHeight() const {
-        return properties.limits.maxViewportDimensions[1];
-    }
+    u32 GetMaxViewportHeight() const { return properties.limits.maxViewportDimensions[1]; }
 
     /// Returns the maximum render area width.
-    u32 GetMaxFramebufferWidth() const {
-        return properties.limits.maxFramebufferWidth;
-    }
+    u32 GetMaxFramebufferWidth() const { return properties.limits.maxFramebufferWidth; }
 
     /// Returns the maximum render area height.
-    u32 GetMaxFramebufferHeight() const {
-        return properties.limits.maxFramebufferHeight;
-    }
+    u32 GetMaxFramebufferHeight() const { return properties.limits.maxFramebufferHeight; }
 
     /// Returns the maximum number of samplers that can be allocated at once.
     u32 GetMaxSamplerAllocationCount() const {
@@ -448,15 +317,11 @@ public:
     }
 
     /// Returns true if logic ops are supported by the device.
-    bool IsLogicOpSupported() const {
-        return features.logicOp;
-    }
+    bool IsLogicOpSupported() const { return features.logicOp; }
 
     /// Returns whether VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT is supported on compressed
     /// images.
-    bool IsBlockTexelViewSupported() const {
-        return supports_block_texel_view;
-    }
+    bool IsBlockTexelViewSupported() const { return supports_block_texel_view; }
 
     /// Returns whether VK_IMAGE_CREATE_2D_VIEW_COMPATIBLE_BIT_EXT is supported on 3D images
     bool Is2dViewOf3dSupported() const {
@@ -466,23 +331,15 @@ public:
 
     /// Returns whether VK_EXT_image_view_min_lod is supported.
     /// Returns true when VK_NV_device_diagnostic_checkpoints is enabled.
-    bool HasDiagnosticCheckpoints() const {
-        return diagnostic_checkpoints;
-    }
+    bool HasDiagnosticCheckpoints() const { return diagnostic_checkpoints; }
 
     /// Returns true when VK_EXT_external_memory_host is enabled.
-    bool HasExternalMemoryHost() const {
-        return external_memory_host;
-    }
+    bool HasExternalMemoryHost() const { return external_memory_host; }
 
     /// Returns true when VK_EXT_device_fault is enabled.
-    bool HasDeviceFault() const {
-        return device_fault;
-    }
+    bool HasDeviceFault() const { return device_fault; }
 
-    bool IsImageViewMinLodSupported() const {
-        return image_view_min_lod;
-    }
+    bool IsImageViewMinLodSupported() const { return image_view_min_lod; }
 
     /// Returns whether shaderStorageImageMultisample is supported.
     bool IsMultisampleStorageImageSupported() const {
@@ -490,22 +347,18 @@ public:
     }
 
     /// Returns whether the device can report memory usage.
-    bool CanReportMemoryUsage() const {
-        return supports_memory_budget;
-    }
+    bool CanReportMemoryUsage() const { return supports_memory_budget; }
 
     /// Returns the amount of memory used.
     [[nodiscard]] u64 GetDeviceMemoryUsage() const;
 
     /// Returns the total memory budget available to the device.
-    [[nodiscard]] u64 GetTotalMemoryBudget() const {
-        return total_memory_budget;
-    }
+    [[nodiscard]] u64 GetTotalMemoryBudget() const { return total_memory_budget; }
 
     /// Determines if a format is supported for a set of feature flags.
     [[nodiscard]] bool IsFormatSupported(vk::Format format, vk::FormatFeatureFlags2 flags) const;
 
-private:
+  private:
     /// Creates the logical device opportunistically enabling extensions
     bool CreateDevice();
 
@@ -521,7 +374,7 @@ private:
     /// Gets the supported feature flags for a format.
     [[nodiscard]] vk::FormatFeatureFlags2 GetFormatFeatureFlags(vk::Format format) const;
 
-private:
+  private:
     vk::UniqueInstance instance;
     vk::PhysicalDevice physical_device;
     vk::UniqueDevice device;
@@ -542,7 +395,6 @@ private:
     vk::PhysicalDevicePrimitiveTopologyListRestartFeaturesEXT list_restart_features;
     vk::PhysicalDeviceShaderClockFeaturesKHR shader_clock_features;
     vk::DriverIdKHR driver_id;
-    vk::UniqueDebugUtilsMessengerEXT debug_callback{};
     std::string vendor_name;
     VmaAllocator allocator{};
     vk::Queue present_queue;
@@ -554,7 +406,6 @@ private:
     std::vector<vk::PhysicalDevice> physical_devices;
     std::vector<std::string> available_extensions;
     std::unordered_map<vk::Format, vk::FormatProperties3> format_properties;
-    TracyVkCtx profiler_context{};
     u32 queue_family_index{0};
     bool custom_border_color{};
     bool fragment_shader_barycentric{};

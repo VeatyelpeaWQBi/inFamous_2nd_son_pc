@@ -3,7 +3,7 @@
 
 #include <boost/container/static_vector.hpp>
 
-#include "common/perf_stats.h"
+#include "core/runtime_policy.h"
 #include "shader_recompiler/resource.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -31,19 +31,9 @@ void Pipeline::BindCompute(Scheduler& on) const {
     // The producer cannot cache a handle that does not exist yet. Forget only the compute
     // bind, so an A -> pending B -> ready A sequence cannot omit the final A bind.
     on.GetDynamicState().binds.pipelines[1] = vk::Pipeline{};
-    Common::Perf::Add(Common::Perf::ComputeBindsDeferred);
     cmdbuf.Record([this](vk::CommandBuffer command) {
         if (!IsReady()) {
-            const u64 start = Common::Perf::NowNs();
             readiness.Wait();
-            Common::Perf::Add(Common::Perf::ComputeBindWaits);
-            const u64 elapsed = Common::Perf::NowNs() - start;
-            Common::Perf::Add(Common::Perf::ComputeBindWaitNs, elapsed);
-            if (elapsed >= 25'000'000 &&
-                Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed)) {
-                LOG_INFO(Debug, "Perf compute readiness wait: {} {:.2f} ms", GetDebugString(),
-                         static_cast<double>(elapsed) / 1'000'000);
-            }
         }
         // Acquire also on the no-wait path before accessing the driver's handle.
         ASSERT(IsReady());
@@ -84,19 +74,6 @@ void Pipeline::BindResources(Scheduler& on, DescriptorWrites& set_writes,
     cmdbuf.bindDescriptorSets(bind_point, *pipeline_layout, 0, desc_set, {});
 }
 
-std::string Pipeline::GetDebugString() const {
-    std::string stage_desc;
-    for (const auto& stage : stages) {
-        if (stage) {
-            const auto shader_name = PipelineCache::GetShaderName(stage->hw_stage, stage->pgm_hash);
-            if (stage_desc.empty()) {
-                stage_desc = shader_name;
-            } else {
-                stage_desc = fmt::format("{},{}", stage_desc, shader_name);
-            }
-        }
-    }
-    return stage_desc;
-}
+
 
 } // namespace Vulkan

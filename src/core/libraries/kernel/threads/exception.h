@@ -6,7 +6,9 @@
 #include "common/types.h"
 #include "exception_codes.h"
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/signal.h>
 #endif
 

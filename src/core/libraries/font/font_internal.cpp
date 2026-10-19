@@ -2362,7 +2362,6 @@ void LogCachedStyleOnce(Libraries::Font::OrbisFontHandle handle,
         return;
     }
     s_logged.insert(handle);
-
 }
 
 void LogRenderResultSample(Libraries::Font::OrbisFontHandle handle, u32 code,

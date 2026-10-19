@@ -935,7 +935,6 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
     FIBER_ENTER(acb_task_name[vqid]);
     auto& queue = asc_queues[{vqid}];
 
-
     struct IndirectPatch {
         const PM4Header* header;
         VAddr indirect_addr;
@@ -1311,7 +1310,7 @@ bool Liverpool::SkipOcclusionWait(const PM4CmdWaitRegMem& wait) {
         return false;
     }
     std::optional<u32> known;
-    const bool counted = rasterizer->IsCountedOcclusionResult(address, known);
+    rasterizer->IsCountedOcclusionResult(address, known);
     const bool skip = known && wait.TestValue(*known);
 
     return skip;

@@ -2036,8 +2036,6 @@ s32 PS4_SYSV_ABI readDataInternal(s64 requestId, void* pData, u64 size) {
         }
     }
 
-
-
     unlockContext(context);
 
     // Cleanup

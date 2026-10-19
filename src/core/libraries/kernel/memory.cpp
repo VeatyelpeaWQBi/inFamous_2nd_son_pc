@@ -73,7 +73,6 @@ s32 PS4_SYSV_ABI sceKernelAllocateDirectMemory(s64 searchStart, s64 searchEnd, u
 
     *physAddrOut = static_cast<s64>(phys_addr);
 
-
     return ORBIS_OK;
 }
 
@@ -438,9 +437,7 @@ s32 PS4_SYSV_ABI sceKernelIsStack(void* addr, void** start, void** end) {
     return memory->IsStack(std::bit_cast<VAddr>(addr), start, end);
 }
 
-u32 PS4_SYSV_ABI sceKernelIsAddressSanitizerEnabled() {
-    return false;
-}
+u32 PS4_SYSV_ABI sceKernelIsAddressSanitizerEnabled() { return false; }
 
 s32 PS4_SYSV_ABI sceKernelBatchMap(OrbisKernelBatchMapEntry* entries, s32 numEntries,
                                    s32* numEntriesOut) {

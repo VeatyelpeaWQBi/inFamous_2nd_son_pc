@@ -29,9 +29,7 @@ s32 PS4_SYSV_ABI sceWebBrowserDialogGetResult() {
     return ORBIS_OK;
 }
 
-Libraries::CommonDialog::Status PS4_SYSV_ABI sceWebBrowserDialogGetStatus() {
-    return g_status;
-}
+Libraries::CommonDialog::Status PS4_SYSV_ABI sceWebBrowserDialogGetStatus() { return g_status; }
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI sceWebBrowserDialogInitialize() {
     if (!CommonDialog::g_isInitialized) {

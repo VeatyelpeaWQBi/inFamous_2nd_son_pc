@@ -94,7 +94,6 @@ void MemoryManager::SetupMemoryRegions(u64 flexible_size, bool use_extended_mem1
                    last_dmem_area->second.size >= old_direct_size - total_direct_size,
                "Unable to shrink dmem map");
     last_dmem_area->second.size -= (old_direct_size - total_direct_size);
-
 }
 
 u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
@@ -119,7 +118,6 @@ u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
         ++vma;
     }
     clamped_size = std::min(clamped_size, size);
-
 
     return clamped_size;
 }

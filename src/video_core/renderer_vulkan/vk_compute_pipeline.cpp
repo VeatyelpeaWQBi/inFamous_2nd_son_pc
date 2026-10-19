@@ -109,8 +109,6 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
 
 ComputePipeline::~ComputePipeline() = default;
 
-
-
 void ComputePipeline::Compile() {
     const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_size_ci = {
         .requiredSubgroupSize = 64,

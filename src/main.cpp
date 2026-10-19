@@ -81,7 +81,7 @@ int wmain(int argc, wchar_t* argv[]) {
         KeyManager::GetInstance()->LoadFromFile();
         EmulatorSettings.Load();
         UserSettings.Load();
-        Core::Release::Apply("CUSA00309", "01.07");
+        Core::Release::Apply();
         auto* emulator = Common::Singleton<Core::Emulator>::Instance();
         emulator->executableName = executable.c_str();
         emulator->Run(eboot, guest_args, override_root, {}, {}, append_log);

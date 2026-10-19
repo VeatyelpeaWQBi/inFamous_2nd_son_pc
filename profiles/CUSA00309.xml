@@ -1,6 +1,9 @@
 <?xml version='1.0' encoding='utf-8'?>
 <Patch>
     <TitleID>
+        <ID>CUSA00004</ID>
+        <ID>CUSA00223</ID>
+        <ID>CUSA00305</ID>
         <ID>CUSA00309</ID>
     </TitleID>
     <Metadata Title="inFAMOUS Second Son" Name="Skip intro movie" Note="Returns immediately from the boot splash movie start, so the boot state machine advances straight to loading. Only the unskippable boot splash is affected; in-game cutscenes use a different code path. Project copy resolves the original unique mask to the pinned CUSA00309 01.07 executable and verifies OriginalHash." Author="junminlee2004" PatchVer="1.1" AppVer="01.07" AppElf="eboot.bin" isEnabled="true" SourceRepository="shadPS4">

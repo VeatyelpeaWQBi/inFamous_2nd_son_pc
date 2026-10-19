@@ -22,7 +22,6 @@ namespace Libraries::Kernel {
 struct OrbisQueryInfo;
 }
 
-
 namespace Core {
 
 constexpr u64 DEFAULT_MAPPING_BASE = 0x200000000;
@@ -70,9 +69,7 @@ struct PhysicalMemoryArea {
     s32 memory_type = 0;
     PhysicalMemoryType dma_type = PhysicalMemoryType::Free;
 
-    PAddr GetEnd() const {
-        return base + size;
-    }
+    PAddr GetEnd() const { return base + size; }
 
     bool CanMergeWith(const PhysicalMemoryArea& next) const {
         if (base + size != next.base) {
@@ -119,9 +116,7 @@ struct VirtualMemoryArea {
         return addr < (base + this->size) && (addr + size) > base;
     }
 
-    bool IsFree() const noexcept {
-        return type == VMAType::Free;
-    }
+    bool IsFree() const noexcept { return type == VMAType::Free; }
 
     bool IsMapped() const noexcept {
         return type != VMAType::Free && type != VMAType::Reserved && type != VMAType::PoolReserved;
@@ -174,33 +169,21 @@ class MemoryManager {
     using VMAMap = std::map<VAddr, VirtualMemoryArea>;
     using VMAHandle = VMAMap::iterator;
 
-public:
+  public:
     explicit MemoryManager();
     ~MemoryManager();
 
-    void SetRasterizer(Vulkan::Rasterizer* rasterizer_) {
-        rasterizer = rasterizer_;
-    }
+    void SetRasterizer(Vulkan::Rasterizer* rasterizer_) { rasterizer = rasterizer_; }
 
-    AddressSpace& GetAddressSpace() {
-        return impl;
-    }
+    AddressSpace& GetAddressSpace() { return impl; }
 
-    u64 GetTotalDirectSize() const {
-        return total_direct_size;
-    }
+    u64 GetTotalDirectSize() const { return total_direct_size; }
 
-    u64 GetTotalFlexibleSize() const {
-        return total_flexible_size;
-    }
+    u64 GetTotalFlexibleSize() const { return total_flexible_size; }
 
-    u64 GetAvailableFlexibleSize() const {
-        return total_flexible_size - flexible_usage;
-    }
+    u64 GetAvailableFlexibleSize() const { return total_flexible_size - flexible_usage; }
 
-    VAddr SystemReservedVirtualBase() noexcept {
-        return impl.SystemReservedVirtualBase();
-    }
+    VAddr SystemReservedVirtualBase() noexcept { return impl.SystemReservedVirtualBase(); }
 
     bool IsValidGpuMapping(VAddr virtual_addr, u64 size) {
         // The PS4's GPU can only handle 40 bit addresses.
@@ -316,18 +299,12 @@ public:
 
     void InvalidateMemory(VAddr addr, u64 size) const;
 
-private:
-    VMAHandle FindVMA(VAddr target) {
-        return std::prev(vma_map.upper_bound(target));
-    }
+  private:
+    VMAHandle FindVMA(VAddr target) { return std::prev(vma_map.upper_bound(target)); }
 
-    PhysHandle FindDmemArea(PAddr target) {
-        return std::prev(dmem_map.upper_bound(target));
-    }
+    PhysHandle FindDmemArea(PAddr target) { return std::prev(dmem_map.upper_bound(target)); }
 
-    PhysHandle FindFmemArea(PAddr target) {
-        return std::prev(fmem_map.upper_bound(target));
-    }
+    PhysHandle FindFmemArea(PAddr target) { return std::prev(fmem_map.upper_bound(target)); }
 
     bool HasPhysicalBacking(VirtualMemoryArea vma) {
         return vma.type == VMAType::Direct || vma.type == VMAType::Flexible ||
@@ -355,7 +332,7 @@ private:
 
     s32 UnmapMemoryImpl(VAddr virtual_addr, u64 size);
 
-private:
+  private:
     AddressSpace impl;
     PhysMap dmem_map;
     PhysMap fmem_map;
@@ -380,7 +357,6 @@ private:
         }
     };
     std::array<PrtArea, 3> prt_areas{};
-
 };
 
 using Memory = Common::Singleton<MemoryManager>;

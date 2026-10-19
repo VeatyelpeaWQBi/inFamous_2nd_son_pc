@@ -204,14 +204,10 @@ s32 PS4_SYSV_ABI _sigprocmask() { return ORBIS_OK; }
 s32 PS4_SYSV_ABI posix_getpagesize() { return 16_KB; }
 
 // stubbed on non-devkit consoles
-s32 PS4_SYSV_ABI sceKernelGetGPI() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceKernelGetGPI() { return ORBIS_OK; }
 
 // stubbed on non-devkit consoles
-s32 PS4_SYSV_ABI sceKernelSetGPO() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceKernelSetGPO() { return ORBIS_OK; }
 
 s32 PS4_SYSV_ABI sceKernelGetAllowedSdkVersionOnSystem(s32* ver) {
     if (ver == nullptr) {

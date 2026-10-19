@@ -124,9 +124,7 @@ bool AvPlayerSource::FindStreams() {
     return m_streams.size() > 0;
 }
 
-s32 AvPlayerSource::GetStreamCount() {
-    return m_streams.size();
-}
+s32 AvPlayerSource::GetStreamCount() { return m_streams.size(); }
 
 static u64 TimestampToMillis(s64 timestamp, AVRational time_base) {
     if (timestamp == AV_NOPTS_VALUE || timestamp <= 0 || time_base.num <= 0 || time_base.den <= 0) {

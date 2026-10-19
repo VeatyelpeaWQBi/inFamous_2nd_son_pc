@@ -1060,7 +1060,6 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
                                         : vk::PipelineStageFlagBits::eColorAttachmentOutput;
         cmdbuf.pipelineBarrier(post_src_stage, vk::PipelineStageFlagBits::eBottomOfPipe, {}, {}, {},
                                post_barrier);
-
     }
     if (EmulatorSettings.IsVkHostMarkersEnabled()) {
         cmdbuf.endDebugUtilsLabelEXT();
@@ -1090,7 +1089,6 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     }
 
     free_frame();
-
 }
 
 Frame* Presenter::GetRenderFrame() {

@@ -384,8 +384,6 @@ int PS4_SYSV_ABI sceKernelPollEventFlag(OrbisKernelEventFlag ef, u64 bitPattern,
 
     auto result = ef->Poll(bitPattern, wait, clear, pResultPat);
 
-
-
     return result;
 }
 int PS4_SYSV_ABI sceKernelWaitEventFlag(OrbisKernelEventFlag ef, u64 bitPattern, u32 waitMode,
@@ -426,7 +424,6 @@ int PS4_SYSV_ABI sceKernelWaitEventFlag(OrbisKernelEventFlag ef, u64 bitPattern,
     }
 
     const int result = ef->Wait(bitPattern, wait, clear, pResultPat, pTimeout);
-
 
     return result;
 }

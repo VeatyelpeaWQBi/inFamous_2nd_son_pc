@@ -1084,9 +1084,7 @@ int PS4_SYSV_ABI sceNetEpollWait(OrbisNetId epollid, OrbisNetEpollEvent* events,
 #endif
 }
 
-int* PS4_SYSV_ABI sceNetErrnoLoc() {
-    return &net_errno;
-}
+int* PS4_SYSV_ABI sceNetErrnoLoc() { return &net_errno; }
 
 int PS4_SYSV_ABI sceNetEtherNtostr() {
     LOG_ERROR(Lib_Net, "(STUBBED) called");

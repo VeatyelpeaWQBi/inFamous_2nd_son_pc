@@ -5,7 +5,6 @@
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "common/path_util.h"
-#include "core/emulator_state.h"
 #include "core/file_format/psf.h"
 #include <algorithm>
 #include <array>
@@ -15,9 +14,9 @@
 #include <cstdlib>
 #include <fstream>
 #include <limits>
-#include <nlohmann/json.hpp>
 #include <pugixml.hpp>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -28,8 +27,6 @@ uint64_t g_eboot_image_size;
 std::string g_eboot_name;
 std::string g_game_serial;
 std::string patch_file;
-bool patches_applied = false;
-std::vector<patchInfo> pending_patches;
 
 std::string toHex(u64 value, size_t byteSize) {
     std::stringstream ss;
@@ -129,266 +126,88 @@ std::string convertValueToHex(const std::string type, const std::string valueStr
     return result;
 }
 
-void ApplyPendingPatches();
-
 void ApplyPatchesFromXML(std::filesystem::path path) {
     pugi::xml_document doc;
-    pugi::xml_parse_result result = doc.load_file(path.c_str());
-
-    auto* param_sfo = Common::Singleton<PSF>::Instance();
-    auto app_version = param_sfo->GetString("APP_VER").value_or("Unknown version");
-
-    if (result) {
-        auto patchXML = doc.child("Patch");
-        for (pugi::xml_node_iterator it = patchXML.children().begin();
-             it != patchXML.children().end(); ++it) {
-
-            if (std::string(it->name()) == "Metadata") {
-                if (std::string(it->attribute("isEnabled").value()) == "true") {
-                    std::string currentPatchName = it->attribute("Name").value();
-                    std::string metadataAppVer = it->attribute("AppVer").value();
-                    std::string metadataAppElf = it->attribute("AppElf").value();
-                    bool versionMatches = metadataAppVer == app_version;
-
-                    if (metadataAppElf != g_eboot_name) {
-                        continue;
-                    }
-
-                    auto patchList = it->first_child();
-                    for (pugi::xml_node_iterator patchLineIt = patchList.children().begin();
-                         patchLineIt != patchList.children().end(); ++patchLineIt) {
-
-                        std::string type = patchLineIt->attribute("Type").value();
-                        if (!versionMatches && type != "mask" && type != "mask_jump32") {
-                            continue;
-                        }
-
-                        std::string address = patchLineIt->attribute("Address").value();
-                        std::string patchValue = patchLineIt->attribute("Value").value();
-                        std::string originalStr = patchLineIt->attribute("Original").value();
-                        std::string originalHashStr =
-                            patchLineIt->attribute("OriginalHash").value();
-                        std::string maskOffsetStr = patchLineIt->attribute("Offset").value();
-                        std::string targetStr = "";
-                        std::string sizeStr = "";
-                        if (type == "mask_jump32") {
-                            targetStr = patchLineIt->attribute("Target").value();
-                            sizeStr = patchLineIt->attribute("Size").value();
-                        } else {
-                            try {
-                                patchValue = convertValueToHex(type, patchValue);
-                            } catch (std::exception& e) {
-                                ASSERT_MSG(false,
-                                           "Failed to parse patch value \"{}\" for \"{}\" in "
-                                           "patch \"{}\", error: \"{}\"\n"
-                                           "If the patch was working on earlier versions, then it "
-                                           "was using a format that shadPS4 handled incorrectly, "
-                                           "and the patch should instead be fixed.",
-                                           patchValue, address, currentPatchName, e.what());
-                            }
-                        }
-
-                        bool littleEndian = false;
-                        if (type == "bytes16" || type == "bytes32" || type == "bytes64") {
-                            littleEndian = true;
-                        }
-
-                        MemoryPatcher::PatchMask patchMask = MemoryPatcher::PatchMask::None;
-                        int maskOffsetValue = 0;
-
-                        if (type == "mask") {
-                            patchMask = MemoryPatcher::PatchMask::Mask;
-                        }
-
-                        if (type == "mask_jump32") {
-                            patchMask = MemoryPatcher::PatchMask::Mask_Jump32;
-                        }
-
-                        if ((type == "mask" || type == "mask_jump32") && !maskOffsetStr.empty()) {
-                            maskOffsetValue = std::stoi(maskOffsetStr, 0, 10);
-                        }
-
-                        const patchInfo patch = {
-                            .gameSerial = "*",
-                            .modNameStr = currentPatchName,
-                            .offsetStr = address,
-                            .valueStr = patchValue,
-                            .targetStr = targetStr,
-                            .sizeStr = sizeStr,
-                            .littleEndian = littleEndian,
-                            .patchMask = patchMask,
-                            .maskOffset = maskOffsetValue,
-                            .originalStr = originalStr,
-                            .originalHashStr = originalHashStr,
-                        };
-                        if (!MemoryPatcher::PatchMemory(patch) &&
-                            (!originalStr.empty() || !originalHashStr.empty())) {
-                            // The lines of a patch depend on each other (code written first,
-                            // then the jumps to it): stop at the first line that does not match.
-                            LOG_ERROR(Loader, "Patch {}: the remaining lines are skipped",
-                                      currentPatchName);
-                            break;
-                        }
-                    }
+    if (!doc.load_file(path.c_str())) {
+        throw std::runtime_error("Cannot read the selected runtime patch file.");
+    }
+    const auto root = doc.child("Patch");
+    bool declared_title = false;
+    for (const auto id : root.child("TitleID").children("ID")) {
+        declared_title |= g_game_serial == id.child_value();
+    }
+    if (!declared_title) {
+        throw std::runtime_error("Runtime patches do not match the mounted game title.");
+    }
+    const auto version = Common::Singleton<PSF>::Instance()->GetString("APP_VER").value_or("");
+    std::string elf = g_eboot_name;
+    std::ranges::transform(elf, elf.begin(), [](unsigned char c) { return std::tolower(c); });
+    std::vector<patchInfo> patches;
+    std::vector<std::pair<u64, u64>> ranges;
+    constexpr std::string_view hex = "0123456789abcdefABCDEF";
+    for (const auto meta : root.children("Metadata")) {
+        if (!meta.attribute("isEnabled").as_bool()) {
+            continue;
+        }
+        if (version != meta.attribute("AppVer").as_string() ||
+            elf != meta.attribute("AppElf").as_string()) {
+            throw std::runtime_error("An enabled runtime patch targets another version.");
+        }
+        if (!meta.child("PatchList").child("Line")) {
+            throw std::runtime_error("An enabled runtime patch has no guarded writes.");
+        }
+        for (const auto line : meta.child("PatchList").children("Line")) {
+            patchInfo patch{
+                .gameSerial = g_game_serial,
+                .modNameStr = meta.attribute("Name").as_string(),
+                .offsetStr = line.attribute("Address").as_string(),
+                .valueStr = line.attribute("Value").as_string(),
+                .targetStr = "",
+                .sizeStr = "",
+                .isOffset = false,
+                .littleEndian = false,
+                .patchMask = PatchMask::None,
+                .maskOffset = 0,
+                .originalStr = line.attribute("Original").as_string(),
+                .originalHashStr = line.attribute("OriginalHash").as_string(),
+            };
+            // Release profiles use direct, non-overlapping, fully guarded byte writes.
+            if (std::string_view(line.attribute("Type").as_string()) != "bytes" ||
+                (patch.originalStr.empty() && patch.originalHashStr.empty()) ||
+                (!patch.originalStr.empty() && patch.originalStr.size() != patch.valueStr.size()) ||
+                (!patch.originalHashStr.empty() &&
+                 (patch.originalHashStr.size() != 16 ||
+                  patch.originalHashStr.find_first_not_of(hex) != std::string::npos)) ||
+                !PatchMemory(patch, true)) {
+                throw std::runtime_error(
+                    "Patch validation failed; no runtime patches have been written.");
+            }
+            // PatchMemory validated the address and range, so the conversion cannot overflow.
+            const auto address = std::stoull(patch.offsetStr, nullptr, 16);
+            const auto end = address + patch.valueStr.size() / 2;
+            for (const auto& [start, finish] : ranges) {
+                if (address < finish && start < end) {
+                    throw std::runtime_error(
+                        "Overlapping runtime patches rejected before any writes.");
                 }
             }
+            ranges.emplace_back(address, end);
+            patches.push_back(std::move(patch));
         }
-    } else {
-        LOG_ERROR(Loader, "Could not parse patch XML: {}", result.description());
     }
-}
-
-// Fixes built into this build for the games it is tuned for. They do not depend on the patch
-// files or on the launcher: each one is checked against the code of the game (FNV-1a 64 hash of
-// the bytes it replaces) and left out on another version of the game, or when a patch already
-// made the same change. SHADPS4_GAME_PROFILE=0 disables them, with the game profile.
-static void ApplyBuiltInFixes() {
-    const char* profile = std::getenv("SHADPS4_GAME_PROFILE");
-    if (profile != nullptr && std::string_view{profile} == "0") {
-        return;
-    }
-    constexpr std::string_view Address = "0x005f0cbd";
-    constexpr std::string_view Value = "4531C990";
-    constexpr std::string_view OriginalHash = "5c04f08ca74bb842";
-    struct BuiltInFix {
-        std::string_view serial;
-        std::string_view name;
-        std::string_view app_version{}; // empty: retain the original byte-checked version policy
-    };
-    static constexpr std::array fixes{
-        // inFAMOUS Second Son, PS4 Pro mode: its checkerboard rendering shows a green screen,
-        // the game renders natively instead (sete r9b -> xor r9d, r9d).
-        BuiltInFix{"CUSA00004", "PS4 Pro mode without checkerboard (built in)"},
-        // CUSA00309 01.07: verified against the user's dumped executable. The instruction
-        // and its offset match the EU patch; other HK versions are not assumed compatible.
-        BuiltInFix{"CUSA00309", "PS4 Pro mode without checkerboard (HK 01.07, built in)", "01.07"},
-    };
-    const auto app_version =
-        Common::Singleton<PSF>::Instance()->GetString("APP_VER").value_or("Unknown version");
-    for (const auto& fix : fixes) {
-        if (fix.serial != g_game_serial) {
-            continue;
+    // Every enabled write has passed validation before the first write is performed.
+    for (const auto& patch : patches) {
+        if (!PatchMemory(patch)) {
+            throw std::runtime_error("Runtime patch input changed after validation.");
         }
-        if (!fix.app_version.empty() && fix.app_version != app_version) {
-            LOG_WARNING(Loader, "Built-in fix {} skipped: APP_VER {} is not {}", fix.name,
-                        app_version, fix.app_version);
-            continue;
-        }
-        const u64 offset = std::stoull(std::string{Address}, nullptr, 16) - 0x400000;
-        constexpr size_t patch_size = Value.size() / 2;
-        if (g_eboot_address == 0 || offset >= g_eboot_image_size ||
-            patch_size > g_eboot_image_size - offset) {
-            LOG_ERROR(Loader, "Built-in fix {} skipped: address is outside the executable",
-                      fix.name);
-            continue;
-        }
-        const auto* current = reinterpret_cast<const unsigned char*>(g_eboot_address + offset);
-        bool already = true;
-        for (size_t i = 0; i < patch_size; ++i) {
-            const auto byte = static_cast<unsigned char>(
-                std::stoul(std::string{Value.substr(i * 2, 2)}, nullptr, 16));
-            if (current[i] != byte) {
-                already = false;
-                break;
-            }
-        }
-        if (already) {
-            continue;
-        }
-        PatchMemory({
-            .gameSerial = std::string{fix.serial},
-            .modNameStr = std::string{fix.name},
-            .offsetStr = std::string{Address},
-            .valueStr = std::string{Value},
-            .targetStr = "",
-            .sizeStr = "",
-            .isOffset = false,
-            .littleEndian = false,
-            .patchMask = PatchMask::None,
-            .maskOffset = 0,
-            .originalStr = "",
-            .originalHashStr = std::string{OriginalHash},
-        });
     }
 }
 
 void OnGameLoaded() {
-    std::filesystem::path patch_dir = Common::FS::GetUserPath(Common::FS::PathType::PatchesDir);
-    if (!patch_file.empty()) {
-
-        auto file_path = (patch_dir / patch_file).native();
-        if (std::filesystem::exists(patch_file)) {
-            ApplyPatchesFromXML(patch_file);
-        } else {
-            ApplyPatchesFromXML(file_path);
-        }
-    } else if (EmulatorState::GetInstance()->IsAutoPatchesLoadEnabled()) {
-        for (auto const& repo : std::filesystem::directory_iterator(patch_dir)) {
-            if (!repo.is_directory()) {
-                continue;
-            }
-
-            const auto files_json_path = repo.path() / "files.json";
-
-            if (!std::filesystem::is_regular_file(files_json_path)) {
-                LOG_ERROR(Loader, "The folder '{}' does not contain the files.json file.",
-                          repo.path().filename().string());
-                continue;
-            }
-
-            std::ifstream json_file{files_json_path};
-            nlohmann::json available_patches;
-
-            if (!json_file.is_open()) {
-                LOG_ERROR(Loader, "Could not open patch index: {}", files_json_path.string());
-                continue;
-            }
-
-            try {
-                available_patches = nlohmann::json::parse(json_file);
-            } catch (const nlohmann::json::parse_error& e) {
-                LOG_ERROR(Loader, "Could not parse patch index {}: {}", files_json_path.string(),
-                          e.what());
-                continue;
-            }
-
-            std::filesystem::path game_patch_file;
-            for (auto const& [filename, serials] : available_patches.items()) {
-                if (std::find(serials.begin(), serials.end(), g_game_serial) != serials.end()) {
-                    game_patch_file = repo.path() / filename;
-                    break;
-                }
-            }
-            if (std::filesystem::exists(game_patch_file)) {
-                ApplyPatchesFromXML(game_patch_file);
-            }
-        }
+    if (patch_file.empty()) {
+        throw std::runtime_error("A Second Son patch selection must be prepared before loading.");
     }
-    ApplyPendingPatches();
-    ApplyBuiltInFixes();
-}
-
-void AddPatchToQueue(const patchInfo& patchToAdd) {
-    if (patches_applied) {
-        PatchMemory(patchToAdd);
-        return;
-    }
-    pending_patches.push_back(patchToAdd);
-}
-
-void ApplyPendingPatches() {
-    patches_applied = true;
-    for (size_t i = 0; i < pending_patches.size(); ++i) {
-        const patchInfo& currentPatch = pending_patches[i];
-
-        if (currentPatch.gameSerial != "*" && currentPatch.gameSerial != g_game_serial) {
-            continue;
-        }
-
-        PatchMemory(currentPatch);
-    }
-
-    pending_patches.clear();
+    ApplyPatchesFromXML(std::filesystem::u8path(patch_file));
 }
 
 static bool WithinImage(uintptr_t address, size_t size) {
@@ -396,7 +215,7 @@ static bool WithinImage(uintptr_t address, size_t size) {
            address - g_eboot_address <= g_eboot_image_size - size;
 }
 
-bool PatchMemory(const patchInfo& patch) {
+bool PatchMemory(const patchInfo& patch, bool dry_run) {
     if (patch.valueStr.empty() || patch.valueStr.size() % 2 != 0 ||
         patch.valueStr.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
         LOG_ERROR(Loader, "Invalid byte payload for patch {}", patch.modNameStr);
@@ -498,6 +317,9 @@ bool PatchMemory(const patchInfo& patch) {
             LOG_ERROR(Loader, "Patch cave overlaps the source or needs an out-of-range jump");
             return false;
         }
+        if (dry_run) {
+            return true;
+        }
         // No memory is modified until both locations and the payload are valid.
         std::vector<u8> nopBytes(jumpSize, 0x90);
         std::memcpy(reinterpret_cast<void*>(patchAddress), nopBytes.data(), nopBytes.size());
@@ -580,8 +402,9 @@ bool PatchMemory(const patchInfo& patch) {
         }
     }
 
-    std::memcpy(cheatAddress, bytePatch.data(), bytePatch.size());
-
+    if (!dry_run) {
+        std::memcpy(cheatAddress, bytePatch.data(), bytePatch.size());
+    }
     return true;
 }
 

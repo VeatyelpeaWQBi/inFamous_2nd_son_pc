@@ -304,8 +304,6 @@ s32 PS4_SYSV_ABI sceAudioOutOpen(UserService::OrbisUserServiceUserId user_id,
 
         // Log attributes if present
 
-
-
         // Create backend
         port->impl = audio->Open(*port);
         if (!port->impl) {

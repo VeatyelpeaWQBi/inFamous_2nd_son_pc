@@ -46,9 +46,7 @@ inline u64 CurrentHostWriteGen() noexcept {
     return g_host_write_gen.load(std::memory_order_acquire);
 }
 
-inline void NoteHostWrite() noexcept {
-    g_host_write_gen.fetch_add(1, std::memory_order_acq_rel);
-}
+inline void NoteHostWrite() noexcept { g_host_write_gen.fetch_add(1, std::memory_order_acq_rel); }
 
 constexpr u64 PAGES_PER_WORD = 64;
 constexpr u64 BYTES_PER_PAGE = 4_KB;

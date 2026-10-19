@@ -240,7 +240,6 @@ s32 Linker::LoadModule(const std::filesystem::path& elf_name, bool is_dynamic) {
     num_static_modules += !is_dynamic;
     m_modules.emplace_back(std::move(module));
 
-
     return mod_id;
 }
 
@@ -338,8 +337,6 @@ void Linker::Relocate(Module* module) {
             default:
                 ASSERT_MSG(0, "unknown symbol type {}", sym_type);
             }
-
-
 
             switch (sym_bind) {
             case STB_LOCAL:

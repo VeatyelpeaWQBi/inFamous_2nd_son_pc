@@ -347,7 +347,6 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     while (!token.stop_requested()) {
         timer.Start();
 
-
         // Check if it's time to take a request.
         auto& vblank_status = main_port.vblank_status;
         if (vblank_status.count % (main_port.flip_rate + 1) == 0) {

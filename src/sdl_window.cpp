@@ -153,7 +153,9 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
             window, EmulatorSettings.GetFullScreenMode() == "Fullscreen" ? displayMode : NULL);
     }
     SDL_SetWindowFullscreen(window, EmulatorSettings.IsFullScreen());
-    if (!EmulatorSettings.IsFullScreen()) SDL_MaximizeWindow(window);
+    if (!EmulatorSettings.IsFullScreen()) {
+        SDL_MaximizeWindow(window);
+    }
     SDL_SyncWindow(window);
     // The window geometry is only final once the fullscreen transition has settled; refresh
     // the cached size so the first swapchain and the splashscreen use the real drawable size.

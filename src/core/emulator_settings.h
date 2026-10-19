@@ -581,7 +581,6 @@ class EmulatorSettingsImpl {
         }
     }
 
-
   public:
     // Add these getters to access overrideable fields
     std::vector<OverrideItem> GetGeneralOverrideableFields() const {

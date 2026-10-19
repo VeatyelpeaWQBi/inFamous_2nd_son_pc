@@ -178,7 +178,7 @@ bool AccurateSleep(const std::chrono::nanoseconds duration, std::chrono::nanosec
 
 #ifdef _WIN32
 
-// Sets the debugger-visible name of the current thread.
+// Retain the verified V2 GPU-worker affinity without a sampler thread.
 static u64 AutoGpuThreadsMask() {
     const auto read = [](LOGICAL_PROCESSOR_RELATIONSHIP relation) {
         std::vector<u8> buffer;

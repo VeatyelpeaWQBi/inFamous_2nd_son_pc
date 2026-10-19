@@ -74,6 +74,4 @@ void Pipeline::BindResources(Scheduler& on, DescriptorWrites& set_writes,
     cmdbuf.bindDescriptorSets(bind_point, *pipeline_layout, 0, desc_set, {});
 }
 
-
-
 } // namespace Vulkan

@@ -1562,7 +1562,4 @@ std::optional<vk::ShaderModule> PipelineCache::ReplaceShader(vk::ShaderModule mo
     return new_module;
 }
 
-
-
-
 } // namespace Vulkan

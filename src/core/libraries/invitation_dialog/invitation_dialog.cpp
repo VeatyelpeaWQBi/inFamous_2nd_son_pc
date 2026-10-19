@@ -90,8 +90,6 @@ sceInvitationDialogOpenA(const OrbisInvitationDialogParamA* param) {
     if (param->dataParam) {
         if (param->mode == ORBIS_INVITATION_DIALOG_MODE_SEND) {
 
-
-
             // Log address parameters
             const auto& addressParam = param->dataParam->SendInfo.addressParam;
             if (addressParam.addressType == ORBIS_INVITATION_DIALOG_ADDRESS_TYPE_USERDISABLE) {
@@ -181,8 +179,6 @@ sceInvitationDialogOpen(const OrbisInvitationDialogParam* param) {
     if (param->dataParam) {
         if (param->mode == ORBIS_INVITATION_DIALOG_MODE_SEND) {
 
-
-
             // Log address parameters
             const auto& addressParam = param->dataParam->SendInfo.addressParam;
             if (addressParam.addressType == ORBIS_INVITATION_DIALOG_ADDRESS_TYPE_USERDISABLE) {
@@ -256,7 +252,6 @@ s32 PS4_SYSV_ABI sceInvitationDialogGetResult(OrbisInvitationDialogResult* resul
 
     // Log result fields if they contain data
 
-
     if (result->sentOnlineIds) {
         for (u32 i = 0; i < result->sentOnlineIds->count &&
                         i < ORBIS_INVITATION_DIALOG_ADDRESS_USER_LIST_MAX_SIZE;
@@ -282,9 +277,7 @@ s32 PS4_SYSV_ABI sceInvitationDialogGetResult(OrbisInvitationDialogResult* resul
     return static_cast<s32>(g_state.result);
 }
 
-Libraries::CommonDialog::Status PS4_SYSV_ABI sceInvitationDialogUpdateStatus() {
-    return g_status;
-}
+Libraries::CommonDialog::Status PS4_SYSV_ABI sceInvitationDialogUpdateStatus() { return g_status; }
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI sceInvitationDialogClose() {
 
@@ -314,9 +307,7 @@ Libraries::CommonDialog::Error PS4_SYSV_ABI sceInvitationDialogTerminate() {
     return Libraries::CommonDialog::Error::OK;
 }
 
-Libraries::CommonDialog::Status PS4_SYSV_ABI sceInvitationDialogGetStatus() {
-    return g_status;
-}
+Libraries::CommonDialog::Status PS4_SYSV_ABI sceInvitationDialogGetStatus() { return g_status; }
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI sceInvitationDialogInitialize() {
     if (!CommonDialog::g_isInitialized) {

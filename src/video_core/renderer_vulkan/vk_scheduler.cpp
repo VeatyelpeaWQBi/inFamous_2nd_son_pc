@@ -43,7 +43,6 @@ std::mutex Scheduler::submit_mutex;
 // block for recorder space: a recorder submission may need that same mutex to make room.
 static thread_local bool in_submit_callback{};
 
-
 Scheduler::Scheduler(const Instance& instance, vk::Queue queue_, const char* name_)
     : instance{instance}, queue{queue_ ? queue_ : instance.GetGraphicsQueue()}, name{name_},
       work_semaphore{instance}, command_pool{instance, &work_semaphore} {

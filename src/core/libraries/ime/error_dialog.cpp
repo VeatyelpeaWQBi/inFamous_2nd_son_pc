@@ -128,9 +128,7 @@ Error PS4_SYSV_ABI sceErrorDialogClose() {
     return Error::OK;
 }
 
-Status PS4_SYSV_ABI sceErrorDialogGetStatus() {
-    return g_status;
-}
+Status PS4_SYSV_ABI sceErrorDialogGetStatus() { return g_status; }
 
 Error PS4_SYSV_ABI sceErrorDialogInitialize() {
     if (g_status != Status::NONE) {
@@ -177,9 +175,7 @@ Error PS4_SYSV_ABI sceErrorDialogTerminate() {
     return Error::OK;
 }
 
-Status PS4_SYSV_ABI sceErrorDialogUpdateStatus() {
-    return g_status;
-}
+Status PS4_SYSV_ABI sceErrorDialogUpdateStatus() { return g_status; }
 
 void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("ekXHb1kDBl0", "libSceErrorDialog", 1, "libSceErrorDialog", sceErrorDialogClose);

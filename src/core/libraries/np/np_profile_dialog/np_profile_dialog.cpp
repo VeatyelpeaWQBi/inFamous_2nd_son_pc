@@ -41,7 +41,6 @@ Libraries::CommonDialog::Error sceNpProfileDialogOpen(OrbisNpProfileDialogParam*
     g_result.userData = param->userData;
     g_status = Libraries::CommonDialog::Status::RUNNING;
 
-
     g_profile_dialog_ui = NpProfileDialogUi(&g_state, &g_status, &g_result);
 
     return Libraries::CommonDialog::Error::OK;
@@ -80,9 +79,7 @@ sceNpProfileDialogGetResult(OrbisNpProfileDialogResult* result) {
     return Libraries::CommonDialog::Error::OK;
 }
 
-Libraries::CommonDialog::Status PS4_SYSV_ABI sceNpProfileDialogGetStatus() {
-    return g_status;
-}
+Libraries::CommonDialog::Status PS4_SYSV_ABI sceNpProfileDialogGetStatus() { return g_status; }
 
 Libraries::CommonDialog::Error PS4_SYSV_ABI sceNpProfileDialogInitialize() {
     if (!CommonDialog::g_isInitialized) {
@@ -129,7 +126,6 @@ sceNpProfileDialogOpenA(OrbisNpProfileDialogParamA* param) {
     g_result.userData = param->userData;
     g_status = Libraries::CommonDialog::Status::RUNNING;
 
-
     g_profile_dialog_ui = NpProfileDialogUi(&g_state, &g_status, &g_result);
 
     return Libraries::CommonDialog::Error::OK;
@@ -152,9 +148,7 @@ Libraries::CommonDialog::Error PS4_SYSV_ABI sceNpProfileDialogTerminate() {
     return Libraries::CommonDialog::Error::OK;
 }
 
-Libraries::CommonDialog::Status PS4_SYSV_ABI sceNpProfileDialogUpdateStatus() {
-    return g_status;
-}
+Libraries::CommonDialog::Status PS4_SYSV_ABI sceNpProfileDialogUpdateStatus() { return g_status; }
 
 void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("uj9Cz7Tk0cc", "libSceNpProfileDialogCompat", 1, "libSceNpProfileDialog",

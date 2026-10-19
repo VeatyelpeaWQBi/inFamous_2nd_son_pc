@@ -199,7 +199,6 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
     backing->num_samples = info.num_samples;
     backing->image = UniqueImage{instance.GetDevice(), instance.GetAllocator()};
     backing->image.Create(image_ci);
-
 }
 
 Image::~Image() = default;

@@ -255,7 +255,6 @@ int PS4_SYSV_ABI sceNpMatching2Initialize(OrbisNpMatching2InitializeParameter* p
 
     ;
 
-
     InitEventDispatcher();
 
     SetInitialized(true);
@@ -619,37 +618,21 @@ int PS4_SYSV_ABI sceNpMatching2RegisterRoomMessageCallback(
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceNpMatching2GetMemoryInfo() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2GetMemoryInfo() { return ORBIS_OK; }
 
-int PS4_SYSV_ABI sceNpMatching2GetSslMemoryInfo() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2GetSslMemoryInfo() { return ORBIS_OK; }
 
-int PS4_SYSV_ABI sceNpMatching2GetRoomMemberIdListLocal() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2GetRoomMemberIdListLocal() { return ORBIS_OK; }
 
-int PS4_SYSV_ABI sceNpMatching2GetRoomPasswordLocal() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2GetRoomPasswordLocal() { return ORBIS_OK; }
 
-int PS4_SYSV_ABI sceNpMatching2GetSignalingOptParamLocal() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2GetSignalingOptParamLocal() { return ORBIS_OK; }
 
-int PS4_SYSV_ABI sceNpMatching2GetLobbyInfoList() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2GetLobbyInfoList() { return ORBIS_OK; }
 
-int PS4_SYSV_ABI sceNpMatching2GetLobbyMemberDataInternal() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2GetLobbyMemberDataInternal() { return ORBIS_OK; }
 
-int PS4_SYSV_ABI sceNpMatching2GetLobbyMemberDataInternalList() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2GetLobbyMemberDataInternalList() { return ORBIS_OK; }
 
 int PS4_SYSV_ABI sceNpMatching2GetRoomDataExternalList(
     OrbisNpMatching2ContextId ctxId, OrbisNpMatching2GetRoomDataExternalListRequest* request,
@@ -743,9 +726,7 @@ int PS4_SYSV_ABI sceNpMatching2GetRoomMemberDataExternalList(
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceNpMatching2GetRoomMemberDataInternal() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2GetRoomMemberDataInternal() { return ORBIS_OK; }
 
 int PS4_SYSV_ABI sceNpMatching2GetUserInfoListA(OrbisNpMatching2ContextId ctxId,
                                                 OrbisNpMatching2GetUserInfoListRequest* request,
@@ -863,34 +844,22 @@ int PS4_SYSV_ABI sceNpMatching2KickoutRoomMember(OrbisNpMatching2ContextId ctxId
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceNpMatching2LeaveLobby() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2LeaveLobby() { return ORBIS_OK; }
 
-int PS4_SYSV_ABI sceNpMatching2SendLobbyChatMessage() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2SendLobbyChatMessage() { return ORBIS_OK; }
 
 int PS4_SYSV_ABI sceNpMatching2SendRoomChatMessage(OrbisNpMatching2ContextId ctxId, void* reqParam,
                                                    void* optParam, s32* reqId) {
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceNpMatching2SetLobbyMemberDataInternal() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2SetLobbyMemberDataInternal() { return ORBIS_OK; }
 
-int PS4_SYSV_ABI sceNpMatching2SetRoomMemberDataInternal() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2SetRoomMemberDataInternal() { return ORBIS_OK; }
 
-int PS4_SYSV_ABI sceNpMatching2SetSignalingOptParam() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2SetSignalingOptParam() { return ORBIS_OK; }
 
-int PS4_SYSV_ABI sceNpMatching2SignalingGetPeerNetInfo() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2SignalingGetPeerNetInfo() { return ORBIS_OK; }
 
 int PS4_SYSV_ABI sceNpMatching2SignalingGetPingInfo(OrbisNpMatching2ContextId ctxId,
                                                     const void* reqParam, const void* optParam,
@@ -936,9 +905,7 @@ int PS4_SYSV_ABI sceNpMatching2SignalingGetPingInfo(OrbisNpMatching2ContextId ct
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceNpMatching2SignalingCancelPeerNetInfo() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2SignalingCancelPeerNetInfo() { return ORBIS_OK; }
 
 int PS4_SYSV_ABI sceNpMatching2SignalingGetConnectionInfoA(OrbisNpMatching2ContextId ctxId,
                                                            OrbisNpMatching2RoomId roomId,
@@ -979,9 +946,7 @@ int PS4_SYSV_ABI sceNpMatching2SignalingGetLocalNetInfo(OrbisNpMatching2ContextI
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceNpMatching2SignalingGetPeerNetInfoResult() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNpMatching2SignalingGetPeerNetInfoResult() { return ORBIS_OK; }
 
 void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("10t3e5+JPnU", "libSceNpMatching2", 1, "libSceNpMatching2",

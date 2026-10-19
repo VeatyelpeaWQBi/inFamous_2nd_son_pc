@@ -30,15 +30,9 @@ std::shared_ptr<UsbBackend> usb_backend;
 #if defined(_WIN32)
 #endif
 
-s32 PS4_SYSV_ABI sceUsbdInit() {
+s32 PS4_SYSV_ABI sceUsbdInit() { return libusb_to_orbis_error(usb_backend->Init()); }
 
-    return libusb_to_orbis_error(usb_backend->Init());
-}
-
-void PS4_SYSV_ABI sceUsbdExit() {
-
-    usb_backend->Exit();
-}
+void PS4_SYSV_ABI sceUsbdExit() { usb_backend->Exit(); }
 
 s64 PS4_SYSV_ABI sceUsbdGetDeviceList(SceUsbdDevice*** list) {
 
@@ -55,10 +49,7 @@ SceUsbdDevice* PS4_SYSV_ABI sceUsbdRefDevice(SceUsbdDevice* device) {
     return libusb_ref_device(device);
 }
 
-void PS4_SYSV_ABI sceUsbdUnrefDevice(SceUsbdDevice* device) {
-
-    libusb_unref_device(device);
-}
+void PS4_SYSV_ABI sceUsbdUnrefDevice(SceUsbdDevice* device) { libusb_unref_device(device); }
 
 s32 PS4_SYSV_ABI sceUsbdGetConfiguration(SceUsbdDeviceHandle* dev_handle, s32* config) {
 
@@ -221,10 +212,7 @@ s32 PS4_SYSV_ABI sceUsbdCancelTransfer(SceUsbdTransfer* transfer) {
     return libusb_to_orbis_error(libusb_cancel_transfer(transfer));
 }
 
-void PS4_SYSV_ABI sceUsbdFreeTransfer(SceUsbdTransfer* transfer) {
-
-    libusb_free_transfer(transfer);
-}
+void PS4_SYSV_ABI sceUsbdFreeTransfer(SceUsbdTransfer* transfer) { libusb_free_transfer(transfer); }
 
 void PS4_SYSV_ABI sceUsbdFillControlTransfer(SceUsbdTransfer* transfer,
                                              SceUsbdDeviceHandle* dev_handle, u8* buffer,
@@ -315,40 +303,19 @@ s32 PS4_SYSV_ABI sceUsbdGetStringDescriptorAscii(SceUsbdDeviceHandle* dev_handle
         libusb_get_string_descriptor_ascii(dev_handle, desc_index, data, length));
 }
 
-s32 PS4_SYSV_ABI sceUsbdTryLockEvents() {
+s32 PS4_SYSV_ABI sceUsbdTryLockEvents() { return usb_backend->TryLockEvents(); }
 
-    return usb_backend->TryLockEvents();
-}
+void PS4_SYSV_ABI sceUsbdLockEvents() { usb_backend->LockEvents(); }
 
-void PS4_SYSV_ABI sceUsbdLockEvents() {
+void PS4_SYSV_ABI sceUsbdUnlockEvents() { usb_backend->UnlockEvents(); }
 
-    usb_backend->LockEvents();
-}
+s32 PS4_SYSV_ABI sceUsbdEventHandlingOk() { return usb_backend->EventHandlingOk(); }
 
-void PS4_SYSV_ABI sceUsbdUnlockEvents() {
+s32 PS4_SYSV_ABI sceUsbdEventHandlerActive() { return usb_backend->EventHandlerActive(); }
 
-    usb_backend->UnlockEvents();
-}
+void PS4_SYSV_ABI sceUsbdLockEventWaiters() { usb_backend->LockEventWaiters(); }
 
-s32 PS4_SYSV_ABI sceUsbdEventHandlingOk() {
-
-    return usb_backend->EventHandlingOk();
-}
-
-s32 PS4_SYSV_ABI sceUsbdEventHandlerActive() {
-
-    return usb_backend->EventHandlerActive();
-}
-
-void PS4_SYSV_ABI sceUsbdLockEventWaiters() {
-
-    usb_backend->LockEventWaiters();
-}
-
-void PS4_SYSV_ABI sceUsbdUnlockEventWaiters() {
-
-    usb_backend->UnlockEventWaiters();
-}
+void PS4_SYSV_ABI sceUsbdUnlockEventWaiters() { usb_backend->UnlockEventWaiters(); }
 
 s32 PS4_SYSV_ABI sceUsbdWaitForEvent(timeval* tv) {
 

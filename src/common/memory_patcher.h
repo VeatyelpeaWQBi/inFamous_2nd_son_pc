@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -48,11 +49,11 @@ struct patchInfo {
 std::string convertValueToHex(const std::string type, const std::string valueStr);
 
 void OnGameLoaded();
-void AddPatchToQueue(const patchInfo& patchToAdd);
 
 /// Returns false when the patch was not applied (bad address or value, or the bytes at the
 /// address are not the expected ones).
-bool PatchMemory(const patchInfo& patch);
+// dry_run validates addresses, payload and original bytes without modifying guest memory.
+bool PatchMemory(const patchInfo& patch, bool dry_run = false);
 
 static std::vector<int32_t> PatternToByte(const std::string& pattern);
 uintptr_t PatternScan(const std::string& signature);

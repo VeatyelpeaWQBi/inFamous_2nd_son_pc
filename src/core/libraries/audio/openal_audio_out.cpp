@@ -237,7 +237,6 @@ class OpenALPortBackend : public PortBackend {
         // Check for AL_EXT_FLOAT32 extension
         has_float_ext = alIsExtensionPresent("AL_EXT_FLOAT32");
 
-
         // Determine OpenAL format
         if (!DetermineOpenALFormat()) {
             LOG_ERROR(Lib_AudioOut, "Unsupported audio format for OpenAL");

@@ -179,9 +179,7 @@ static s32 CompleteRequest(NpRequest& req, s32 result) {
     return result;
 }
 
-s32 PS4_SYSV_ABI sceNpCreateRequest() {
-    return CreateNpRequest(false);
-}
+s32 PS4_SYSV_ABI sceNpCreateRequest() { return CreateNpRequest(false); }
 
 s32 PS4_SYSV_ABI sceNpCreateAsyncRequest(const OrbisNpCreateAsyncRequestParameter* param) {
     if (param == nullptr) {
@@ -1146,10 +1144,7 @@ s32 PS4_SYSV_ABI sceNpIsPlusMember(Libraries::UserService::OrbisUserServiceUserI
     return ORBIS_OK;
 }
 
-s32 PS4_SYSV_ABI sceNpNotifyPlusFeature(void* param) {
-
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceNpNotifyPlusFeature(void* param) { return ORBIS_OK; }
 
 s32 PS4_SYSV_ABI sceNpRegisterPlusEventCallback(OrbisNpPlusEventCallback callback, void* userdata) {
     if (callback == nullptr) {

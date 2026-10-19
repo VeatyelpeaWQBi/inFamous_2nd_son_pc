@@ -268,7 +268,6 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
 
     // Format mismatch warning (safe but useful)
 
-
     // The region both images have (the destination may be smaller: shrunk render targets).
     const u32 base_width = std::min(src->info.size.width, dst->info.size.width);
     const u32 base_height = std::min(src->info.size.height, dst->info.size.height);
@@ -764,7 +763,6 @@ void Runtime::FlushBarriers() {
     if (!dep_info.memoryBarrierCount && !dep_info.imageMemoryBarrierCount) {
         return;
     }
-
 
     scheduler.EndRendering();
     const auto cmdbuf = scheduler.Recorder();

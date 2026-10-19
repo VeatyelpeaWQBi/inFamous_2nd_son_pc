@@ -88,8 +88,6 @@ template <typename T> std::optional<T> get_optional(const toml::value& v, const 
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-
-
 // ── Singleton ────────────────────────────────────────────────────────
 EmulatorSettingsImpl::EmulatorSettingsImpl() = default;
 

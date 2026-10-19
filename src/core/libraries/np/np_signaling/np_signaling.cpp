@@ -170,7 +170,6 @@ s32 PS4_SYSV_ABI sceNpSignalingCreateContext(const void* npId, void* callback, v
         ctx.activate_last_update_us = NowUs();
         ctx.bound_port = Stubs::ConfiguredPort();
         *outContextId = ctx_id;
-
     }
 
     if (transport_ready) {
@@ -227,7 +226,6 @@ s32 PS4_SYSV_ABI sceNpSignalingCreateContextA(s32 userId, void* callback, void* 
         ctx.activate_last_update_us = NowUs();
         ctx.bound_port = Stubs::ConfiguredPort();
         *outContextId = ctx_id;
-
     }
 
     if (transport_ready) {

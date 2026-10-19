@@ -10,6 +10,7 @@
 #include <iostream>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 
 #include "common/debug.h"
 #include "common/logging/log.h"
@@ -386,9 +387,15 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         const auto content_id = param_sfo->GetString("CONTENT_ID");
         const auto title_id = param_sfo->GetString("TITLE_ID");
         if (content_id.has_value() && !content_id->empty()) {
-            id = std::string(*content_id, 7, 9);
+            if (content_id->size() < 16) {
+                throw std::runtime_error("Invalid game CONTENT_ID.");
+            }
+            id = content_id->substr(7, 9);
         } else if (title_id.has_value()) {
             id = *title_id;
+        }
+        if (title_id && !title_id->empty() && *title_id != id) {
+            throw std::runtime_error("Mounted TITLE_ID and CONTENT_ID disagree.");
         }
         title = param_sfo->GetString("TITLE").value_or("Unknown title");
         fw_version = param_sfo->GetInteger("SYSTEM_VER").value_or(0x4700000);
@@ -421,14 +428,20 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         }
     }
 
+    const auto guest_eboot_path = "/app0/" + eboot_name.generic_string();
+    {
+        const auto selected_executable = mnt->Open(guest_eboot_path, false);
+        if (!selected_executable) {
+            throw std::runtime_error("Cannot open the mounted game executable.");
+        }
+        Core::Release::SelectGame(id, app_version, *selected_executable);
+    }
     EmulatorSettings.Load(id);
-    Core::Release::Apply(id, app_version);
+    Core::Release::Apply();
     // Switch to configured log
     Common::Log::Switch((!id.empty() && EmulatorSettings.IsLogSeparate()) ? id + ".log"
                                                                           : "shad_log.txt",
                         append_log);
-
-    auto guest_eboot_path = "/app0/" + eboot_name.generic_string();
 
     auto& game_info = Common::ElfInfo::Instance();
     game_info.initialized = true;
@@ -449,20 +462,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     ASSERT_MSG(mnt->Exists(guest_eboot_path), "Guest app's main executable {} does not exist",
                guest_eboot_path);
 
-
-#ifdef _WIN32
-    ;
-#endif
-    ;
-#ifdef _WIN32
-    ;
-#endif
-    ;
-#ifdef __linux__
-    ;
-#endif
-    ;
-
     if (!args.empty()) {
         if (args.size() > 32) {
             LOG_ERROR(Loader, "Too many game arguments, only passing the first 32");
@@ -470,7 +469,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     } else {
         args.insert(args.begin(), guest_eboot_path);
     }
-
 
 #ifdef _WIN32
     // Enable red-zone patching if the setting is enabled
@@ -487,7 +485,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     memory = Core::Memory::Instance();
     controllers = Common::Singleton<Input::GameControllers>::Instance();
     linker = Common::Singleton<Core::Linker>::Instance();
-
 
     // Initialize patcher
     if (!id.empty()) {
@@ -601,9 +598,7 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         window->WaitEvent();
     }
 
-    ;
-    // Do not suspend/sample host threads while quick-exit callbacks and injected
-    // profiler DLLs are shutting down. The sampler is also stopped on relaunch.
+    // Registered shutdown callbacks persist real caches and finish save backups.
     std::quick_exit(0);
 }
 

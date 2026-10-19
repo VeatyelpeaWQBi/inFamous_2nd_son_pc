@@ -14,9 +14,7 @@
 
 namespace Libraries::Np::NpWebApi2 {
 
-s32 PS4_SYSV_ABI sceNpWebApi2AbortRequest(s64 request_id) {
-    return abortRequest(request_id);
-}
+s32 PS4_SYSV_ABI sceNpWebApi2AbortRequest(s64 request_id) { return abortRequest(request_id); }
 
 s32 PS4_SYSV_ABI sceNpWebApi2AddHttpRequestHeader(s64 request_id, const char* field_name,
                                                   const char* field_value) {
@@ -40,9 +38,7 @@ s32 PS4_SYSV_ABI sceNpWebApi2AddWebTraceTag(s64 request_id, const char* value) {
     return addHttpRequestHeader(request_id, "X-Psn-WebTrace-Tag", value);
 }
 
-void PS4_SYSV_ABI sceNpWebApi2CheckTimeout() {
-    return checkTimeout();
-}
+void PS4_SYSV_ABI sceNpWebApi2CheckTimeout() { return checkTimeout(); }
 
 s32 PS4_SYSV_ABI sceNpWebApi2CreateMultipartRequest(s32 user_ctx_id, const char* api_group,
                                                     const char* path, const char* method,
@@ -105,9 +101,7 @@ s32 PS4_SYSV_ABI sceNpWebApi2CreateUserContext(s32 lib_ctx_id,
     return user_ctx_id;
 }
 
-s32 PS4_SYSV_ABI sceNpWebApi2DeleteRequest(s64 request_id) {
-    return deleteRequest(request_id);
-}
+s32 PS4_SYSV_ABI sceNpWebApi2DeleteRequest(s64 request_id) { return deleteRequest(request_id); }
 
 s32 PS4_SYSV_ABI sceNpWebApi2DeleteUserContext(s32 user_ctx_id) {
     return deleteUserContext(user_ctx_id);

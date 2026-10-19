@@ -28,19 +28,15 @@ class DescriptorHeap;
 class DriverPipelineCache;
 
 class Pipeline {
-public:
+  public:
     Pipeline(const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,
              const Shader::Profile& profile, vk::PipelineCache pipeline_cache,
              bool is_compute = false);
     virtual ~Pipeline();
 
-    vk::Pipeline Handle() const noexcept {
-        return *pipeline;
-    }
+    vk::Pipeline Handle() const noexcept { return *pipeline; }
 
-    vk::PipelineLayout GetLayout() const noexcept {
-        return *pipeline_layout;
-    }
+    vk::PipelineLayout GetLayout() const noexcept { return *pipeline_layout; }
 
     auto GetStages() const {
         static_assert(static_cast<u32>(Shader::SwStage::Compute) == Shader::MaxStageTypes - 1);
@@ -55,9 +51,7 @@ public:
         return *stages[u32(stage)];
     }
 
-    bool IsCompute() const {
-        return is_compute;
-    }
+    bool IsCompute() const { return is_compute; }
 
     using DescriptorWrites = std::vector<vk::WriteDescriptorSet>;
     void BindResources(DescriptorWrites& set_writes, const Shader::PushData& push_data) const;
@@ -73,31 +67,22 @@ public:
     void RetainComputeWork() noexcept {
         retained_compute_work = true; // Set before publication to the compiler/recorder.
     }
-    [[nodiscard]] bool RetainsComputeWork() const noexcept {
-        return retained_compute_work;
-    }
+    [[nodiscard]] bool RetainsComputeWork() const noexcept { return retained_compute_work; }
 
     /// Whether the descriptors are pushed (no descriptor set allocated per bind).
-    [[nodiscard]] bool UsesPushDescriptors() const noexcept {
-        return uses_push_descriptors;
-    }
+    [[nodiscard]] bool UsesPushDescriptors() const noexcept { return uses_push_descriptors; }
 
     /// Returns true once the Vulkan pipeline object exists. A pipeline whose creation was
     /// deferred is compiled by a worker thread and must not be bound before that.
-    [[nodiscard]] bool IsReady() const noexcept {
-        return readiness.IsReady();
-    }
+    [[nodiscard]] bool IsReady() const noexcept { return readiness.IsReady(); }
 
     /// Creates the Vulkan pipeline object when the constructor deferred it. Called exactly once,
     /// from any thread. The layout is immutable; the handle is published with MarkReady().
     virtual void Compile() = 0;
     void SetDriverCache(DriverPipelineCache* cache) { driver_cache = cache; }
 
-protected:
-
-    void MarkReady() noexcept {
-        readiness.Publish();
-    }
+  protected:
+    void MarkReady() noexcept { readiness.Publish(); }
 
     const Instance& instance;
     Scheduler& scheduler;

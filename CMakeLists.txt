@@ -53,7 +53,7 @@ target_link_libraries(ifss_ffmpeg INTERFACE psapi strmiids uuid oleaut32 shlwapi
 add_compile_definitions(IFSS_PROJECT_LOCAL_USER_DATA=1)
 include(cmake/EngineBuild.cmake)
 target_sources(shadps4 PRIVATE src/core/runtime_policy.h src/core/release_config.cpp
-    src/core/release_config.h src/common/display_state.h)
+    src/core/release_config.h src/core/second_son_compatibility.h src/common/display_state.h)
 set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "inFAMOUS Second Son"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 set(IFSS_GAME_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/inFAMOUS Second Son.ico")
@@ -67,7 +67,7 @@ if(MSVC)
 endif()
 
 # Not part of the engine or either release package.
-foreach(policy buffer_bind_cache readback_dependencies optimization_v2)
+foreach(policy buffer_bind_cache readback_dependencies optimization_v2 second_son_compatibility)
     add_executable(ifss_${policy}_test EXCLUDE_FROM_ALL tests/test_${policy}.cpp)
     target_compile_features(ifss_${policy}_test PRIVATE cxx_std_23)
     target_include_directories(ifss_${policy}_test PRIVATE src)

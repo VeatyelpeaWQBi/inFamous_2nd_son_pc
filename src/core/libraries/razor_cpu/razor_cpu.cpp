@@ -9,87 +9,47 @@
 
 namespace Libraries::RazorCpu {
 
-s32 PS4_SYSV_ABI sceRazorCpuBeginLogicalFileAccess() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuBeginLogicalFileAccess() { return ORBIS_OK; }
 
 void PS4_SYSV_ABI sceRazorCpuDisableFiberUserMarkers() { ; }
 
-s32 PS4_SYSV_ABI sceRazorCpuEndLogicalFileAccess() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuEndLogicalFileAccess() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuFiberLogNameChange() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuFiberLogNameChange() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuFiberSwitch() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuFiberSwitch() { return ORBIS_OK; }
 
-bool PS4_SYSV_ABI sceRazorCpuFlushOccurred() {
-    return false;
-}
+bool PS4_SYSV_ABI sceRazorCpuFlushOccurred() { return false; }
 
-s32 PS4_SYSV_ABI sceRazorCpuGetDataTagStorageSize() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuGetDataTagStorageSize() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuGpuMarkerSync() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuGpuMarkerSync() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuInitDataTags() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuInitDataTags() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuInitializeGpuMarkerContext() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuInitializeGpuMarkerContext() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuInitializeInternal() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuInitializeInternal() { return ORBIS_OK; }
 
-bool PS4_SYSV_ABI sceRazorCpuIsCapturing() {
-    return false;
-}
+bool PS4_SYSV_ABI sceRazorCpuIsCapturing() { return false; }
 
-s32 PS4_SYSV_ABI sceRazorCpuJobManagerDispatch() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuJobManagerDispatch() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuJobManagerJob() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuJobManagerJob() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuJobManagerSequence() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuJobManagerSequence() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuNamedSync() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuNamedSync() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuPlotValue() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuPlotValue() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuPopMarker() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuPopMarker() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuPushMarker() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuPushMarker() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuPushMarkerStatic() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuPushMarkerStatic() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuResizeTaggedBuffer() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuResizeTaggedBuffer() { return ORBIS_OK; }
 
 void PS4_SYSV_ABI sceRazorCpuSetPopMarkerCallback() { ; }
 
@@ -97,49 +57,27 @@ void PS4_SYSV_ABI sceRazorCpuSetPushMarkerCallback() { ; }
 
 void PS4_SYSV_ABI sceRazorCpuSetPushMarkerStaticCallback() { ; }
 
-s32 PS4_SYSV_ABI sceRazorCpuShutdownDataTags() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuShutdownDataTags() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuStartCaptureInternal() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuStartCaptureInternal() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuStopCaptureInternal() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuStopCaptureInternal() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuSync() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuSync() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuTagArray() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuTagArray() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuTagBuffer() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuTagBuffer() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuUnTagBuffer() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuUnTagBuffer() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuWorkloadRunBegin() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuWorkloadRunBegin() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuWorkloadRunEnd() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuWorkloadRunEnd() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuWorkloadSubmit() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuWorkloadSubmit() { return ORBIS_OK; }
 
-s32 PS4_SYSV_ABI sceRazorCpuWriteBookmark() {
-    return ORBIS_OK;
-}
+s32 PS4_SYSV_ABI sceRazorCpuWriteBookmark() { return ORBIS_OK; }
 
 void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("JFzLJBlYIJE", "libSceRazorCpu", 1, "libSceRazorCpu",

@@ -518,11 +518,7 @@ static void LogSendRequestSettings(const HttpRequest& req, int reqId, u64 body_s
         }
     }
 
-
-
     // Timeouts and basic flags
-
-
 
     // Merged header view: dump tmpl + conn + req lists
     auto dump_headers = [&](const char* origin,
@@ -818,7 +814,6 @@ static s32 RunRealHttpRequest(const SendRequestPlan& plan_in, HttpResponse& out_
             const bool game_disabled_verify =
                 (plan.settings.ssl_flags & ORBIS_HTTPS_FLAG_SERVER_VERIFY) == 0;
             cli.enable_server_certificate_verification(!game_disabled_verify);
-
         }
 #endif
 
@@ -2351,9 +2346,7 @@ int PS4_SYSV_ABI sceHttpAbortRequest(int reqId) {
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceHttpAbortRequestForce(int reqId) {
-    return sceHttpAbortRequest(reqId);
-}
+int PS4_SYSV_ABI sceHttpAbortRequestForce(int reqId) { return sceHttpAbortRequest(reqId); }
 
 //***********************************
 // Https Option setting functions

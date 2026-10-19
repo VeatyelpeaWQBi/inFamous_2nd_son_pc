@@ -233,7 +233,6 @@ void SharedMemoryBarrierPass(IR::Program& program, const RuntimeInfo& runtime_in
             num_barriers += EmitBarrierInBlock(node.data.block);
         }
     }
-
 }
 
 static bool IsLoadBuffer(const IR::Inst& inst) {
@@ -431,7 +430,6 @@ void WaveMemoryBarrierPass(IR::Program& program, const RuntimeInfo& runtime_info
             ++num_barriers;
         }
     }
-
 }
 
 } // namespace Shader::Optimization

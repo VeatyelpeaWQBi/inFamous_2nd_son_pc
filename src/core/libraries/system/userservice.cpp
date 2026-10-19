@@ -118,9 +118,7 @@ int PS4_SYSV_ABI sceUserServiceGetDiscPlayerFlag() {
 
 std::queue<OrbisUserServiceEvent> user_service_event_queue = {};
 
-void AddUserServiceEvent(const OrbisUserServiceEvent e) {
-    user_service_event_queue.push(e);
-}
+void AddUserServiceEvent(const OrbisUserServiceEvent e) { user_service_event_queue.push(e); }
 
 s32 PS4_SYSV_ABI sceUserServiceGetEvent(OrbisUserServiceEvent* event) {
 

@@ -23,7 +23,7 @@ sceCompanionHttpdGet2ndScreenStatus(Libraries::UserService::OrbisUserServiceUser
 
 s32 PS4_SYSV_ABI sceCompanionHttpdGetEvent(OrbisCompanionHttpdEvent* pEvent) {
     pEvent->event = ORBIS_COMPANION_HTTPD_EVENT_DISCONNECT; // disconnected
-    return ORBIS_COMPANION_HTTPD_ERROR_NO_EVENT; // No events to obtain
+    return ORBIS_COMPANION_HTTPD_ERROR_NO_EVENT;            // No events to obtain
 }
 
 s32 PS4_SYSV_ABI

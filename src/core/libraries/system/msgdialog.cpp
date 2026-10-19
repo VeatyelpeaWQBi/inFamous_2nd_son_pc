@@ -41,9 +41,7 @@ Error PS4_SYSV_ABI sceMsgDialogGetResult(DialogResult* result) {
     return Error::OK;
 }
 
-Status PS4_SYSV_ABI sceMsgDialogGetStatus() {
-    return g_status;
-}
+Status PS4_SYSV_ABI sceMsgDialogGetStatus() { return g_status; }
 
 Error PS4_SYSV_ABI sceMsgDialogInitialize() {
     if (!CommonDialog::g_isInitialized) {
@@ -133,9 +131,7 @@ Error PS4_SYSV_ABI sceMsgDialogTerminate() {
     return Error::OK;
 }
 
-Status PS4_SYSV_ABI sceMsgDialogUpdateStatus() {
-    return g_status;
-}
+Status PS4_SYSV_ABI sceMsgDialogUpdateStatus() { return g_status; }
 
 void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("HTrcDKlFKuM", "libSceMsgDialog", 1, "libSceMsgDialog", sceMsgDialogClose);

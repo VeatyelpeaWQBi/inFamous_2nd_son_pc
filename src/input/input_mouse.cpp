@@ -49,9 +49,7 @@ bool ToggleMouseModeTo(MouseMode m) {
 
 MouseMode GetMouseMode() { return mouse_input.Mode(); }
 MouseInput& GetMouseInput() { return mouse_input; }
-void CenterMouseInput() {
-    mouse_input.Center();
-}
+void CenterMouseInput() { mouse_input.Center(); }
 void ReleaseMouseInput(GameController* controller) {
     std::scoped_lock lock{mouse_poll_mutex};
     const bool active = mouse_input.Mode() != MouseMode::Off;

@@ -95,9 +95,7 @@ int PS4_SYSV_ABI sceNetCtlUnregisterCallbackV6() {
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceNetCtlCheckCallback() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNetCtlCheckCallback() { return ORBIS_OK; }
 
 int PS4_SYSV_ABI sceNetCtlCheckCallbackForLibIpcInt() {
     LOG_ERROR(Lib_NetCtl, "(STUBBED) called");
@@ -442,9 +440,7 @@ int PS4_SYSV_ABI Func_D8DCB6973537A3DC() {
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceNetCtlCheckCallbackForNpToolkit() {
-    return ORBIS_OK;
-}
+int PS4_SYSV_ABI sceNetCtlCheckCallbackForNpToolkit() { return ORBIS_OK; }
 
 int PS4_SYSV_ABI sceNetCtlClearEventForNpToolkit() {
     LOG_ERROR(Lib_NetCtl, "(STUBBED) called");

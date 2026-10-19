@@ -200,7 +200,6 @@ class PipelineCache : public AmdGpu::ScoutClient {
     std::optional<vk::ShaderModule> ReplaceShader(vk::ShaderModule module,
                                                   std::span<const u32> spv_code);
 
-
     auto& GetProfile() const { return profile; }
 
     /// The scout stage taken as is (scout_fast) for this stage info in the current draw, null

@@ -639,10 +639,7 @@ int PS4_SYSV_ABI sceRtcGetTick(OrbisRtcDateTime* pTime, OrbisRtcTick* pTick) {
     return ORBIS_OK;
 }
 
-u32 PS4_SYSV_ABI sceRtcGetTickResolution() {
-
-    return 1000000;
-}
+u32 PS4_SYSV_ABI sceRtcGetTickResolution() { return 1000000; }
 
 int PS4_SYSV_ABI sceRtcGetTime_t(OrbisRtcDateTime* pTime, time_t* llTime) {
 

@@ -231,7 +231,6 @@ static void GenerateEXTRQ(void* /* address */, const ZydisDecodedOperand* operan
         u8 length = operands[1].imm.value.u & 0x3F;
         u8 index = operands[2].imm.value.u & 0x3F;
 
-
         const Xbyak::Reg64 scratch1 = rax;
         const Xbyak::Reg64 scratch2 = rcx;
 
@@ -817,7 +816,6 @@ static bool TryExecuteIllegalInstruction(void* ctx, void* code_address) {
 
         u64 index = (lowQWordSrc >> 8) & 0x3F;
 
-
         lowQWordDst >>= index;
         lowQWordDst &= mask;
 
@@ -849,7 +847,6 @@ static bool TryExecuteIllegalInstruction(void* ctx, void* code_address) {
         }
 
         u64 index = (highQWordSrc >> 8) & 0x3F;
-
 
         lowQWordSrc &= mask;
         lowQWordDst &= ~(mask << index);

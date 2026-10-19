@@ -133,7 +133,6 @@ struct HleFontWriting {
     bool has_raw_glyph_metrics = false;
 };
 
-
 static void FillWritingMetricsFromGlyph(HleFontWriting& writing,
                                         const OrbisFontGlyphMetrics& glyph_metrics) {
     writing.raw_glyph_metrics = glyph_metrics;
@@ -154,12 +153,6 @@ static void ZeroWritingMetrics(OrbisFontWritingMetrics* metrics) {
         std::memset(metrics, 0, sizeof(*metrics));
     }
 }
-
-
-
-
-
-
 
 static void ResetWritingAggregateMetrics(HleFontWriting& writing) {
     writing.has_aggregate_metrics = false;
@@ -1063,7 +1056,6 @@ s32 PS4_SYSV_ABI sceFontCreateRendererWithEdition(const OrbisFontMem* memory,
                                                   OrbisFontRendererCreateParams create_params,
                                                   u64 edition, OrbisFontRenderer* pRenderer) {
 
-
     s32 rc = ORBIS_FONT_ERROR_INVALID_PARAMETER;
     if (!memory) {
         if (!pRenderer) {
@@ -1201,7 +1193,6 @@ s32 PS4_SYSV_ABI sceFontCreateString(const OrbisFontMem* fontMemory,
 
     ;
 
-
     if (!fontTextSource->textParser) {
         if (pFontString) {
             *pFontString = nullptr;
@@ -1327,7 +1318,6 @@ s32 PS4_SYSV_ABI sceFontCreateString(const OrbisFontMem* fontMemory,
     LinkCharacterNodes(s->character_storage->characters);
     s->text_count = static_cast<u32>(s->character_storage->characters.size());
     s->render_count = s->text_count;
-
 
     *pFontString = reinterpret_cast<OrbisFontString>(s);
     return ORBIS_OK;
@@ -1750,7 +1740,6 @@ s32 PS4_SYSV_ABI sceFontGetHorizontalLayout(OrbisFontHandle fontHandle,
         if (style_frame) {
             static std::atomic<int> s_layout_trace_budget{120};
             const int remaining = s_layout_trace_budget.fetch_sub(1, std::memory_order_relaxed);
-
         };
         return ORBIS_OK;
     }
@@ -2507,7 +2496,6 @@ s32 PS4_SYSV_ABI sceFontMemoryTerm(OrbisFontMem* mem_desc) {
 s32 PS4_SYSV_ABI sceFontOpenFontFile(OrbisFontLib library, const char* guest_path, u32 open_mode,
                                      const OrbisFontOpenParams* open_detail,
                                      OrbisFontHandle* out_handle) {
-
 
     if (!library) {
         if (out_handle) {
@@ -3379,7 +3367,6 @@ s32 PS4_SYSV_ABI sceFontOpenFontInstance(OrbisFontHandle fontHandle, OrbisFontHa
 s32 PS4_SYSV_ABI sceFontOpenFontMemory(OrbisFontLib library, const void* fontAddress, u32 fontSize,
                                        const OrbisFontOpenParams* open_params,
                                        OrbisFontHandle* pFontHandle) {
-
 
     s32 rc = ORBIS_FONT_ERROR_INVALID_LIBRARY;
     if (!library) {

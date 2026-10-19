@@ -5,10 +5,7 @@
   "platform": "windows-x86_64",
   "source_commit": "5d278d36ff67efcc0e3fdaa4442dfdc5a5588e83",
   "runtime_path": "Build/Release/inFAMOUS Second Son.exe",
-  "game_relative_path": "game/CUSA00309",
-  "game_sha256": "2d1ca79630d7bbe6fa29575f59aa7996d43071d74ac8e4f7d40137967d9039ab",
-  "title": "CUSA00309",
-  "version": "01.07",
+  "game_relative_path": "game",
   "dependencies_mode": "reuse-existing-build-only",
   "dependencies_root": "../shadPS4-AYOUB1080p-hkopt/externals",
   "dependency_build_root": "../shadPS4-AYOUB1080p-hkopt/Build/x64-Clang-Release",
@@ -17,5 +14,13 @@
   "display_name": "inFAMOUS Second Son",
   "path_base": "project",
   "upstream_source_project": "shadPS4-AYOUB1080p-hkopt",
-  "dependency_policy": "build-external-portable-runtime-bundled"
+  "dependency_policy": "build-external-portable-runtime-bundled",
+  "game_family": "inFAMOUS Second Son",
+  "title_ids": [
+    "CUSA00004",
+    "CUSA00223",
+    "CUSA00305",
+    "CUSA00309"
+  ],
+  "compatibility_manifest": "profiles/second-son-builds.json"
 }

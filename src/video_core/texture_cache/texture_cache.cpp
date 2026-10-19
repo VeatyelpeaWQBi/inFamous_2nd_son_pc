@@ -79,7 +79,6 @@ void TextureCache::ProcessDownloadImages() {
     download_images.clear();
 }
 
-
 void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     Image& image = slot_images[image_id];
     if (False(image.flags & ImageFlagBits::GpuModified)) {
@@ -692,8 +691,6 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     if (!image_id) {
         image_id = slot_images.insert(instance, runtime, slot_image_views, info);
         RegisterImage(image_id);
-
-
     }
 
     Image& image = slot_images[image_id];
@@ -837,7 +834,6 @@ void TextureCache::RefreshImage(Image& image) {
     if (False(image.flags & ImageFlagBits::Dirty) || image.info.num_samples > 1) {
         return;
     }
-
 
     RENDERER_TRACE;
     TRACE_HINT(fmt::format("{:x}:{:x}", image.info.guest_address, image.info.guest_size));

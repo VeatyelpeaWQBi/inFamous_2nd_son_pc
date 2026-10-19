@@ -158,9 +158,7 @@ s32 PS4_SYSV_ABI sceGnmAddEqEvent(OrbisKernelEqueue eq, u64 id, void* udata) {
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceGnmAreSubmitsAllowed() {
-    return submission_lock == 0;
-}
+int PS4_SYSV_ABI sceGnmAreSubmitsAllowed() { return submission_lock == 0; }
 
 int PS4_SYSV_ABI sceGnmBeginWorkload(u32 workload_stream, u64* workload) {
     if (workload) {
@@ -285,7 +283,6 @@ void PS4_SYSV_ABI sceGnmDingDong(u32 gnm_vqid, u32 next_offs_dw) {
 
     std::scoped_lock lk{m_submit_lock};
     WaitGpuIdle();
-
 
     auto vqid = gnm_vqid - 1;
     auto& asc_queue = liverpool->asc_queues[{vqid}];

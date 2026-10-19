@@ -955,7 +955,6 @@ int PS4_SYSV_ABI sceNpTrophyRegisterContext(OrbisNpTrophyContext context,
             ctx.user_id, ctx.service_label, ReadUnlockedTrophies(save_file),
             [save_file](const std::vector<std::pair<s32, u64>>& merged) {
                 const u32 applied = ApplyServerTrophies(save_file, merged);
-
             });
     }
 

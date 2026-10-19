@@ -419,7 +419,6 @@ static bool EnsureSpatial(Port& port) {
         }
     }
 
-
     if (!CreateSpatialSource(port, port.bed)) {
         device.UnregisterPort(port.device_name);
         return false;
@@ -1589,7 +1588,6 @@ s32 PS4_SYSV_ABI sceAudio3dPortClose(const OrbisAudio3dPortId port_id) {
 
 s32 PS4_SYSV_ABI sceAudio3dPortCreate(u32 granularity, u32 rate, s64 reserved,
                                       OrbisAudio3dPortId* port_id) {
-
 
     if (!port_id || reserved) {
         return ORBIS_AUDIO3D_ERROR_INVALID_PARAMETER;

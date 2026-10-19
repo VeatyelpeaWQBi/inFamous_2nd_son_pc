@@ -51,8 +51,6 @@ ImeState::ImeState(const OrbisImeParam* param, const OrbisImeParamExtended* exte
     // Respect both the absolute IME limit and the caller-provided limit
     max_text_length = std::min(param->maxTextLength, ORBIS_IME_MAX_TEXT_LENGTH);
 
-
-
     if (text_buffer) {
         const std::size_t text_len = std::char_traits<char16_t>::length(text_buffer);
         if (!ConvertOrbisToUTF8(text_buffer, text_len, current_text.begin(),

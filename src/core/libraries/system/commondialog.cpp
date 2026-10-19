@@ -94,9 +94,7 @@ Error PS4_SYSV_ABI sceCommonDialogInitialize() {
     return Error::OK;
 }
 
-bool PS4_SYSV_ABI sceCommonDialogIsUsed() {
-    return g_isUsed;
-}
+bool PS4_SYSV_ABI sceCommonDialogIsUsed() { return g_isUsed; }
 
 int PS4_SYSV_ABI Func_0FF577E4E8457883() {
     LOG_ERROR(Lib_CommonDlg, "(STUBBED) called");

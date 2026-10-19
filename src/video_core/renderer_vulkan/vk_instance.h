@@ -330,14 +330,9 @@ class Instance {
     }
 
     /// Returns whether VK_EXT_image_view_min_lod is supported.
-    /// Returns true when VK_NV_device_diagnostic_checkpoints is enabled.
-    bool HasDiagnosticCheckpoints() const { return diagnostic_checkpoints; }
 
     /// Returns true when VK_EXT_external_memory_host is enabled.
     bool HasExternalMemoryHost() const { return external_memory_host; }
-
-    /// Returns true when VK_EXT_device_fault is enabled.
-    bool HasDeviceFault() const { return device_fault; }
 
     bool IsImageViewMinLodSupported() const { return image_view_min_lod; }
 
@@ -369,7 +364,6 @@ class Instance {
     void CollectDeviceParameters();
     void CollectPhysicalMemoryInfo();
     void CollectImageFormatInfo();
-    void CollectToolingInfo() const;
 
     /// Gets the supported feature flags for a format.
     [[nodiscard]] vk::FormatFeatureFlags2 GetFormatFeatureFlags(vk::Format format) const;
@@ -432,8 +426,6 @@ class Instance {
     bool image_2d_view_of_3d{};
     bool image_view_min_lod{};
     bool shader_clock{};
-    bool diagnostic_checkpoints{};
-    bool device_fault{};
     bool external_memory_host{};
     bool supports_memory_budget{};
     bool supports_block_texel_view{};

@@ -23,7 +23,6 @@
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 #include "vulkan/vulkan.hpp"
 
-
 namespace Vulkan {
 
 class Instance;

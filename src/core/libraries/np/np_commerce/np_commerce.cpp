@@ -50,17 +50,11 @@ s32 PS4_SYSV_ABI sceNpCommerceDialogClose() {
     return ORBIS_OK;
 }
 
-s8 PS4_SYSV_ABI sceNpCommerceDialogGetStatus() {
-    return static_cast<s8>(g_dialog_status);
-}
+s8 PS4_SYSV_ABI sceNpCommerceDialogGetStatus() { return static_cast<s8>(g_dialog_status); }
 
-s32 PS4_SYSV_ABI sceNpCommerceDialogInitializeInternal() {
-    return sceNpCommerceDialogInitialize();
-}
+s32 PS4_SYSV_ABI sceNpCommerceDialogInitializeInternal() { return sceNpCommerceDialogInitialize(); }
 
-s32 PS4_SYSV_ABI sceNpCommerceDialogUpdateStatus() {
-    return static_cast<s32>(g_dialog_status);
-}
+s32 PS4_SYSV_ABI sceNpCommerceDialogUpdateStatus() { return static_cast<s32>(g_dialog_status); }
 
 s32 PS4_SYSV_ABI sceNpCommerceDialogGetResult(OrbisNpCommerceDialogResult* result) {
     if (result == nullptr) {

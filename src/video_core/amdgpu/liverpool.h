@@ -200,9 +200,7 @@ struct Liverpool {
     void BeginScoutDraw(const void* packet);
     void EndScoutDraw();
     Task ProcessCeUpdate(std::span<const u32> ccb);
-    /// submit_ns: when the guest submitted the work (top level submissions only, for statistics).
-    template <bool is_indirect = false>
-    Task ProcessCompute(std::span<const u32> acb, u32 vqid);
+    template <bool is_indirect = false> Task ProcessCompute(std::span<const u32> acb, u32 vqid);
 
     void ProcessCommands();
     void Process(std::stop_token stoken);

@@ -41,9 +41,7 @@ Error PS4_SYSV_ABI sceSaveDataDialogGetResult(OrbisSaveDataDialogResult* result)
     return Error::OK;
 }
 
-Status PS4_SYSV_ABI sceSaveDataDialogGetStatus() {
-    return g_status;
-}
+Status PS4_SYSV_ABI sceSaveDataDialogGetStatus() { return g_status; }
 
 Error PS4_SYSV_ABI sceSaveDataDialogInitialize() {
     if (!CommonDialog::g_isInitialized) {
@@ -122,9 +120,7 @@ Error PS4_SYSV_ABI sceSaveDataDialogTerminate() {
     return Error::OK;
 }
 
-Status PS4_SYSV_ABI sceSaveDataDialogUpdateStatus() {
-    return g_status;
-}
+Status PS4_SYSV_ABI sceSaveDataDialogUpdateStatus() { return g_status; }
 
 void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("fH46Lag88XY", "libSceSaveDataDialog", 1, "libSceSaveDataDialog",

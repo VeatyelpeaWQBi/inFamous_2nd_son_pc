@@ -280,7 +280,6 @@ static void LogCppException(const EXCEPTION_POINTERS& exception) {
                 if (type_name == ".?AVexception@std@@" && catchable[3] == -1 && object != 0) {
                     const auto* error =
                         reinterpret_cast<const std::exception*>(object + catchable[2]);
-
                 }
             }
         }

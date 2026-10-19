@@ -25,13 +25,9 @@ s32 PS4_SYSV_ABI sceKernelIsNeoMode() {
 
 s32 PS4_SYSV_ABI sceKernelHasNeoMode() { return EmulatorSettings.IsNeo(); }
 
-s32 PS4_SYSV_ABI sceKernelIsDevkit() {
-    return EmulatorSettings.IsDevKit();
-}
+s32 PS4_SYSV_ABI sceKernelIsDevkit() { return EmulatorSettings.IsDevKit(); }
 
-s32 PS4_SYSV_ABI sceKernelIsProspero() {
-    return 0;
-}
+s32 PS4_SYSV_ABI sceKernelIsProspero() { return 0; }
 
 s32 PS4_SYSV_ABI sceKernelIsCEX() { return !sceKernelIsDevkit(); }
 
@@ -65,9 +61,7 @@ s32 PS4_SYSV_ABI sceKernelGetCpumode() {
     return 0;
 }
 
-s32 PS4_SYSV_ABI sceKernelGetCurrentCpu() {
-    return 0;
-}
+s32 PS4_SYSV_ABI sceKernelGetCurrentCpu() { return 0; }
 
 void* PS4_SYSV_ABI sceKernelGetProcParam() {
     auto* linker = Common::Singleton<Core::Linker>::Instance();

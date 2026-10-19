@@ -480,7 +480,6 @@ class SDLPortBackend : public PortBackend {
 
         const u32 sdl_buffer_size = sdl_buffer_frames * sizeof(float) * num_channels;
         queue_threshold = std::max(guest_buffer_size, sdl_buffer_size) * QUEUE_MULTIPLIER;
-
     }
 
     using ConverterFunc = void (*)(const void* src, void* dst, u32 frames, const float* volumes);

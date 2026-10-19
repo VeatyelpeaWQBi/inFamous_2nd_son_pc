@@ -872,7 +872,6 @@ void StartHandshakeInitiator(OrbisNpSignalingConnectionId conn_id) {
         SendHandshakeLocked(ci, offer);
         send = true;
     }
-
 }
 
 void QueueActivationLocked(OrbisNpSignalingConnectionId conn_id, std::string_view peer_online_id,
@@ -1298,7 +1297,6 @@ void SendStunPing(s32 ctx_id) {
     ping.cmd = 0x01;
     std::memcpy(ping.online_id, online_id.data, ORBIS_NP_ONLINEID_MAX_LENGTH);
     ping.local_ip = Stubs::AdvertisedAddr();
-
 
     Stubs::SignalingSendTo(&ping, sizeof(ping), server_addr, server_udp);
 }

@@ -38,7 +38,7 @@ struct ComputePipelineKey {
 };
 
 class ComputePipeline : public Pipeline {
-public:
+  public:
     struct SerializationSupport {
         u32 dummy{};
 
@@ -56,7 +56,7 @@ public:
     void Compile() override;
     /// First runtime lookup only; command processor thread, independent of worker readiness.
 
-private:
+  private:
     const bool restored;
     ComputePipelineKey compute_key;
     vk::ShaderModule module;
@@ -65,8 +65,7 @@ private:
 
 } // namespace Vulkan
 
-template <>
-struct std::hash<Vulkan::ComputePipelineKey> {
+template <> struct std::hash<Vulkan::ComputePipelineKey> {
     std::size_t operator()(const Vulkan::ComputePipelineKey& key) const noexcept {
         return std::hash<size_t>{}(key.value);
     }

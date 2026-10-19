@@ -4,9 +4,16 @@
 #include <optional>
 #include <string>
 #include <string_view>
+
+namespace Core::FileSys {
+class IFile;
+}
+
 namespace Core::Release {
 std::filesystem::path ProjectRoot();
 std::filesystem::path Prepare(const std::optional<std::filesystem::path>& game,
                               const std::optional<std::string>& mode);
-void Apply(std::string_view serial, std::string_view version);
+// Called after mounting base/update/mod layers, before the engine loads guest code.
+void SelectGame(std::string_view serial, std::string_view version, FileSys::IFile& executable);
+void Apply();
 } // namespace Core::Release

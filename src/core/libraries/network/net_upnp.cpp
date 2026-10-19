@@ -98,7 +98,6 @@ void UPnPClient::DiscoverThread() {
     std::strncpy(m_external_ip_str, external_ip, sizeof(m_external_ip_str) - 1);
     m_available = true;
 
-
     m_done = true;
     m_cv.notify_all();
 }
@@ -134,7 +133,6 @@ void UPnPClient::RemoveMapping(u16 port) {
     const std::string port_str = std::to_string(port);
     UPNP_DeletePortMapping(m_urls.controlURL, m_data.first.servicetype, port_str.c_str(), "UDP",
                            nullptr);
-
 }
 
 } // namespace Libraries::Net

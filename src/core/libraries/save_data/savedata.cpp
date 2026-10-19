@@ -436,8 +436,6 @@ static Error saveDataMount(const OrbisSaveDataMount2* mount_info,
 
     if (to_be_created) { // Check size
 
-
-
         const auto root_save =
             EmulatorSettings.GetHomeDir() / std::to_string(mount_info->userId) / "savedata";
         fs::create_directories(root_save);

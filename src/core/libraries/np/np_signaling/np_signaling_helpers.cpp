@@ -207,7 +207,6 @@ static void HandleStunEcho(s32 ctx_id, const StunEcho& echo) {
     ctx.ext_addr.store(echo.ext_ip);
     ctx.ext_port.store(echo.ext_port);
 
-
     auto* netinfo = Common::Singleton<NetUtil::NetUtilInternal>::Instance();
     netinfo->SetExternalIp(echo.ext_ip);
 
@@ -257,8 +256,6 @@ static void ReceiveThreadMain() {
         }
 
         const auto nbytes = static_cast<size_t>(rc);
-
-
 
         if (nbytes == sizeof(StunEcho)) {
             s32 ctx_id = 0;

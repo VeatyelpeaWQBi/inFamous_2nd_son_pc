@@ -79,9 +79,7 @@ void Swapchain::Create(u32 width_, u32 height_) {
     RefreshSemaphores();
 }
 
-void Swapchain::Recreate(u32 width_, u32 height_) {
-    Create(width_, height_);
-}
+void Swapchain::Recreate(u32 width_, u32 height_) { Create(width_, height_); }
 
 void Swapchain::SetHDR(bool hdr) {
     if (needs_hdr == hdr) {

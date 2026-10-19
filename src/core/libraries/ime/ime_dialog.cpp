@@ -653,7 +653,6 @@ Error PS4_SYSV_ABI sceImeDialogGetPanelSize(const OrbisImeDialogParam* param, u3
 static Error ComputeImeDialogPanelSize(const OrbisImeDialogParam* param, u32* width, u32* height,
                                        bool log) {
 
-
     if (!param) {
         return Error::INVALID_ADDRESS;
     }
@@ -871,7 +870,6 @@ static Error ComputeImeDialogPanelSizeExtended(const OrbisImeDialogParam* param,
         *height <<= 1;
     }
 
-
     return Error::OK;
 }
 
@@ -1022,10 +1020,7 @@ Error PS4_SYSV_ABI sceImeDialogInit(OrbisImeDialogParam* param, OrbisImeParamExt
         return Error::BUSY;
     }
 
-
-
     if (extended) {
-
     }
 
     const u32 sdk = GetCompiledSdkVersion();

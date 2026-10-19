@@ -155,9 +155,7 @@ s32 PS4_SYSV_ABI sceNpWebApiAbortHandle(s32 libCtxId, s32 handleId) {
     return abortHandle(libCtxId, handleId);
 }
 
-s32 PS4_SYSV_ABI sceNpWebApiAbortRequest(s64 requestId) {
-    return abortRequest(requestId);
-}
+s32 PS4_SYSV_ABI sceNpWebApiAbortRequest(s64 requestId) { return abortRequest(requestId); }
 
 s32 PS4_SYSV_ABI sceNpWebApiAddHttpRequestHeader(s64 requestId, const char* pFieldName,
                                                  const char* pValue) {
@@ -279,9 +277,7 @@ s32 PS4_SYSV_ABI sceNpWebApiDeleteHandle(s32 libCtxId, s32 handleId) {
     return deleteHandle(libCtxId, handleId);
 }
 
-s32 PS4_SYSV_ABI sceNpWebApiDeleteRequest(s64 requestId) {
-    return deleteRequest(requestId);
-}
+s32 PS4_SYSV_ABI sceNpWebApiDeleteRequest(s64 requestId) { return deleteRequest(requestId); }
 
 s32 PS4_SYSV_ABI sceNpWebApiGetConnectionStats(s32 userCtxId, const char* pApiGroup,
                                                OrbisNpWebApiConnectionStats* pStats) {

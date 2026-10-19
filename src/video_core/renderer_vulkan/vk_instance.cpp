@@ -21,14 +21,6 @@ namespace Vulkan {
 
 namespace {
 
-// ABI for VK_NV_private_data_base_handle (extension 708, revision 1).
-// Kept local because the pinned dependency headers predate this tool-facing extension.
-struct PrivateDataBaseHandleFeatures {
-    VkStructureType sType = static_cast<VkStructureType>(1000707000);
-    void* pNext = nullptr;
-    VkBool32 privateDataBaseHandle = VK_FALSE;
-};
-
 std::vector<vk::PhysicalDevice> EnumeratePhysicalDevices(vk::UniqueInstance& instance) {
     auto [devices_result, devices] = instance->enumeratePhysicalDevices();
     ASSERT_MSG(devices_result == vk::Result::eSuccess, "Failed to enumerate physical devices: {}",
@@ -177,7 +169,6 @@ Instance::Instance(Frontend::WindowSDL& window, s32 physical_device_index,
     CreateDevice();
     CollectPhysicalMemoryInfo();
     CollectImageFormatInfo();
-    CollectToolingInfo();
 }
 
 Instance::~Instance() {
@@ -213,8 +204,7 @@ bool Instance::CreateDevice() {
         vk::PhysicalDevicePrimitiveTopologyListRestartFeaturesEXT,
         vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT,
         vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR,
-        vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT, vk::PhysicalDeviceShaderClockFeaturesKHR,
-        vk::PhysicalDeviceFaultFeaturesEXT>();
+        vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT, vk::PhysicalDeviceShaderClockFeaturesKHR>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -331,27 +321,8 @@ bool Instance::CreateDevice() {
     if (shader_clock) {
         shader_clock_features = feature_chain.get<vk::PhysicalDeviceShaderClockFeaturesKHR>();
     }
-    // GPU crash diagnostics, both cost nothing until used.
-    diagnostic_checkpoints = false;
-    const auto fault_features = feature_chain.get<vk::PhysicalDeviceFaultFeaturesEXT>();
-    device_fault = false;
     // Only probed (BufferCache::ProbeHostImport): can the GPU use guest memory in place?
     external_memory_host = add_extension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
-
-    PrivateDataBaseHandleFeatures private_handle_features;
-    bool private_handle_enabled = false;
-    constexpr std::string_view private_handle_extension = "VK_NV_private_data_base_handle";
-    const char* nsight = std::getenv("IFSS_NSIGHT_ACTIVE");
-    if (nsight && std::string_view{nsight} == "1" &&
-        std::ranges::find(available_extensions, private_handle_extension) !=
-            available_extensions.end()) {
-        vk::PhysicalDeviceFeatures2 query{.pNext = &private_handle_features};
-        physical_device.getFeatures2(&query);
-        private_handle_enabled =
-            private_handle_features.privateDataBaseHandle &&
-            feature_chain.get<vk::PhysicalDeviceVulkan13Features>().privateData &&
-            add_extension(private_handle_extension);
-    }
 
     const auto family_properties = physical_device.getQueueFamilyProperties();
     if (family_properties.empty()) {
@@ -451,7 +422,6 @@ bool Instance::CreateDevice() {
         },
         vk::PhysicalDeviceVulkan13Features{
             .robustImageAccess = vk13_features.robustImageAccess,
-            .privateData = private_handle_enabled,
             .shaderDemoteToHelperInvocation = vk13_features.shaderDemoteToHelperInvocation,
             .subgroupSizeControl = vk13_features.subgroupSizeControl,
             .synchronization2 = vk13_features.synchronization2,
@@ -532,9 +502,6 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceShaderClockFeaturesKHR{
             .shaderSubgroupClock = shader_clock_features.shaderSubgroupClock,
         },
-        vk::PhysicalDeviceFaultFeaturesEXT{
-            .deviceFault = true,
-        },
     };
 
     if (!custom_border_color) {
@@ -586,16 +553,8 @@ bool Instance::CreateDevice() {
     if (!shader_clock) {
         device_chain.unlink<vk::PhysicalDeviceShaderClockFeaturesKHR>();
     }
-    if (!device_fault) {
-        device_chain.unlink<vk::PhysicalDeviceFaultFeaturesEXT>();
-    }
 
-    if (private_handle_enabled) {
-        // Attach only the feature that was queried and the extension that was enabled above.
-        auto& create_info = device_chain.get<vk::DeviceCreateInfo>();
-        private_handle_features.pNext = const_cast<void*>(create_info.pNext);
-        create_info.pNext = &private_handle_features;
-    }
+    ;
     auto [device_result, dev] = physical_device.createDeviceUnique(device_chain.get());
     if (device_result != vk::Result::eSuccess) {
         LOG_CRITICAL(Render_Vulkan, "Failed to create device: {}", vk::to_string(device_result));
@@ -613,7 +572,6 @@ bool Instance::CreateDevice() {
     if (has_compute_queue) {
         compute_queue = device->getQueue(queue_family_index, 2);
     };
-
 
     CreateAllocator();
     return true;
@@ -650,13 +608,6 @@ void Instance::CollectDeviceParameters() {
 
     driver_id = driver.driverID;
     vendor_name = driver.driverName.data();
-
-    const std::string model_name{GetModelName()};
-    const std::string driver_version = GetDriverVersionName();
-    const std::string driver_name = fmt::format("{} {}", vendor_name, driver_version);
-    const std::string api_version = GetReadableVersion(properties.apiVersion);
-    const std::string extensions = fmt::format("{}", fmt::join(available_extensions, ", "));
-
 }
 
 void Instance::CollectPhysicalMemoryInfo() {
@@ -735,24 +686,6 @@ void Instance::CollectImageFormatInfo() {
                         vk::to_string(format.vk_format),
                         vk::to_string(format.flags & ~GetFormatFeatureFlags(format.vk_format)));
         }
-    }
-}
-
-void Instance::CollectToolingInfo() const {
-    if (driver_id == vk::DriverId::eAmdProprietary ||
-        driver_id == vk::DriverId::eIntelProprietaryWindows) {
-        // AMD: Causes issues with Reshade.
-        // Intel: Causes crash on start.
-        return;
-    }
-    const auto [tools_result, tools] = physical_device.getToolProperties();
-    if (tools_result != vk::Result::eSuccess) {
-        LOG_ERROR(Render_Vulkan, "Could not get Vulkan tool properties: {}",
-                  vk::to_string(tools_result));
-        return;
-    }
-    for (const vk::PhysicalDeviceToolProperties& tool : tools) {
-        const std::string_view name = tool.name;
     }
 }
 

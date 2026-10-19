@@ -20,27 +20,60 @@ try{
         throw 'Executable hash does not match its build receipt.'
     }
     $dlls=@(Get-ReleaseRuntimeFiles $root $exe $receipt.inspector -Portable:($Variant -eq 'portable'))
+    $compatibility=Read-JsonUtf8 (Join-Path $root 'profiles/second-son-builds.json')
+    if($compatibility.schema -ne 1 -or $compatibility.game -cne 'inFAMOUS Second Son' -or $compatibility.builds -isnot [Array]){
+        throw 'Invalid Second Son compatibility manifest.'
+    }
+    $allowedTitles=@('CUSA00004','CUSA00223','CUSA00305','CUSA00309')
+    $profileFiles=@('second-son-builds.json')
+    foreach($entry in @($compatibility.builds)){
+        if(@($entry.title_ids).Count -eq 0 -or $entry.version -cnotmatch '^[0-9]{2}\.[0-9]{2}$' -or
+           $entry.sha256 -cnotmatch '^[0-9a-f]{64}$' -or $entry.patch_file -cnotmatch '^[A-Za-z0-9_.-]+\.xml$' -or
+           $entry.patch_file.Contains('..')){
+            throw 'Invalid Second Son build entry.'
+        }
+        foreach($id in @($entry.title_ids)){
+            if($allowedTitles -cnotcontains $id){throw 'Compatibility manifest includes a different game.'}
+        }
+        if($entry.PSObject.Properties.Name -contains 'legacy_cache_title'){
+            if($entry.legacy_cache_title -and @($entry.title_ids) -cnotcontains $entry.legacy_cache_title){
+                throw 'Legacy cache title is not declared by its fingerprint-bound build.'
+            }
+        }
+        $profileFiles+=$entry.patch_file
+    }
+    $profileFiles=@($profileFiles|Sort-Object -Unique)
+    foreach($profile in $profileFiles){
+        if(-not(Test-Path -LiteralPath (Join-Path $root ('profiles/'+$profile)) -PathType Leaf)){
+            throw ('Missing compatibility profile: '+$profile)
+        }
+    }
     $stamp=[DateTime]::Now.ToString('yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,6)
     $relative='out/release/'+$Variant+'-'+$stamp
     $destination=Resolve-ProjectChild $root $relative
     if(Test-Path -LiteralPath $destination){throw 'Release destination already exists.'}
     $null=[IO.Directory]::CreateDirectory($destination)
     Copy-Item -LiteralPath $exe -Destination (Join-Path $destination 'inFAMOUS Second Son.exe')
-    foreach($name in @('launcher.json','run.bat','LICENSE','LICENSES','README.md')){
+    foreach($name in @('run.bat','LICENSE','LICENSES','README.md')){
         Copy-Item -LiteralPath (Join-Path $root $name) -Destination $destination -Recurse
     }
+    Write-JsonUtf8 (Join-Path $destination 'launcher.json') ([ordered]@{
+        game_path='game';mode='pro4k';display='borderless'
+    })
     $null=[IO.Directory]::CreateDirectory((Join-Path $destination 'profiles'))
-    Copy-Item -LiteralPath (Join-Path $root 'profiles/CUSA00309.xml') -Destination (Join-Path $destination 'profiles/CUSA00309.xml')
+    foreach($profile in $profileFiles){
+        Copy-Item -LiteralPath (Join-Path $root ('profiles/'+$profile)) -Destination (Join-Path $destination ('profiles/'+$profile))
+    }
     $user=Join-Path $destination 'state/play/user'
     $null=[IO.Directory]::CreateDirectory($user)
     Copy-Item -LiteralPath (Join-Path $root 'package/user-files/config.json') -Destination (Join-Path $user 'config.json')
     $null=[IO.Directory]::CreateDirectory((Join-Path $destination 'game'))
     [IO.File]::WriteAllText((Join-Path $destination 'game/README.txt'),
-        'Place CUSA00309 01.07 here as CUSA00309/eboot.bin and its resources, or set game_path in launcher.json.',
+        'Place inFAMOUS Second Son here as eboot.bin plus its resources, or under a CUSA00004/CUSA00223/CUSA00305/CUSA00309 folder. Set game_path in launcher.json when more than one copy is present.',
         [Text.UTF8Encoding]::new($false))
     $project=Read-JsonUtf8 (Join-Path $root 'project.json')
     Write-JsonUtf8 (Join-Path $destination 'project.json') ([ordered]@{
-        schema=1;name=$project.name;phase='release-v2';platform='windows-x86_64';variant=$Variant
+        schema=1;name=$project.name;phase='release-v2';platform='windows-x86_64';variant=$Variant;compatibility_manifest='profiles/second-son-builds.json'
     })
     if($Variant -eq 'portable'){
         foreach($dll in $dlls){Copy-Item -LiteralPath $dll.source -Destination (Join-Path $destination $dll.name)}

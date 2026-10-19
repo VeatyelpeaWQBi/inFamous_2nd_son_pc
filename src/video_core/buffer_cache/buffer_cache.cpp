@@ -480,9 +480,7 @@ bool BufferCache::IsReadbackDone(bool on_readback_queue, u64 tick) {
     return scheduler.IsFree(tick);
 }
 
-void NextUploadEpoch() noexcept {
-    g_upload_epoch.fetch_add(1, std::memory_order_acq_rel);
-}
+void NextUploadEpoch() noexcept { g_upload_epoch.fetch_add(1, std::memory_order_acq_rel); }
 
 void BufferCache::TickFrame() {
     if (std::exchange(fault_process_pending, false)) {
@@ -518,7 +516,6 @@ void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_lock
         device_addr, size, is_fault, assume_locks, [this, device_addr, size, assume_locks] {
             ReadMemory(device_addr, size, true, assume_locks);
         });
-
 }
 
 std::pair<VAddr, VAddr> BufferCache::GetReadbackWindow(const Buffer* arena, VAddr device_addr,
@@ -543,9 +540,8 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
         // waited for the GPU to become idle, hundreds of times per second in busy scenes.
         u64 wait_tick = 0;
         Vulkan::Semaphore* wait_semaphore = nullptr;
-        liverpool->SendCommand<true>([&] {
-            wait_tick = BeginReadback(device_addr, size, is_write, wait_semaphore);
-        });
+        liverpool->SendCommand<true>(
+            [&] { wait_tick = BeginReadback(device_addr, size, is_write, wait_semaphore); });
         if (wait_tick == 0) {
             return;
         }
@@ -558,7 +554,6 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
             u64 next_tick = 0;
             const bool may_wait = round < 4;
             liverpool->SendCommand<true>([&] {
-                
                 CompleteReadbacks(false);
                 if (!memory_tracker->IsRegionGpuModified(device_addr, size)) {
                     if (is_write) {
@@ -586,7 +581,6 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
         return;
     }
     const auto flush_request = [this, device_addr, size, is_write] {
-        
         // Time spent waiting for the command processor thread to pick up the request.
         ReadbackSync(device_addr, size, is_write);
     };
@@ -852,7 +846,6 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
             return 0;
         }
         if (overlapping->prefetch) {
-
         }
         wait_semaphore = overlapping->on_readback_queue ? &readback_queue->Semaphore()
                                                         : scheduler.GetWorkSemaphore();
@@ -1093,7 +1086,6 @@ void BufferCache::CompleteReadbacks(bool wait) {
 
 void BufferCache::FinishReadback(size_t index) {
     PendingReadback& readback = pending_readbacks[index];
-    
 
     if (KeepRanges()) {
         for (const auto& copy : readback.copies) {
@@ -1413,7 +1405,6 @@ bool BufferCache::IsRegionGpuModified(VAddr addr, size_t size) {
     return memory_tracker->IsRegionGpuModified(addr, size);
 }
 
-
 bool BufferCache::HasGpuData(VAddr addr, size_t size) {
     if (memory_tracker->IsRegionGpuModified(addr, size)) {
         return true;
@@ -1577,7 +1568,6 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
         backing.memory = device_memory;
         backing.offset = memory_offset >> block_shift;
         resident_ranges.Add(backing);
-
 
         const auto& bind = binds->binds.emplace_back(vk::SparseMemoryBind{
             .resourceOffset = (range.start << block_shift) - arena->cpu_addr,

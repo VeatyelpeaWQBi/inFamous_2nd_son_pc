@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -54,7 +55,29 @@ struct Build {
                std::ranges::find(title_ids, serial) != title_ids.end();
     }
 };
+struct Resolution {
+    std::string_view key;
+    unsigned width, height;
+    bool pro;
+    std::string_view patch;
+};
+inline constexpr std::array<Resolution, 6> Resolutions{{
+    {"720p", 1280, 720, false, "Native 1280x720 (render and output)"},
+    {"900p", 1600, 900, false, "Native 1600x900 (render and output)"},
+    {"1080p", 1920, 1080, false, ""},
+    {"1440p", 2560, 1440, true, "PS4 Pro mode: native 2560x1440 without checkerboard"},
+    {"1800p", 3200, 1800, true, "PS4 Pro mode: native 3200x1800 without checkerboard"},
+    {"pro4k", 3840, 2160, true, "PS4 Pro mode: native 3840x2160 without checkerboard"},
+}};
+inline const Resolution& FindResolution(std::string_view key) {
+    for (const auto& resolution : Resolutions) {
+        if (resolution.key == key) {
+            return resolution;
+        }
+    }
+    throw std::runtime_error("Unsupported resolution: use 720p, 900p, 1080p, 1440p, 1800p or pro4k.");
+}
 inline std::string_view EffectiveMode(std::string_view requested, bool matched_build) {
-    return requested == "pro4k" && matched_build ? "pro4k" : "1080p";
+    return matched_build ? FindResolution(requested).key : "1080p";
 }
 } // namespace Core::SecondSon

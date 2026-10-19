@@ -61,7 +61,7 @@ int wmain(int argc, wchar_t* argv[]) {
             } else if (arg == L"--help" || arg == L"-h") {
                 std::cout
                     << "inFAMOUS Second Son\n"
-                       "Use launcher.json, or --game <directory/eboot.bin> --mode <1080p|pro4k>.\n"
+                       "Use launcher.json, or --game <directory/eboot.bin> --mode <720p|900p|1080p|1440p|1800p|pro4k>.\n"
                        "F1: quit confirmation. User files: state/play/.\n";
                 return 0;
             } else {
@@ -76,6 +76,9 @@ int wmain(int argc, wchar_t* argv[]) {
         }
         SCOPE_EXIT { CloseHandle(run_lock); };
         const auto eboot = Core::Release::Prepare(game, mode);
+        if (eboot.empty()) {
+            return 0;
+        }
         std::filesystem::current_path(Core::Release::ProjectRoot());
         Common::Log::Setup("engine.log");
         KeyManager::GetInstance()->LoadFromFile();

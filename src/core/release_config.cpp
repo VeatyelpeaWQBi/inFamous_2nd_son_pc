@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "core/release_config.h"
+#include "core/release_launcher.h"
 #include "common/logging/log.h"
 #include "common/memory_patcher.h"
 #include "common/path_util.h"
@@ -24,6 +25,7 @@
 namespace Core::Release {
 namespace {
 std::string requested_mode, mode, display;
+std::optional<LaunchSelection> launch_selection;
 
 // Hash the effective mounted program, including an update overlay when present.
 std::string HashExecutable(FileSys::IFile& file) {
@@ -151,6 +153,7 @@ void PreparePatches(std::string_view serial, std::string_view version,
         patches.append_child("Patch").append_child("TitleID").append_child("ID").text().set(
             std::string(serial).c_str());
     }
+    const auto& resolution = SecondSon::FindResolution(mode);
     bool resolution_found = false;
     for (auto patch : patches.child("Patch").children("Metadata")) {
         const std::string_view name = patch.attribute("Name").as_string();
@@ -159,7 +162,7 @@ void PreparePatches(std::string_view serial, std::string_view version,
         }
         if (name.starts_with("Native ") || name.starts_with("PS4 Pro mode:")) {
             const bool selected =
-                mode == "pro4k" && name == "PS4 Pro mode: native 3840x2160 without checkerboard";
+                !resolution.patch.empty() && name == resolution.patch;
             patch.attribute("isEnabled").set_value(selected ? "true" : "false");
             resolution_found |= selected;
         }
@@ -172,8 +175,8 @@ void PreparePatches(std::string_view serial, std::string_view version,
             throw std::runtime_error("An enabled patch targets a different version/executable.");
         }
     }
-    if (mode == "pro4k" && !resolution_found) {
-        throw std::runtime_error("The matching profile has no Pro 4K resolution patch.");
+    if (!resolution.patch.empty() && !resolution_found) {
+        throw std::runtime_error("The matching profile has no selected resolution patch.");
     }
     const auto filename = std::string(serial) + "-release.xml";
     const auto target = Common::FS::GetUserPath(Common::FS::PathType::PatchesDir) / filename;
@@ -200,9 +203,7 @@ std::filesystem::path Prepare(const std::optional<std::filesystem::path>& game,
     const auto config = nlohmann::json::parse(input);
     requested_mode = requested.value_or(config.value("mode", std::string("pro4k")));
     display = config.value("display", std::string("borderless"));
-    if (requested_mode != "1080p" && requested_mode != "pro4k") {
-        throw std::runtime_error("mode must be 1080p or pro4k.");
-    }
+    SecondSon::FindResolution(requested_mode);
     if (display != "window" && display != "fullscreen" && display != "borderless") {
         throw std::runtime_error("display must be window, fullscreen or borderless.");
     }
@@ -243,6 +244,12 @@ std::filesystem::path Prepare(const std::optional<std::filesystem::path>& game,
     if (_wcsicmp(path.filename().c_str(), L"eboot.bin") != 0) {
         throw std::runtime_error("Select the Second Son eboot.bin or its game directory.");
     }
+    launch_selection = ShowLaunchMenu(path, requested_mode, display, requested);
+    if (!launch_selection) {
+        return {}; // Menu cancellation exits before loading the engine or game.
+    }
+    requested_mode = SecondSon::FindResolution(launch_selection->resolution).key;
+    display = launch_selection->display == "windowed" ? "window" : launch_selection->display;
     return path;
 }
 
@@ -278,9 +285,14 @@ void Apply() {
     EmulatorSettings.SetSysModulesDir("state/play/user/sys_modules");
     EmulatorSettings.SetFontsDir("state/play/user/fonts");
     EmulatorSettings.SetAddonInstallDir("state/play/user/addcont");
-    EmulatorSettings.SetNeo(mode == "pro4k", true);
-    EmulatorSettings.SetWindowWidth(mode == "pro4k" ? 3840 : 1920, true);
-    EmulatorSettings.SetWindowHeight(mode == "pro4k" ? 2160 : 1080, true);
+    const auto& resolution = SecondSon::FindResolution(mode);
+    if (launch_selection) {
+        EmulatorSettings.SetConsoleLanguage(launch_selection->language, true);
+        EmulatorSettings.SetCircleEnter(launch_selection->circle_enter, true);
+    }
+    EmulatorSettings.SetNeo(resolution.pro, true);
+    EmulatorSettings.SetWindowWidth(resolution.width, true);
+    EmulatorSettings.SetWindowHeight(resolution.height, true);
     EmulatorSettings.SetFullScreen(display != "window", true);
     EmulatorSettings.SetFullScreenMode(display == "fullscreen" ? "Fullscreen" : "Borderless", true);
     EmulatorSettings.SetReadbacksMode(static_cast<u32>(GpuReadbacksMode::Precise), true);

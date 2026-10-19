@@ -61,9 +61,13 @@ try{
     if((Get-SourceFingerprint $root) -ne $before){throw 'Source changed during compilation. Build again.'}
     $exe=Join-Path $build 'inFAMOUS Second Son.exe'
     if(-not(Test-Path -LiteralPath $exe -PathType Leaf)){throw 'The Release executable was not generated.'}
+    $menu=Resolve-ProjectChild $root 'Build/Release/support/Ifss.Launcher.exe'
+    if(-not(Test-Path -LiteralPath $menu -PathType Leaf)){throw 'The Release launch menu was not generated.'}
     $record=[ordered]@{
         schema=1;configuration='Release';source_sha256=$before
         runtime='Build/Release/inFAMOUS Second Son.exe'
+        launcher='Build/Release/support/Ifss.Launcher.exe'
+        launcher_sha256=(Get-FileHash -LiteralPath $menu -Algorithm SHA256).Hash.ToLowerInvariant()
         runtime_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
         inspector=(Join-Path $compilerBin 'llvm-readobj.exe')
         built_at_utc=[DateTime]::UtcNow.ToString('o');variant=$Variant;game_started=$false

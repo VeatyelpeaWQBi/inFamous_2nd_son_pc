@@ -6,7 +6,7 @@ Windows x86-64（CPU 支持 AVX2 / x86-64-v3，显卡驱动支持 Vulkan 1.3 以
 
 ## 运行
 
-共享包解压后直接运行 inFAMOUS Second Son.exe 或 run.bat。不需要 Python、模拟器 GUI、编译器或调试工具。
+共享包解压后直接运行 inFAMOUS Second Son.exe，先进入启动菜单，再启动游戏。无需 run.bat、Python、模拟器 GUI、编译器或调试工具。菜单使用系统 .NET Framework 4.8，辅助 EXE 位于 support/，不需要安装 .NET SDK。
 
 编辑根目录 launcher.json：
 
@@ -17,15 +17,15 @@ Windows x86-64（CPU 支持 AVX2 / x86-64-v3，显卡驱动支持 Vulkan 1.3 以
     }
 
 - game_path：默认查找 game/eboot.bin 或 game/ 下四个地区编号目录中的 eboot.bin，其他资源与程序一起放置。若存在多个游戏副本，明确指定其中一个目录或 eboot.bin；相对路径以包根目录为准，支持绝对路径。
-- mode：1080p 或 pro4k。匹配已核验程序时，自动选择互斥分辨率补丁并保留光照列表、曝光及防冻结修复。其他构建自动使用基础 PS4 1080p，关闭 Pro 模式及全部 XML 功能补丁，并输出一次明确提示；精确回读、SDR 和 V1/V2 内核逻辑继续保留。
+- mode：720p、900p、1080p、1440p、1800p 或 pro4k。1440p 及以上使用 Pro 模式。匹配已核验程序时，自动选择互斥分辨率补丁并保留光照列表、曝光及防冻结修复。其他构建自动使用基础 PS4 1080p，关闭 Pro 模式及全部 XML 功能补丁，并输出一次明确提示；精确回读、SDR 和 V1/V2 内核逻辑继续保留。
 - display：fullscreen、window 或 borderless。
 - F1 打开退出确认，Enter／手柄 A 确认，Esc／手柄 B 取消。Alt+F4 同样可退出。
 
 可临时覆盖：
 
-    run.bat --game "D:\My Games\CUSA00309" --mode 1080p
+    & ".\inFAMOUS Second Son.exe" --game "D:\My Games\CUSA00309" --mode 1080p
 
-常规配置位于 state/play/user/config.json，存档固定为 state/play/home/，缓存位于 state/runtime/。不从 AppData 取配置或存档；不复制、扫描历史 session 来挑选存档。分辨率、显示模式由 launcher.json 控制；旧调试配置键在本分支不起作用。
+常规配置位于 state/play/user/config.json，存档固定为 state/play/home/，缓存位于 state/runtime/。不从 AppData 取配置或存档；不复制、扫描历史 session 来挑选存档。根目录 launcher.json 提供游戏路径和首次菜单默认值；菜单选项（分辨率、显示模式、语言和确认键）保存在 state/play/launcher.json。命令行 --mode 覆盖本次菜单默认分辨率；旧调试配置键在本分支不起作用。
 
 游戏目录保持只读；XML 补丁只修改运行中的程序映像，继续核对原字节。包不附带游戏、个人存档、私有配置或录制数据。系统和显卡驱动由使用者提供。
 
@@ -53,6 +53,7 @@ Windows x86-64（CPU 支持 AVX2 / x86-64-v3，显卡驱动支持 Vulkan 1.3 以
 - **portable 使用方式**：保持上述四个 DLL 与 `inFAMOUS Second Son.exe` 在同一目录；若提示缺少其中某个文件，先重新完整解压发布包。
 - **两版均需 Vulkan 图形环境**：显卡与驱动至少支持 **Vulkan 1.3**，并满足引擎要求的扩展和功能；单有 `vulkan-1.dll` 不代表设备支持完整。按显卡型号安装或更新官方驱动：[NVIDIA](https://www.nvidia.com/en-us/drivers/)、[AMD](https://www.amd.com/en/support/download/drivers.html)、[Intel](https://www.intel.com/content/www/us/en/download-center/home.html)。Loader 与实际设备驱动的区别见 [Khronos 官方说明](https://docs.vulkan.org/guide/latest/checking_for_support.html)。一般游玩无需安装 Vulkan SDK。
 - **已内置的依赖**：FFmpeg、SDL、OpenAL、FreeType 等已静态链接到此构建的 EXE，无需另外安装这些库或 FFmpeg 命令行程序。Python、Java、Visual Studio、CMake、RenderDoc、Nsight、VTune 均不是此发布包的游玩依赖。
+- **菜单运行环境（两版相同）**：系统 .NET Framework 4.8；不携带另一套运行时，不需要 Python、PowerShell 启动脚本或 .NET SDK。缺少或无法启动菜单时，引擎会报告错误，不绕过菜单和程序校验。
 - **平台条件**：Windows x64、支持 x86-64-v3 / AVX2 的 CPU，以及上述显卡功能。当前不提供统一的自动依赖安装向导；运行库安装不能弥补硬件指令集或 GPU 功能缺失。
 
 ### English
@@ -61,6 +62,7 @@ The table above applies to the inspected **2026-10-19 V2 Release** packages, who
 
 - **lite** (`5ddee942e856…`): install [Microsoft Visual C++ v14 Redistributable x64](https://aka.ms/vc14/vc_redist.x64.exe). **14.51.36247.0 or newer** is the installation baseline for this build, not a tested minimum across all older runtime versions. The x86 package alone is insufficient. See [Microsoft's architecture and version requirements](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170).
 - **portable** (`d6428b929785…`): includes the four DLLs listed above, all version **14.51.36247.0**. Keep them beside the EXE; a separate VC++ installation is normally unnecessary.
+- **The launch menu in both editions** uses the system .NET Framework 4.8. No Python, .NET SDK or startup script is required. Keep support/Ifss.Launcher.exe in the package. The menu process exits before game loading.
 - **Both editions** require a compatible x64 Windows environment, an x86-64-v3 / AVX2 CPU, and a GPU driver providing Vulkan **1.3+** and the engine's required features/extensions. Use the official NVIDIA, AMD or Intel driver links above. A Vulkan loader alone does not establish device compatibility; see [Khronos](https://docs.vulkan.org/guide/latest/checking_for_support.html). The Vulkan SDK is not required for normal play.
 - FFmpeg, SDL, OpenAL, FreeType and other static dependencies are already linked into this EXE. No separate FFmpeg installation, compiler or profiling tools are required. Recheck this mapping for future builds; this release currently has no unified automatic dependency installer.
 
@@ -103,7 +105,7 @@ profiles/second-son-builds.json 管理地区、更新版本、程序 SHA256 与�
 - 精简版（lite）在 release-manifest.json 中列出需由运行电脑提供的运行库；共享版记录相同清单并附 DLL。
 - 两版均生成默认指向 game/ 的干净配置，包含分辨率补丁、许可证和逐文件 SHA256 清单，不含源码树/SDK/编译器/调试器/PDB/session/存档。
 - 输出保存在 out/release/lite-时间-编号/ 或 out/release/portable-时间-编号/ 及同名 ZIP，不覆盖旧包。
-- run.bat 只调用包内 EXE 或当前 Build/Release/，不会回退到旧 RelWithDebInfo 或其他项目引擎。
+- 游戏 EXE 打开同目录 support/Ifss.Launcher.exe 的 C# 菜单，确认后辅助进程退出，再加载游戏；菜单没有逐帧工作。包不包含开发启动、分析或测试脚本。构建同时生成两份 EXE，构建记录及包清单同时校验二者。
 
 首次构建的中间文件通常占 1～3 GiB。发布脚本只在用户执行时创建包。引擎运行、构建和打包使用同一项目锁，防止同时改写程序或共用存档/配置。
 

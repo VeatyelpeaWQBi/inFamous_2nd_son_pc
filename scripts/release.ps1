@@ -21,6 +21,14 @@ try{
     if($receipt.runtime_sha256 -ne (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()){
         throw 'Executable hash does not match its build receipt.'
     }
+    if(-not $receipt.PSObject.Properties['launcher'] -or -not $receipt.PSObject.Properties['launcher_sha256']){
+        throw 'The build receipt has no native menu. Run build-lite.bat first.'
+    }
+    $menu=Resolve-ProjectChild $root $receipt.launcher
+    if(-not(Test-Path -LiteralPath $menu -PathType Leaf) -or
+       $receipt.launcher_sha256 -ne (Get-FileHash -LiteralPath $menu -Algorithm SHA256).Hash.ToLowerInvariant()){
+        throw 'Launch menu hash does not match its build receipt.'
+    }
     $phase='Runtime dependencies'
     Write-Host '[2/7] Inspecting runtime DLL dependencies...'
     $dlls=@(Get-ReleaseRuntimeFiles $root $exe $receipt.inspector -Portable:($Variant -eq 'portable'))
@@ -62,9 +70,11 @@ try{
     if(Test-Path -LiteralPath $destination){throw 'Release destination already exists.'}
     $null=[IO.Directory]::CreateDirectory($destination)
     Copy-Item -LiteralPath $exe -Destination (Join-Path $destination 'inFAMOUS Second Son.exe')
-    foreach($name in @('run.bat','LICENSE','LICENSES','README.md')){
+    foreach($name in @('inFAMOUS Second Son.ico','LICENSE','LICENSES','README.md')){
         Copy-Item -LiteralPath (Join-Path $root $name) -Destination $destination -Recurse
     }
+    $null=[IO.Directory]::CreateDirectory((Join-Path $destination 'support'))
+    Copy-Item -LiteralPath $menu -Destination (Join-Path $destination 'support/Ifss.Launcher.exe')
     Write-JsonUtf8 (Join-Path $destination 'launcher.json') ([ordered]@{
         game_path='game';mode='pro4k';display='borderless'
     })
@@ -103,6 +113,8 @@ try{
     $requirements=@($dlls|ForEach-Object {[ordered]@{name=$_.name;sha256=$_.sha256;bundled=($Variant -eq 'portable')}})
     Write-JsonUtf8 (Join-Path $destination 'release-manifest.json') ([ordered]@{
         schema=1;variant=$Variant;runtime_sha256=$receipt.runtime_sha256;source_sha256=$receipt.source_sha256
+        launcher_sha256=$receipt.launcher_sha256
+        managed_runtime='Windows .NET Framework 4.8 (system component, not bundled)'
         runtime_dependencies=$requirements;debug_collectors=$false;game_included=$false
         saves_included=$false;created_at_utc=[DateTime]::UtcNow.ToString('o')
     })
@@ -113,6 +125,7 @@ try{
     Write-JsonUtf8 (Join-Path $destination 'files.json') $manifest
     if((Get-SourceFingerprint $root) -ne $receipt.source_sha256){throw 'Source changed while packaging.'}
     if((Get-FileHash -LiteralPath (Join-Path $destination 'inFAMOUS Second Son.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $receipt.runtime_sha256){throw 'Staged executable verification failed.'}
+    if((Get-FileHash -LiteralPath (Join-Path $destination 'support/Ifss.Launcher.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $receipt.launcher_sha256){throw 'Staged launch menu verification failed.'}
     if($Variant -eq 'portable'){
         foreach($dll in $dlls){
             if((Get-FileHash -LiteralPath (Join-Path $destination $dll.name) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $dll.sha256){throw ('Staged DLL verification failed: '+$dll.name)}

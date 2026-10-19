@@ -55,7 +55,8 @@ add_compile_definitions(IFSS_PROJECT_LOCAL_USER_DATA=1)
 include(cmake/EngineBuild.cmake)
 include(cmake/DependencyDiagnostics.cmake)
 target_sources(shadps4 PRIVATE src/core/runtime_policy.h src/core/release_config.cpp
-    src/core/release_config.h src/core/second_son_compatibility.h src/common/display_state.h)
+    src/core/release_config.h src/core/second_son_compatibility.h src/common/display_state.h
+    src/core/release_launcher.cpp src/core/release_launcher.h)
 set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "inFAMOUS Second Son"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 set(IFSS_GAME_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/inFAMOUS Second Son.ico")
@@ -63,6 +64,8 @@ if(NOT EXISTS "${IFSS_GAME_ICON_PATH}")
     message(FATAL_ERROR "The project game icon is missing.")
 endif()
 target_compile_definitions(shadps4 PRIVATE IFSS_GAME_ICON_PATH="${IFSS_GAME_ICON_PATH}")
+include(cmake/ReleaseLauncher.cmake)
+
 target_link_libraries(shadps4 PRIVATE bcrypt)
 if(MSVC)
     target_link_options(shadps4 PRIVATE /OPT:REF /OPT:ICF /DEBUG:NONE)

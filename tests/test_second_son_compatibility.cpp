@@ -39,6 +39,14 @@ int main() {
     Require(EffectiveMode("pro4k", false) == "1080p", "unknown builds have safe 1080p fallback");
     Require(EffectiveMode("1080p", true) == "1080p", "verified profile respects 1080p selection");
     Require(EffectiveMode("pro4k", true) == "pro4k", "verified profile enables Pro 4K");
+    for (const auto& resolution : Resolutions) {
+        Require(EffectiveMode(resolution.key, true) == resolution.key,
+                "verified builds preserve every menu resolution");
+        Require(EffectiveMode(resolution.key, false) == "1080p",
+                "every unverified resolution falls back safely");
+        Require(FindResolution(resolution.key).width >= 1280, "menu dimensions are valid");
+        Require((resolution.height >= 1440) == resolution.pro, "Pro policy follows resolution");
+    }
     profile.legacy_cache_title = "CUSA00223";
     Require(!profile.IsValid(), "legacy cache cannot refer to another undeclared region");
     profile.legacy_cache_title.clear();

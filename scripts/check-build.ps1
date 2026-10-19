@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
@@ -12,6 +12,6 @@ foreach($key in @('CMAKE_COMMAND','CMAKE_CXX_COMPILER','CMAKE_MAKE_PROGRAM')){
 }
 if(-not (Test-Path -LiteralPath (Join-Path $dependenciesRoot 'CMakeLists.txt'))){throw 'Existing dependency sources are missing.'}
 Write-Host ('Existing dependencies: '+$project.dependencies_root)
-Write-Host ('Existing Python: '+(Resolve-InstalledPython))
+Write-Host ('Runtime helpers: Windows PowerShell / .NET Framework '+[Environment]::Version.ToString())
 Write-Host ('Existing dependency libraries: '+$project.dependency_build_root)
 Write-Host 'Check only: no configure, compiler, dependency download, or new EXE was invoked. Run build.bat to build this project.'

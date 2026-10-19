@@ -1,7 +1,11 @@
-﻿[CmdletBinding()]
-param()
+[CmdletBinding()]
+param([switch]$RuntimeOnly)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
+Initialize-ProjectNativeTools -IncludeTests
+[Ifss.Native.BootstrapTests]::Run([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')))
+[Ifss.Native.NativeBuildTests]::Run([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')))
+if($RuntimeOnly){exit 0}
 $python=Resolve-InstalledPython
 $testRoot=Join-Path $PSScriptRoot '..\tests\bootstrap'
 & $python -B -m unittest discover -s $testRoot

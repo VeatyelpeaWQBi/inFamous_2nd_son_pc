@@ -171,3 +171,5 @@ function Read-ProjectSession([string]$Root,[string]$Session) {
        $launch.runtime_sha256 -ne $manifest.runtime_sha256){throw 'Session does not match the pinned project runtime.'}
     return [pscustomobject]@{Path=$path;Launch=$launch}
 }
+
+. (Join-Path $PSScriptRoot 'native_tools.ps1')

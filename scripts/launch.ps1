@@ -10,8 +10,6 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
 $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$python=Resolve-InstalledPython
-$preflight=Join-Path $PSScriptRoot 'preflight.py'
 $isDiagnostic=$Diagnostic -ne 'none'
 $isTiming=$TimingProfile -ne 'none'
 $isV3=$OptimizationV3 -ne 'none'
@@ -39,7 +37,7 @@ if($Benchmark){
     if($Mode -eq 'auto'){$Mode='pro4k'}
     if($Mode -notin @('1080p','pro4k')){throw 'Frozen benchmarks support only 1080p and pro4k.'}
 }
-if($CheckOnly){& $python -B $preflight --mode $Mode; exit $LASTEXITCODE}
+if($CheckOnly){Invoke-ProjectNativeTool 'preflight' @('--mode',$Mode); exit $LASTEXITCODE}
 $runtimeState=Resolve-ProjectChild $projectRoot 'state\runtime'
 $null=[IO.Directory]::CreateDirectory($runtimeState)
 $lock=$null;$process=$null;$windowBranding=$null;$collector=$null;$diagnosticWrapper=$null;$diagnosticPlan=$null;$diagnosticExitCode=0;$session=$null
@@ -75,7 +73,7 @@ try{
         if($volume.AvailableFreeSpace -lt (Get-DiagnosticStoragePolicy).minimum_free_bytes){throw 'At least 2 GiB of free disk space is required for diagnostic shutdown and flushing.'}
     }
     if(-not $isDiagnostic -and -not $Benchmark -and -not $isTiming -and -not $isV3 -and -not $PrepareOnly -and -not $NoMenu){
-        $selection=@(& $python -B (Join-Path $PSScriptRoot 'launch_menu.py') --mode $Mode)
+        $selection=@(Invoke-ProjectNativeTool 'launch-menu' @('--mode',$Mode))
         if($LASTEXITCODE -eq 1){exit 0}
         if($LASTEXITCODE -ne 0){throw 'Launch settings could not be opened; game was not started.'}
         $Mode=($selection -join '').Trim()
@@ -88,9 +86,9 @@ try{
     $session=Resolve-ProjectChild $projectRoot ($parent+'/'+$sessionName)
     $sessionRelative=Get-RelativePath $projectRoot $session
     $null=[IO.Directory]::CreateDirectory($session)
-    $verifyArguments=@('-B',$preflight,'--mode',$Mode,'--session',$sessionRelative)
+    $verifyArguments=@('--mode',$Mode,'--session',$sessionRelative)
     if($Benchmark){$verifyArguments+='--frozen'}
-    $result=@(& $python @verifyArguments)
+    $result=@(Invoke-ProjectNativeTool 'preflight' $verifyArguments)
     if($LASTEXITCODE -ne 0){throw 'Preflight failed; game was not started.'}
     $verified=($result -join [Environment]::NewLine)|ConvertFrom-Json
     $Mode=$verified.mode
@@ -291,8 +289,8 @@ try{
         Write-Host ('Capture duration: '+$DiagnosticSeconds+' s after readiness; scene evidence is saved in diagnostics/automation.json.')
     }
     $brandingStart=[Diagnostics.ProcessStartInfo]::new()
-    $brandingStart.FileName=$python;$brandingStart.WorkingDirectory=$projectRoot
-    $brandingArguments=@('-B',(Join-Path $PSScriptRoot 'window_branding.py'),'--session',$sessionRelative)
+    $brandingStart.FileName=[IO.Path]::Combine([Environment]::GetFolderPath('System'),'WindowsPowerShell/v1.0/powershell.exe');$brandingStart.WorkingDirectory=$projectRoot
+    $brandingArguments=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'native.ps1'),'-Module','window-branding','-ArgumentsJson',(ConvertTo-Json -InputObject @('--session',$sessionRelative) -Compress))
     $brandingStart.Arguments=($brandingArguments|ForEach-Object{Quote-WindowsArgument $_}) -join ' '
     $brandingStart.UseShellExecute=$false;$brandingStart.CreateNoWindow=$true
     $brandingStart.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
@@ -339,7 +337,7 @@ try{
     }
     if($diagnosticWrapper -and -not $diagnosticWrapper.HasExited -and -not $diagnosticWrapper.WaitForExit(30000)){throw 'Nsight launcher did not finish.'}
     if($isTiming -or ($OptimizationV3 -eq 'all' -and $isDiagnostic)){
-        & $python -X utf8 -B (Join-Path $PSScriptRoot 'analyze_timing.py') --session $session
+        & (Resolve-InstalledPython) -X utf8 -B (Join-Path $PSScriptRoot 'analyze_timing.py') --session $session
         $correlationExit=$LASTEXITCODE
         if($OptimizationV3 -eq 'all' -and $isDiagnostic){
             $launch.v3_correlation_status=if($correlationExit -eq 0){'usable'}else{'incomplete-or-invalid'}

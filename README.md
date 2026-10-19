@@ -1,4 +1,4 @@
-# inFamous_2nd_son_pc
+﻿# inFamous_2nd_son_pc
 
 Windows x86-64 / inFAMOUS Second Son 港版 CUSA00309 01.07 的适配项目，使用 BAT 作为构建和启动入口。
 
@@ -180,3 +180,7 @@ diagnostics/timing-baseline.bat、timing-critical.bat、timing-lighting.bat 使�
 V3 回读回归修复：CPU 需求回读保留 V2 原有窗口，不因粒子计数访问缩小到单页；显式启用批量预取但未记录任何复制时，自动回退 V2 预取。V3 人工／full 入口均关闭 `v3_demand_readback` 和 `v3_prefetch_batches`；R4 同时关闭其余旧候选及布局共享。引擎修改需要重新执行 `build.bat` 才能生效；本次未代执行构建或游戏测试。
 
 V3 R4：新增证据仅在 `full-optimization-v3.bat` 开启；普通与人工入口保持 V1/V2 内核。R3 布局共享代码保留但默认关闭，其构造复用率不计作正常游戏收益。
+
+## 原生辅助模块迁移
+
+普通构建、启动菜单、设置、预检和退出已接入 scripts/native/ 的 C# 模块；现有 Windows PowerShell 负责流程调度。普通运行无需 Python。引擎源码未因本次迁移改变；请先 build.bat 更新来源记录，再 run.bat。性能分析与调试工具在独立提交中迁移。详见 scripts/native/README.md。

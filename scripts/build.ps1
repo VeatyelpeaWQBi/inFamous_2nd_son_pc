@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+﻿# SPDX-License-Identifier: GPL-2.0-or-later
 [CmdletBinding()]
 param([ValidateSet('RelWithDebInfo','Release','Debug')][string]$Configuration='RelWithDebInfo')
 $ErrorActionPreference='Stop'
@@ -8,7 +8,7 @@ $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $lock=$null
 try{
     $project=Read-JsonUtf8 (Join-Path $root 'project.json')
-    $tools=Get-ProjectBuildTools $root;$python=Resolve-InstalledPython
+    $tools=Get-ProjectBuildTools $root
     $build=Resolve-ProjectChild $root ('Build/'+$Configuration)
     $state=Resolve-ProjectChild $root 'state/runtime'
     $null=[IO.Directory]::CreateDirectory($state)
@@ -36,8 +36,9 @@ try{
             $environment['LIB']=(Split-Path -Parent $builtins[0])+';'+$libraryPath
         }
     }
-    $identity=Join-Path $PSScriptRoot 'build_identity.py'
-    $snapshot=(Invoke-ProjectBuildProcess $python @('-B',$identity,'snapshot') $root @{} -Capture)|ConvertFrom-Json
+    $snapshotText=Invoke-ProjectNativeTool 'build-identity' @('snapshot')
+    if($LASTEXITCODE -ne 0){throw 'Native source snapshot failed.'}
+    $snapshot=$snapshotText|ConvertFrom-Json
     $arguments=@('-S',$root,'-B',$build,'-G','Ninja',
         ('-DCMAKE_BUILD_TYPE='+$Configuration),'-DIFSS_BUILD_ENGINE=ON','-DENABLE_TESTS=OFF',
         (New-CMakePathArgument 'CMAKE_C_COMPILER' $tools.CMAKE_CXX_COMPILER),
@@ -58,7 +59,8 @@ try{
     Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND $arguments $root $environment
     Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND @('--build',$build,'--target','shadps4','--parallel','8') $root $environment
     # Failed configure/compile/link commands throw before this activation step.
-    Invoke-ProjectBuildProcess $python @('-B',$identity,'activate','--configuration',$Configuration,'--source-sha256',$snapshot.source_sha256) $root
+    $null=Invoke-ProjectNativeTool 'build-identity' @('activate','--configuration',$Configuration,'--source-sha256',$snapshot.source_sha256)
+    if($LASTEXITCODE -ne 0){throw 'Native build activation failed; the runtime was not switched.'}
     Write-Host ('Build succeeded. run.bat and diagnostics now use Build/'+$Configuration+'/inFAMOUS Second Son.exe.')
     Write-Host 'No game or acceptance test was started. Run diagnostics/full.bat yourself to verify runtime fixes.'
 }catch{

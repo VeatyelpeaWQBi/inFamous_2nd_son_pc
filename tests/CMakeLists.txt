@@ -33,6 +33,7 @@ set(SETTINGS_TEST_SOURCES
 
     # Tests
     test_emulator_settings.cpp
+    test_printf_ctx.cpp
 )
 
 set(NGS2_TEST_SOURCES

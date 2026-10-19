@@ -28,6 +28,9 @@ static vk::ImageUsageFlags ImageUsageFlags(const Vulkan::Instance& instance,
     if (!info.props.is_block) {
         if (info.props.is_depth) {
             usage |= vk::ImageUsageFlagBits::eDepthStencilAttachment;
+            if (instance.IsAttachmentFeedbackLoopLayoutSupported()) {
+                usage |= vk::ImageUsageFlagBits::eAttachmentFeedbackLoopEXT;
+            }
         } else {
             usage |= vk::ImageUsageFlagBits::eColorAttachment;
             if (instance.IsAttachmentFeedbackLoopLayoutSupported()) {
@@ -271,6 +274,8 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
         ++backing->state_version;
     };
 
+    // Preserve every unsynchronized reader stage when collapsing per-subresource state.
+    auto merged_stage = dst_stage;
     const bool needs_partial_transition =
         subres_range &&
         (subres_range->base != SubresourceBase{} || subres_range->extent != info.resources);
@@ -316,11 +321,14 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
             // requested state: only the subresources changed since the image stopped being
             // uniform can need a barrier.
             Common::Perf::Add(Common::Perf::BarrierDirtyPath);
+            merged_stage |= backing->partial_base_state.pl_stage;
             for (const u32 subres_idx : dirty) {
                 auto& state = subresource_states[subres_idx];
                 if (needs_barrier(state)) {
                     transition(state, subres_idx / info.resources.layers,
                                subres_idx % info.resources.layers);
+                } else {
+                    merged_stage |= state.pl_stage;
                 }
             }
         } else {
@@ -347,6 +355,16 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
                     ASSERT(subres_idx < subresource_states.size());
                     auto& state = subresource_states[subres_idx];
                     if (!needs_barrier(state)) {
+                        merged_stage |= state.pl_stage;
+                        if ((state.pl_stage | dst_stage) != state.pl_stage) {
+                            state.pl_stage |= dst_stage;
+                            ++backing->state_version;
+                            // This reader change is not necessarily listed in dirty.
+                            // Walk all subresources before a later full-state collapse.
+                            if (needs_partial_transition) {
+                                backing->dirty_overflow = true;
+                            }
+                        }
                         continue;
                     }
                     transition(state, mip, layer);
@@ -373,6 +391,8 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
         }
     } else { // Full resource transition
         if (!needs_barrier(last_state)) {
+            // Every reader stage must be included in the next write dependency.
+            last_state.pl_stage |= dst_stage;
             return;
         }
         barriers.emplace_back(vk::ImageMemoryBarrier2{
@@ -397,7 +417,7 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
 
     last_state.layout = dst_layout;
     last_state.access_mask = dst_mask;
-    last_state.pl_stage = dst_stage;
+    last_state.pl_stage = merged_stage;
 }
 
 } // namespace VideoCore

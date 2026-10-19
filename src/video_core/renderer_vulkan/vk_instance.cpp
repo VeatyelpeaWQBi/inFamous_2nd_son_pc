@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include <boost/container/static_vector.hpp>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -19,6 +20,14 @@
 namespace Vulkan {
 
 namespace {
+
+// ABI for VK_NV_private_data_base_handle (extension 708, revision 1).
+// Kept local because the pinned dependency headers predate this tool-facing extension.
+struct PrivateDataBaseHandleFeatures {
+    VkStructureType sType = static_cast<VkStructureType>(1000707000);
+    void* pNext = nullptr;
+    VkBool32 privateDataBaseHandle = VK_FALSE;
+};
 
 std::vector<vk::PhysicalDevice> EnumeratePhysicalDevices(vk::UniqueInstance& instance) {
     auto [devices_result, devices] = instance->enumeratePhysicalDevices();
@@ -363,6 +372,21 @@ bool Instance::CreateDevice() {
     const bool calibrated_timestamps =
         TRACY_GPU_ENABLED ? add_extension(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) : false;
 
+    PrivateDataBaseHandleFeatures private_handle_features;
+    bool private_handle_enabled = false;
+    constexpr std::string_view private_handle_extension = "VK_NV_private_data_base_handle";
+    const char* nsight = std::getenv("IFSS_NSIGHT_ACTIVE");
+    if (nsight && std::string_view{nsight} == "1" &&
+        std::ranges::find(available_extensions, private_handle_extension) != available_extensions.end()) {
+        vk::PhysicalDeviceFeatures2 query{.pNext = &private_handle_features};
+        physical_device.getFeatures2(&query);
+        private_handle_enabled =
+            private_handle_features.privateDataBaseHandle &&
+            feature_chain.get<vk::PhysicalDeviceVulkan13Features>().privateData &&
+            add_extension(private_handle_extension);
+        LOG_INFO(Render_Vulkan, "Nsight private base-handle feature: {}", private_handle_enabled);
+    }
+
     const auto family_properties = physical_device.getQueueFamilyProperties();
     if (family_properties.empty()) {
         LOG_CRITICAL(Render_Vulkan, "Physical device reported no queues.");
@@ -461,6 +485,7 @@ bool Instance::CreateDevice() {
         },
         vk::PhysicalDeviceVulkan13Features{
             .robustImageAccess = vk13_features.robustImageAccess,
+            .privateData = private_handle_enabled,
             .shaderDemoteToHelperInvocation = vk13_features.shaderDemoteToHelperInvocation,
             .subgroupSizeControl = vk13_features.subgroupSizeControl,
             .synchronization2 = vk13_features.synchronization2,
@@ -599,6 +624,12 @@ bool Instance::CreateDevice() {
         device_chain.unlink<vk::PhysicalDeviceFaultFeaturesEXT>();
     }
 
+    if (private_handle_enabled) {
+        // Attach only the feature that was queried and the extension that was enabled above.
+        auto& create_info = device_chain.get<vk::DeviceCreateInfo>();
+        private_handle_features.pNext = const_cast<void*>(create_info.pNext);
+        create_info.pNext = &private_handle_features;
+    }
     auto [device_result, dev] = physical_device.createDeviceUnique(device_chain.get());
     if (device_result != vk::Result::eSuccess) {
         LOG_CRITICAL(Render_Vulkan, "Failed to create device: {}", vk::to_string(device_result));

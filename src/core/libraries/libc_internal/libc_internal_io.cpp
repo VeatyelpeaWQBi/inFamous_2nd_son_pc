@@ -4,6 +4,8 @@
 #include <cstdarg>
 #include <cstdio>
 #include <map>
+#include <new>
+#include <vector>
 
 #include <common/va_ctx.h>
 #include "common/alignment.h"
@@ -19,6 +21,47 @@
 #include "printf.h"
 
 namespace Libraries::LibcInternal {
+
+s32 PS4_SYSV_ABI internal_vsnprintf(char* destination, u64 size, const char* format,
+                                    Common::VaList* args) {
+    if (!format || !args || (!destination && size != 0)) {
+        *Kernel::__Error() = POSIX_EINVAL;
+        return -1;
+    }
+    return vsnprintf_ctx(destination, size, format, args);
+}
+
+s32 PS4_SYSV_ABI internal_vprintf(const char* format, Common::VaList* args) {
+    if (!format || !args) {
+        *Kernel::__Error() = POSIX_EINVAL;
+        return -1;
+    }
+    auto measured_args = *args;
+    const int length = _vsnprintf(_out_null, nullptr, format, &measured_args, 0);
+    if (length < 0) {
+        *Kernel::__Error() = POSIX_EOVERFLOW;
+        return -1;
+    }
+    std::vector<char> output;
+    try {
+        output.resize(static_cast<size_t>(length) + 1);
+    } catch (const std::bad_alloc&) {
+        *Kernel::__Error() = POSIX_ENOMEM;
+        return -1;
+    }
+    const int result = vsnprintf_ctx(output.data(), output.size(), format, args);
+    if (result != length || std::fwrite(output.data(), 1, length, stdout) != length) {
+        *Kernel::__Error() = POSIX_EIO;
+        return -1;
+    }
+    return result;
+}
+
+s32 PS4_SYSV_ABI internal_printf(VA_ARGS) {
+    VA_CTX(ctx);
+    const auto* format = Common::vaArgPtr<const char>(&ctx.va_list);
+    return internal_vprintf(format, &ctx.va_list);
+}
 
 s32 PS4_SYSV_ABI internal_snprintf(char* s, u64 n, VA_ARGS) {
     VA_CTX(ctx);
@@ -465,6 +508,9 @@ s32 PS4_SYSV_ABI internal_fclose(OrbisFILE* file) {
 }
 
 void RegisterlibSceLibcInternalIo(Core::Loader::SymbolsResolver* sym) {
+    LIB_FUNCTION("GMpvxPFW924", "libSceLibcInternal", 1, "libSceLibcInternal", internal_vprintf);
+    LIB_FUNCTION("hcuQgD53UxM", "libSceLibcInternal", 1, "libSceLibcInternal", internal_printf);
+    LIB_FUNCTION("Q2V+iqvjgC0", "libSceLibcInternal", 1, "libSceLibcInternal", internal_vsnprintf);
     LIB_FUNCTION("eLdDw6l0-bU", "libSceLibcInternal", 1, "libSceLibcInternal", internal_snprintf);
     LIB_FUNCTION("xGT4Mc55ViQ", "libSceLibcInternal", 1, "libSceLibcInternal", internal__Fofind);
     LIB_FUNCTION("dREVnZkAKRE", "libSceLibcInternal", 1, "libSceLibcInternal", internal__Foprep);

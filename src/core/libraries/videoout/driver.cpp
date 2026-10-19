@@ -4,6 +4,7 @@
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/thread.h"
+#include "common/path_trace.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/kernel/time.h"
@@ -234,11 +235,14 @@ int VideoOutDriver::ChangeBufferAttribute(VideoOutPort* port, s32 attributeIndex
 }
 
 void VideoOutDriver::Flip(const Request& req) {
+    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipConsume, req.trace_id,
+                            req.index, req.frame->ready_tick);
     // Update HDR status before presenting.
     presenter->SetHDR(req.port->is_hdr);
 
     // Present the frame.
     presenter->Present(req.frame);
+    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipPresentReturn, req.trace_id);
 
     // Update flip status.
     auto* port = req.port;
@@ -275,6 +279,7 @@ void VideoOutDriver::Flip(const Request& req) {
     }
     // save to prev buf index
     port->prev_index = req.index;
+    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipDone, req.trace_id);
 }
 
 void VideoOutDriver::DrawBlankFrame() {
@@ -305,17 +310,24 @@ bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
         port->flip_status.submit_tsc = Libraries::Kernel::sceKernelReadTsc();
     }
 
+    const u64 trace_id = Common::PathTrace::NextId();
+    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipRequest, trace_id, index, is_eop,
+                            static_cast<u64>(flip_arg));
     if (!is_eop) {
         // Non EOP flips can arrive from any thread so ask GPU thread to perform them
-        liverpool->SendCommand([=, this]() { SubmitFlipInternal(port, index, flip_arg, is_eop); });
+        liverpool->SendCommand([=, this]() {
+            SubmitFlipInternal(port, index, flip_arg, is_eop, trace_id);
+        });
     } else {
-        SubmitFlipInternal(port, index, flip_arg, is_eop);
+        SubmitFlipInternal(port, index, flip_arg, is_eop, trace_id);
     }
 
     return true;
 }
 
-void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop) {
+void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop,
+                                       u64 trace_id) {
+    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipPrepare, trace_id);
     Vulkan::Frame* frame;
     if (index == -1) {
         frame = presenter->PrepareBlankFrame(false);
@@ -327,12 +339,14 @@ void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_
     }
 
     std::scoped_lock lock{mutex};
+    Common::PathTrace::Emit(Common::PathTrace::Kind::FlipReady, trace_id, index, frame->ready_tick);
     requests.push({
         .frame = frame,
         .port = port,
         .flip_arg = flip_arg,
         .index = index,
         .eop = is_eop,
+        .trace_id = trace_id,
     });
 }
 

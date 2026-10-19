@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cstdlib>
+#include <cstring>
 #include "common/elf_info.h"
 #include "common/singleton.h"
 #include "core/emulator_settings.h"
@@ -1976,8 +1977,14 @@ s32 PS4_SYSV_ABI sceSystemServiceParamGetInt(OrbisSystemServiceParamId param_id,
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceSystemServiceParamGetString() {
-    LOG_ERROR(Lib_SystemService, "(STUBBED) called");
+s32 PS4_SYSV_ABI sceSystemServiceParamGetString(OrbisSystemServiceParamId param_id,
+                                              char* buffer, size_t buffer_size) {
+    static constexpr char system_name[] = "inFAMOUS Second Son";
+    if (param_id != OrbisSystemServiceParamId::SystemName || !buffer ||
+        buffer_size < sizeof(system_name)) {
+        return ORBIS_SYSTEM_SERVICE_ERROR_PARAMETER;
+    }
+    std::memcpy(buffer, system_name, sizeof(system_name));
     return ORBIS_OK;
 }
 

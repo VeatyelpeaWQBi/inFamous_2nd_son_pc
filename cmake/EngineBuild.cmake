@@ -19,6 +19,10 @@ endif()
 
 project(inFamousRuntime CXX C ASM ${ADDITIONAL_LANGUAGES})
 
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "This project requires a Windows x86-64 compiler target.")
+endif()
+
 include(FetchContent)
 
 # Forcing PIE makes sure that the base address is high enough so that it doesn't clash with the PS4 memory.
@@ -806,6 +810,9 @@ set(COMMON src/common/logging/classes.cpp
            src/common/native_clock.cpp
            src/common/native_clock.h
            src/common/path_util.cpp
+           src/common/path_trace.cpp
+           src/common/path_trace.h
+           src/common/path_trace_queue.h
            src/common/path_util.h
            src/common/object_pool.h
            src/common/polyfill_thread.h
@@ -1042,6 +1049,9 @@ set(SHADER_RECOMPILER src/shader_recompiler/profile.h
                       src/shader_recompiler/ir/passes/inject_clip_distance_attributes.cpp
                       src/shader_recompiler/ir/passes/inverse_ballot_elimination_pass.cpp
                       src/shader_recompiler/ir/passes/ir_passes.h
+                      src/shader_recompiler/ir/passes/ifss_address_schedule.cpp
+                      src/shader_recompiler/ifss_depth_reduction.cpp
+                      src/shader_recompiler/ifss_depth_reduction.h
                       src/shader_recompiler/ir/passes/lower_buffer_format_to_raw.cpp
                       src/shader_recompiler/ir/passes/lower_fp64_to_fp32.cpp
                       src/shader_recompiler/ir/passes/lower_hardware_intrinsics.cpp
@@ -1141,6 +1151,10 @@ set(VIDEO_CORE src/video_core/amdgpu/cb_db_extent.h
                src/video_core/renderer_vulkan/vk_driver_cache.h
                src/video_core/renderer_vulkan/vk_driver_cache_format.h
                src/video_core/renderer_vulkan/vk_prewarm_budget.h
+               src/video_core/buffer_cache/feedback_write_history.h
+               src/video_core/renderer_vulkan/vk_descriptor_evidence.h
+               src/video_core/renderer_vulkan/vk_pipeline_layout_cache.cpp
+               src/video_core/renderer_vulkan/vk_pipeline_layout_cache.h
                src/video_core/renderer_vulkan/vk_pipeline_common.cpp
                src/video_core/renderer_vulkan/vk_pipeline_common.h
                src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
@@ -1310,6 +1324,8 @@ target_link_libraries(shadps4 PRIVATE spdlog::spdlog)
 target_link_libraries(shadps4 PRIVATE magic_enum::magic_enum fmt::fmt toml11::toml11 tsl::robin_map xbyak::xbyak Tracy::TracyClient RenderDoc::API FFmpeg::ffmpeg Dear_ImGui ImGuiFileDialog gcn half::half ZLIB::ZLIB PNG::PNG minimp3)
 target_link_libraries(shadps4 PRIVATE Boost::headers GPUOpen::VulkanMemoryAllocator LibAtrac9 sirit Vulkan::Headers xxHash::xxhash Zydis::Zydis SDL3::SDL3 pugixml::pugixml)
 target_link_libraries(shadps4 PRIVATE stb::headers lfreist-hwinfo::hwinfo nlohmann_json::nlohmann_json miniz::miniz fdk-aac CLI11::CLI11 OpenAL::OpenAL Cpp_Httplib miniupnpc::miniupnpc)
+# The AAC wrapper uses an internal FDK header; resolve it from the configured dependency tree.
+target_include_directories(shadps4 PRIVATE "${IFSS_EXTERNALS_ROOT}/aacdec/fdk-aac/libAACdec/src")
 target_link_libraries(shadps4 PRIVATE Freetype::Freetype)
 target_link_libraries(shadps4 PRIVATE libprotobuf)
 target_link_libraries(shadps4 PRIVATE ZArchive::zarchive)

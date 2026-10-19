@@ -6,6 +6,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include "common/debug.h"
 #include "common/elf_info.h"
 #include "common/io_file.h"
@@ -32,6 +33,19 @@
 namespace Vulkan {
 
 namespace {
+
+// Keep sampled read-only depth and its stencil attachment in the same layout.
+vk::ImageLayout DepthTargetLayout(bool has_stencil, bool depth_write, bool stencil_write) {
+    if (depth_write) {
+        return has_stencil ? vk::ImageLayout::eDepthStencilAttachmentOptimal
+                           : vk::ImageLayout::eDepthAttachmentOptimal;
+    }
+    if (stencil_write) {
+        return vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal;
+    }
+    return has_stencil ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
+                       : vk::ImageLayout::eDepthReadOnlyOptimal;
+}
 
 /// Leaves a GPU crash diagnostics checkpoint for a draw (see GpuCrashDiag).
 void MarkDraw(const Scheduler& scheduler, const CommandRecorder& cmdbuf,
@@ -535,9 +549,9 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     // copy on that thread too): its commands may be recorded by a thread of their own.
     scheduler.AllowThreadedRecording();
 
-    scheduler.SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
+    scheduler.SetSubmitCallback([this](Vulkan::SubmitInfo& info, bool queue_locked) {
         runtime.FlushBarriers();
-        buffer_cache.SubmitPendingArenaBinds(info);
+        buffer_cache.SubmitPendingArenaBinds(info, queue_locked);
     });
     pipeline_cache.SetPipelineDrainCallback([this] {
         if (compute_scheduler) {
@@ -559,8 +573,14 @@ Rasterizer::~Rasterizer() {
 }
 
 bool Rasterizer::UseComputeQueue(const ComputePipeline* pipeline) {
+    const auto& tuning = Common::Perf::GetTuning();
+    const auto& stage = pipeline->GetStage(Shader::SwStage::Compute);
+    // One confirmed buffer-only particle producer, never the full-screen lighting shader.
+    // All existing resource-hazard, GDS/BDA and queue submission checks still apply.
+    const bool particle = tuning.v3_particle_async.load(std::memory_order_relaxed) &&
+                          stage.pgm_hash == 0x3ea96db0ULL;
     if (!async_compute_translation || !instance.HasComputeQueue() ||
-        !Common::Perf::GetTuning().asc_queue.load(std::memory_order_relaxed)) {
+        (!tuning.asc_queue.load(std::memory_order_relaxed) && !particle)) {
         return false;
     }
     // Buffers only: the images (layouts, barriers) are tracked for the graphics queue; the
@@ -568,6 +588,12 @@ bool Rasterizer::UseComputeQueue(const ComputePipeline* pipeline) {
     const auto& cs = pipeline->GetStage(Shader::SwStage::Compute);
     if (!cs.images.empty() || !cs.samplers.empty() || cs.uses_dma ||
         !pipeline->UsesPushDescriptors()) {
+        Common::Perf::Add(Common::Perf::AscQueueFallbacks);
+        return false;
+    }
+    if (particle && std::ranges::any_of(cs.buffers, [](const auto& buffer) {
+            return buffer.IsSpecial() && buffer.buffer_type != Shader::BufferType::Flatbuf;
+        })) {
         Common::Perf::Add(Common::Perf::AscQueueFallbacks);
         return false;
     }
@@ -584,9 +610,9 @@ bool Rasterizer::UseComputeQueue(const ComputePipeline* pipeline) {
             .stream_buffer = compute_stream.get(),
             .index = 1,
         };
-        compute_scheduler->SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
+        compute_scheduler->SetSubmitCallback([this](Vulkan::SubmitInfo& info, bool queue_locked) {
             compute_runtime->FlushBarriers();
-            buffer_cache.SubmitPendingArenaBinds(info);
+            buffer_cache.SubmitPendingArenaBinds(info, queue_locked);
             buffer_cache.WaitArenaBinds(info);
         });
         buffer_cache.SetCrossQueueTracking(&compute_context);
@@ -859,6 +885,9 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
     last_draw_pipeline = pipeline;
 
     PrepareRenderState(pipeline);
+    const auto* trace_vertex = pipeline->GetStages()[u32(Shader::SwStage::Vertex)];
+    auto trace_producer = buffer_cache.BeginProducerTrace(
+        trace_vertex ? trace_vertex->pgm_hash : 0, 1);
     if (!BindResources(pipeline)) {
         return;
     }
@@ -868,6 +897,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
                                 regs.num_instances.NumInstances(), u32(regs.primitive_type)));
     }
     const auto state = BeginRendering(pipeline);
+
 
     BindVertexBuffers(pipeline);
     if (is_indexed) {
@@ -909,6 +939,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
         cmdbuf.draw(regs.num_indices, regs.num_instances.NumInstances(), vertex_offset,
                     instance_offset);
     }
+    trace_producer.Commit();
     if (profile_draw) scheduler.ProfileDrawEnd();
     DebugState.IncDrawCall();
 
@@ -982,6 +1013,9 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
     }
 
     PrepareRenderState(pipeline);
+    const auto* trace_vertex = pipeline->GetStages()[u32(Shader::SwStage::Vertex)];
+    auto trace_producer = buffer_cache.BeginProducerTrace(
+        trace_vertex ? trace_vertex->pgm_hash : 0, 2);
     if (!BindResources(pipeline)) {
         return;
     }
@@ -992,6 +1026,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
                                 u32(liverpool->regs.primitive_type)));
     }
     const auto state = BeginRendering(pipeline);
+
 
     BindVertexBuffers(pipeline);
     if (is_indexed) {
@@ -1060,6 +1095,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
         DebugState.IncDrawCall();
     }
 
+    trace_producer.Commit();
     if (profile_draw) scheduler.ProfileDrawEnd();
     if (g_dump.frames_left != 0) [[unlikely]] {
         DumpAfter(pipeline);
@@ -1095,6 +1131,8 @@ void Rasterizer::DispatchDirect() {
 
     // asc_queue: the dispatch, its bindings and uploads go to the compute queue.
     const ComputeQueueScope queue_scope{*this, UseComputeQueue(pipeline)};
+    auto trace_producer = buffer_cache.BeginProducerTrace(
+        pipeline->GetStage(Shader::SwStage::Compute).pgm_hash, 3);
     if (!BindResources(pipeline)) {
         return;
     }
@@ -1122,6 +1160,11 @@ void Rasterizer::DispatchDirect() {
     }
     Sched().ProfileDispatchBegin(cs.pgm_hash);
     cmdbuf.dispatch(cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
+    trace_producer.Commit();
+    if (on_compute_queue && cs.pgm_hash == 0x3ea96db0ULL &&
+        Common::Perf::GetTuning().v3_particle_async.load(std::memory_order_relaxed)) {
+        Common::Perf::Add(Common::Perf::V3ParticleAsync);
+    }
     if (on_compute_queue) Core::Benchmark::NoteNativeCompute(!async_compute_translation);
     Sched().ProfileDispatchEnd();
     DebugState.IncDispatch();
@@ -1153,6 +1196,8 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
 
     // asc_queue: the dispatch, its bindings and uploads go to the compute queue.
     const ComputeQueueScope queue_scope{*this, UseComputeQueue(pipeline)};
+    auto trace_producer = buffer_cache.BeginProducerTrace(
+        pipeline->GetStage(Shader::SwStage::Compute).pgm_hash, 4);
     if (!BindResources(pipeline)) {
         return;
     }
@@ -1182,6 +1227,11 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
     }
     Sched().ProfileDispatchBegin(pipeline->GetStage(Shader::SwStage::Compute).pgm_hash);
     cmdbuf.dispatchIndirect(buffer->Handle(), base);
+    trace_producer.Commit();
+    if (on_compute_queue && pipeline->GetStage(Shader::SwStage::Compute).pgm_hash == 0x3ea96db0ULL &&
+        Common::Perf::GetTuning().v3_particle_async.load(std::memory_order_relaxed)) {
+        Common::Perf::Add(Common::Perf::V3ParticleAsync);
+    }
     Sched().ProfileDispatchEnd();
     DebugState.IncDispatch();
 
@@ -1254,6 +1304,7 @@ void Rasterizer::OnSubmit() {
 }
 
 void Rasterizer::OnFence() {
+    buffer_cache.TraceFeedbackFence();
     texture_cache.ProcessDownloadImages();
     buffer_cache.PrefetchReadbacks();
 }
@@ -1323,6 +1374,10 @@ void Rasterizer::PrefetchTexMemo(u64 key) const noexcept {
 }
 
 bool Rasterizer::BindResources(const Pipeline* pipeline) {
+    const bool evidence =
+        Common::Perf::GetTuning().v3_descriptor_evidence.load(std::memory_order_relaxed);
+    std::optional<Common::Perf::ScopedTimer> prepare_timer;
+    if (evidence) prepare_timer.emplace(Common::Perf::R4PrepareCalls, Common::Perf::R4PrepareNs);
     if (IsComputeImageCopy(pipeline) || IsComputeMetaClear(pipeline) ||
         IsComputeImageClear(pipeline)) {
         return false;
@@ -1338,6 +1393,7 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
     set_writes.clear();
     buffer_infos.clear();
     image_infos.clear();
+    descriptor_image_uses.clear();
     pending_flatbufs.clear();
 
     bool uses_dma = false;
@@ -1351,8 +1407,16 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
         }
         set_writes.resize(set_writes.size() + stage->buffers.size() + stage->images.size() +
                           stage->samplers.size());
-        BindBuffers(*stage, binding, push_data);
-        BindTextures(*stage, binding);
+        {
+            std::optional<Common::Perf::ScopedTimer> timer;
+            if (evidence) timer.emplace(Common::Perf::R4BufferCalls, Common::Perf::R4BufferNs);
+            BindBuffers(*stage, binding, push_data);
+        }
+        {
+            std::optional<Common::Perf::ScopedTimer> timer;
+            if (evidence) timer.emplace(Common::Perf::R4TextureCalls, Common::Perf::R4TextureNs);
+            BindTextures(*stage, binding);
+        }
         uses_dma |= stage->uses_dma;
     }
 
@@ -2269,11 +2333,22 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
                 }
             }
             const auto binding = image.binding;
+            const auto& sample_range = image_view->info.range;
+            const bool sampled_depth_target =
+                stage.sw_stage != Shader::SwStage::Compute && !is_storage &&
+                image.info.props.is_depth && db_desc.first &&
+                texture_cache.GetImage(db_desc.first).backing == image.backing;
+            const auto depth_layout = instance.IsAttachmentFeedbackLoopLayoutSupported()
+                                          ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
+                                          : vk::ImageLayout::eGeneral;
 
-            // The image is either bound as storage in a separate descriptor or bound as render
-            // target in feedback loop. Depth images are excluded because they can't be bound as
-            // storage and feedback loop doesn't make sense for them
-            if ((binding.force_general || binding.is_target) && !image.info.props.is_depth) {
+            // Aliases and wider sampled views must agree with the attached depth layout.
+            // Transition the whole sampled view; BeginRendering adds attachment access.
+            if (sampled_depth_target) {
+                needs_barrier |= runtime.Transit(
+                    &image, depth_layout, vk::PipelineStageFlagBits2::eAllGraphics,
+                    vk::AccessFlagBits2::eShaderRead, sample_range);
+            } else if ((binding.force_general || binding.is_target) && !image.info.props.is_depth) {
                 if (instance.IsAttachmentFeedbackLoopLayoutSupported() && image.binding.is_target) {
                     needs_barrier |= runtime.Transit(
                         &image, vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT,
@@ -2302,8 +2377,11 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
             image.usage.storage |= is_storage;
             image.usage.texture |= !is_storage;
 
-            image_infos.emplace_back(VK_NULL_HANDLE, *image_view->image_view,
-                                     image.backing->state.layout);
+            descriptor_image_uses.push_back(
+                {static_cast<u32>(image_infos.size()), image_id, sample_range, is_storage});
+            image_infos.emplace_back(
+                VK_NULL_HANDLE, *image_view->image_view,
+                sampled_depth_target ? depth_layout : image.backing->state.layout);
         }
     }
 
@@ -2388,7 +2466,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
 }
 
 RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
-    attachment_feedback_loop = false;
+    attachment_feedback_loop = {};
     const auto& regs = liverpool->regs;
     const auto& key = pipeline->GetGraphicsKey();
     RenderState state;
@@ -2428,7 +2506,7 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
                                 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                                 vk::AccessFlagBits2::eColorAttachmentWrite |
                                     vk::AccessFlagBits2::eColorAttachmentRead);
-            attachment_feedback_loop = true;
+            attachment_feedback_loop |= vk::ImageAspectFlagBits::eColor;
         } else {
             needs_barrier |= runtime.Transit(image, vk::ImageLayout::eColorAttachmentOptimal,
                                              vk::PipelineStageFlagBits2::eColorAttachmentOutput,
@@ -2473,19 +2551,41 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         // Stencil writes can be enabled while depth writes are off.
         const bool stencil_write =
             has_stencil && regs.depth_control.stencil_enable && !desc.view_info.is_storage;
-        const auto new_layout = desc.view_info.is_storage
-                                    ? has_stencil ? vk::ImageLayout::eDepthStencilAttachmentOptimal
-                                                  : vk::ImageLayout::eDepthAttachmentOptimal
-                                : stencil_write
-                                    ? vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal
-                                : has_stencil ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
-                                              : vk::ImageLayout::eDepthReadOnlyOptimal;
-        needs_barrier |= runtime.Transit(&image, new_layout,
-                                         vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-                                             vk::PipelineStageFlagBits2::eLateFragmentTests,
-                                         vk::AccessFlagBits2::eDepthStencilAttachmentWrite |
-                                             vk::AccessFlagBits2::eDepthStencilAttachmentRead,
-                                         desc.view_info.range);
+        const bool sampled = std::ranges::any_of(descriptor_image_uses, [&](const auto& use) {
+            return !use.is_storage &&
+                   texture_cache.GetImage(use.image).backing == image.backing;
+        });
+        const auto new_layout =
+            sampled ? (instance.IsAttachmentFeedbackLoopLayoutSupported()
+                           ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
+                           : vk::ImageLayout::eGeneral)
+                    : DepthTargetLayout(has_stencil, desc.view_info.is_storage, stencil_write);
+        if (sampled) {
+            attachment_feedback_loop |= image.aspect_mask;
+            // Resolve every sampled alias after all stages have bound their resources.
+            // Include the entire sampled view, even if it is wider than the attachment.
+            for (const auto& use : descriptor_image_uses) {
+                auto& sampled_image = texture_cache.GetImage(use.image);
+                if (!use.is_storage && sampled_image.backing == image.backing) {
+                    needs_barrier |= runtime.Transit(
+                        &sampled_image, new_layout, vk::PipelineStageFlagBits2::eAllGraphics,
+                        vk::AccessFlagBits2::eShaderRead, use.range);
+                    image_infos[use.index].imageLayout = new_layout;
+                }
+            }
+        }
+        const auto shader_stage = sampled ? vk::PipelineStageFlagBits2::eAllGraphics
+                                          : vk::PipelineStageFlagBits2::eNone;
+        const auto shader_access = sampled ? vk::AccessFlagBits2::eShaderRead
+                                           : vk::AccessFlagBits2::eNone;
+        needs_barrier |= runtime.Transit(
+            &image, new_layout,
+            vk::PipelineStageFlagBits2::eEarlyFragmentTests |
+                vk::PipelineStageFlagBits2::eLateFragmentTests | shader_stage,
+            vk::AccessFlagBits2::eDepthStencilAttachmentWrite |
+                vk::AccessFlagBits2::eDepthStencilAttachmentRead | shader_access,
+            desc.view_info.range);
+
 
         state.width = std::min<u32>(state.width, image.info.size.width);
         state.height = std::min<u32>(state.height, image.info.size.height);

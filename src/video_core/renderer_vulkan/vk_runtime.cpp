@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include "common/perf_stats.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
@@ -198,6 +199,13 @@ void Runtime::WriteOcclusionResults(const VideoCore::Buffer* dst, u64 offset, u3
 bool Runtime::Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
                       vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,
                       std::optional<VideoCore::SubresourceRange> subres_range) {
+    // A dependency-info array does not order two transitions of the same image.
+    // Submit the earlier transition before recording another one against its new state.
+    if (std::ranges::any_of(image_barriers, [image](const auto& barrier) {
+            return barrier.image == image->GetImage();
+        })) {
+        FlushBarriers();
+    }
     const size_t prev_num_barriers = static_cast<size_t>(image_barriers.size());
     image->GetBarriers(image_barriers, dst_layout, dst_access, dst_stage, subres_range);
     return image_barriers.size() != prev_num_barriers;

@@ -13,12 +13,20 @@
 namespace Vulkan {
 
 Pipeline::Pipeline(const Instance& instance_, Scheduler& scheduler_, DescriptorHeap& desc_heap_,
-                   const Shader::Profile& profile_, vk::PipelineCache pipeline_cache,
+                   const Shader::Profile& profile_, PipelineLayoutCache& layout_cache_,
+                   vk::PipelineCache pipeline_cache,
                    bool is_compute_ /*= false*/)
     : instance{instance_}, scheduler{scheduler_}, desc_heap{desc_heap_}, profile{profile_},
-      is_compute{is_compute_} {}
+      layout_cache{layout_cache_}, is_compute{is_compute_} {}
 
 Pipeline::~Pipeline() = default;
+
+void Pipeline::BuildLayouts(const vk::DescriptorSetLayoutCreateInfo& info,
+                            std::span<const vk::PushConstantRange> pushes) {
+    layout_objects = layout_cache.Acquire(info, pushes);
+    desc_layout = *layout_objects->descriptor;
+    pipeline_layout = *layout_objects->pipeline;
+}
 
 void Pipeline::BindCompute(Scheduler& on) const {
     ASSERT(IsCompute());
@@ -37,7 +45,13 @@ void Pipeline::BindCompute(Scheduler& on) const {
             const u64 start = Common::Perf::NowNs();
             readiness.Wait();
             Common::Perf::Add(Common::Perf::ComputeBindWaits);
-            Common::Perf::Add(Common::Perf::ComputeBindWaitNs, Common::Perf::NowNs() - start);
+            const u64 elapsed = Common::Perf::NowNs() - start;
+            Common::Perf::Add(Common::Perf::ComputeBindWaitNs, elapsed);
+            if (elapsed >= 25'000'000 &&
+                Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed)) {
+                LOG_INFO(Debug, "Perf compute readiness wait: {} {:.2f} ms", GetDebugString(),
+                         static_cast<double>(elapsed) / 1'000'000);
+            }
         }
         // Acquire also on the no-wait path before accessing the driver's handle.
         ASSERT(IsReady());
@@ -57,7 +71,7 @@ void Pipeline::BindResources(Scheduler& on, DescriptorWrites& set_writes,
         IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
 
     const auto stage_flags = IsCompute() ? vk::ShaderStageFlagBits::eCompute : AllGraphicsStageBits;
-    cmdbuf.pushConstants(*pipeline_layout, stage_flags, 0u, sizeof(push_data), &push_data);
+    cmdbuf.pushConstants(pipeline_layout, stage_flags, 0u, sizeof(push_data), &push_data);
 
     // Bind descriptor set.
     if (set_writes.empty()) {
@@ -65,17 +79,21 @@ void Pipeline::BindResources(Scheduler& on, DescriptorWrites& set_writes,
     }
 
     if (uses_push_descriptors) {
-        cmdbuf.pushDescriptorSetKHR(bind_point, *pipeline_layout, 0, set_writes);
+        cmdbuf.pushDescriptorSetKHR(bind_point, pipeline_layout, 0, set_writes);
         return;
     }
 
     ASSERT_MSG(&on == &scheduler, "Descriptor sets are recycled with the pipeline's scheduler");
-    const auto desc_set = desc_heap.Commit(*desc_layout);
+    if (Common::Perf::GetTuning().v3_descriptor_evidence.load(std::memory_order_relaxed)) {
+        Common::Perf::Add(Common::Perf::R4RegularSets);
+        Common::Perf::Add(Common::Perf::R4RegularWrites,set_writes.size());
+    }
+    const auto desc_set = desc_heap.Commit(desc_layout);
     for (auto& set_write : set_writes) {
         set_write.dstSet = desc_set;
     }
     instance.GetDevice().updateDescriptorSets(set_writes, {});
-    cmdbuf.bindDescriptorSets(bind_point, *pipeline_layout, 0, desc_set, {});
+    cmdbuf.bindDescriptorSets(bind_point, pipeline_layout, 0, desc_set, {});
 }
 
 std::string Pipeline::GetDebugString() const {

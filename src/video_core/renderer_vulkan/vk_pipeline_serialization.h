@@ -20,5 +20,7 @@ void RegisterShaderBinary(std::vector<u32>&& spv, u64 pgm_hash, size_t perm_idx)
 
 /// Recompiler variant of compute shaders (0: default), part of their cache version.
 void SetComputeShaderVariant(u32 variant);
+/// Startup-only policy identity for BOTH graphics and compute cached binaries.
+void SetShaderOptimizationVariant(u32 variant);
 
 } // namespace Vulkan

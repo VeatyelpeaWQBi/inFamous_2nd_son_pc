@@ -5,7 +5,6 @@
 #include <bit>
 #include <chrono>
 #include <condition_variable>
-#include <deque>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -28,10 +27,12 @@
 #include "shader_recompiler/frontend/fetch_shader.h"
 #include "shader_recompiler/info.h"
 #include "shader_recompiler/recompiler.h"
+#include "shader_recompiler/ifss_depth_reduction.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/buffer_cache/region_definitions.h"
 #include "video_core/cache_storage.h"
+#include "video_core/priority_compile_queue.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_driver_cache.h"
@@ -74,7 +75,12 @@ public:
                 Common::Perf::Add(Common::Perf::ComputeCompileQueueWaitNs,
                                   Common::Perf::NowNs() - start);
             }
-            queue.push_back(pipeline);
+            const auto& tuning = Common::Perf::GetTuning();
+            // Required runtime compute work always precedes background compilation. The
+            // queue still bounds the foreground burst so background work cannot starve.
+            const bool foreground = bounded;
+            const bool timed = bounded && tuning.perf_log.load(std::memory_order_relaxed);
+            queue.Push(Job{pipeline, timed ? Common::Perf::NowNs() : 0, bounded}, foreground);
             ++pending;
         }
         work_cv.notify_one();
@@ -106,17 +112,30 @@ private:
         Common::SetCurrentThreadName(name.c_str());
         Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
         while (!stoken.stop_requested()) {
-            Pipeline* pipeline{};
+            VideoCore::PriorityCompileQueue<Job>::Entry job{};
             {
                 std::unique_lock lk{mutex};
-                Common::CondvarWait(work_cv, lk, stoken, [this] { return !queue.empty(); });
+                Common::CondvarWait(work_cv, lk, stoken, [this] { return !queue.Empty(); });
                 if (stoken.stop_requested()) {
                     return;
                 }
-                pipeline = queue.front();
-                queue.pop_front();
+                job = std::move(*queue.Pop());
             }
-            pipeline->Compile();
+            if (job.value.required_compute) {
+                Common::Perf::Add(Common::Perf::ComputeRuntimeCompileJobs);
+                if (job.value.enqueued_ns != 0) {
+                    Common::Perf::Add(Common::Perf::ComputeRuntimeQueueNs,
+                                      Common::Perf::NowNs() - job.value.enqueued_ns);
+                }
+            }
+            if (job.foreground) {
+                Common::Perf::Add(Common::Perf::ComputePriorityJobs);
+                Common::SetCurrentThreadPriority(Common::ThreadPriority::Normal);
+            }
+            job.value.pipeline->Compile();
+            if (job.foreground) {
+                Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
+            }
             {
                 std::scoped_lock lk{mutex};
                 --pending;
@@ -128,7 +147,12 @@ private:
     std::mutex mutex;
     std::condition_variable_any work_cv;
     std::condition_variable done_cv;
-    std::deque<Pipeline*> queue;
+    struct Job {
+        Pipeline* pipeline{};
+        u64 enqueued_ns{};
+        bool required_compute{};
+    };
+    VideoCore::PriorityCompileQueue<Job> queue;
     u32 pending{};
     std::vector<std::jthread> workers;
 };
@@ -664,7 +688,11 @@ void PipelineCache::ScoutDraw(const AmdGpu::Regs& regs, AmdGpu::ScoutDraw& draw,
 PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                              AmdGpu::Liverpool* liverpool_, u32 sparse_page_shift)
     : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_},
-      desc_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes} {
+      desc_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes},
+      layout_cache{instance.GetDevice(),
+                   Common::Perf::GetTuning().v3_layout_sharing.load(std::memory_order_relaxed)} {
+    LOG_INFO(Render_Vulkan, "Pipeline layout sharing active: {} (startup policy)",
+             layout_cache.SharingEnabled());
     const auto& vk12_props = instance.GetVk12Properties();
     profile = Shader::Profile{
         .max_viewport_width = instance.GetMaxViewportWidth(),
@@ -726,6 +754,16 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
     };
     // Each recompiler option changing compute shaders has its own bit: cached shaders compiled
     // with other options are compiled again once.
+    address_schedule_mask =
+        (Common::Perf::GetTuning().v3_lighting_schedule.load(std::memory_order_relaxed) ? 1u : 0u) |
+        (Common::Perf::GetTuning().v3_particle_schedule.load(std::memory_order_relaxed) ? 2u : 0u);
+    const bool depth_requested = Common::Perf::GetTuning().v3_lighting_reduction.load(std::memory_order_relaxed);
+    const bool depth_supported = instance.SupportsComputeSubgroupArithmetic() && profile.supported_spirv >= 0x00010300;
+    if (depth_requested && depth_supported) address_schedule_mask |= Shader::Optimization::IfssDepthReductionBit;
+    LOG_INFO(Render_Vulkan, "C1 depth reduction: requested={} supported={} active={}",
+             depth_requested, depth_supported, depth_requested && depth_supported);
+    SetShaderOptimizationVariant(address_schedule_mask);
+    LOG_INFO(Render_Vulkan, "V3 shader policy locked at startup: mask {}", address_schedule_mask);
     const bool lds_multi_wave = profile.needs_lds_barriers && profile.lds_barriers_multi_wave;
     SetComputeShaderVariant((lds_multi_wave ? 1u : 0u) | (profile.wave_memory_barriers ? 2u : 0u));
     LOG_INFO(Render_Vulkan,
@@ -809,7 +847,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             Common::Perf::GetTuning().async_pipelines.load(std::memory_order_relaxed) >= 1;
         GraphicsPipeline::SerializationSupport sdata{};
         it.value() = std::make_unique<GraphicsPipeline>(
-            instance, scheduler, desc_heap, profile, graphics_key, driver_cache->Handle(), infos,
+            instance, scheduler, desc_heap, profile, layout_cache, graphics_key, driver_cache->Handle(), infos,
             runtime_infos, fetch_shader, modules, sdata, false, true);
         GraphicsPipeline* const pipeline = it.value().get();
         pipeline->SetDriverCache(driver_cache.get());
@@ -853,7 +891,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         const bool defer =
             Common::Perf::GetTuning().async_pipelines.load(std::memory_order_relaxed) >= 2;
         ComputePipeline::SerializationSupport sdata{};
-        it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
+        it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile, layout_cache,
                                                        driver_cache->Handle(), compute_key, *infos[0],
                                                        modules[0], sdata, false, true);
         ComputePipeline* const pipeline = it.value().get();
@@ -875,8 +913,10 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
             pipeline->Compile();
         }
         Common::Perf::Add(Common::Perf::PipelineStallNs, Common::Perf::NowNs() - start_ns);
+        pipeline->NoteFirstUse();
         return pipeline;
     }
+    it->second->NoteFirstUse();
     return it->second.get();
 }
 
@@ -1299,18 +1339,32 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
                                               Shader::Backend::Bindings& binding) {
     Common::Perf::ScopedTimer compile_timer{Common::Perf::ShaderCompiles,
                                             Common::Perf::ShaderCompileNs};
+    const bool time_compute = info.hw_stage == HwStage::Compute &&
+                              Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed);
+    const u64 compute_start = time_compute ? Common::Perf::NowNs() : 0;
     LOG_INFO(Render_Vulkan, "Compiling {} shader {:#x} {}", info.hw_stage, info.pgm_hash,
              perm_idx != 0 ? "(permutation)" : "");
     DumpShader(code, info.pgm_hash, info.hw_stage, perm_idx, "bin");
 
-    const auto ir_program = Shader::TranslateProgram(code, pools, info, runtime_info, profile);
+    const auto ir_program = Shader::TranslateProgram(code, pools, info, runtime_info, profile,
+                                                     address_schedule_mask);
     auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir_program, binding);
+    auto patch = GetShaderPatch(info.pgm_hash, info.hw_stage, perm_idx, "spv");
+    const bool is_patched = patch && EmulatorSettings.IsPatchShaders();
+    if ((address_schedule_mask & Shader::Optimization::IfssDepthReductionBit) &&
+        info.hw_stage == HwStage::Compute && info.pgm_hash == Shader::Optimization::IfssLightingHash) {
+        Shader::Optimization::DepthReductionResult result{false, "guest-fingerprint"};
+        if (is_patched) result.reason = "external-shader-patch";
+        else if (Shader::Optimization::IsIfssDepthShader(code)) {
+            result = Shader::Optimization::ReduceIfssDepthAtomics(spv);
+        }
+        LOG_INFO(Render_Recompiler, "C1 depth reduction shader {:#x} permutation {}: applied={} reason={}",
+                 info.pgm_hash, perm_idx, result.applied, result.reason);
+    }
+    // The dump, Vulkan module and serialized binary all receive the same final candidate.
     DumpShader(spv, info.pgm_hash, info.hw_stage, perm_idx, "spv");
 
     vk::ShaderModule module;
-
-    auto patch = GetShaderPatch(info.pgm_hash, info.hw_stage, perm_idx, "spv");
-    const bool is_patched = patch && EmulatorSettings.IsPatchShaders();
     if (is_patched) {
         LOG_INFO(Loader, "Loaded patch for {} shader {:#x}", info.hw_stage, info.pgm_hash);
         module = CompileSPV(*patch, instance.GetDevice());
@@ -1318,6 +1372,11 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
         module = CompileSPV(spv, instance.GetDevice());
     }
 
+    if (time_compute) {
+        Common::Perf::Add(Common::Perf::ComputeShaderCompiles);
+        Common::Perf::Add(Common::Perf::ComputeShaderCompileNs,
+                          Common::Perf::NowNs() - compute_start);
+    }
     RegisterShaderBinary(std::move(spv), info.pgm_hash, perm_idx);
 
     const auto name = GetShaderName(info.hw_stage, info.pgm_hash, perm_idx);
@@ -1467,6 +1526,9 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
     auto it_pgm = program_cache.find(params.hash);
     const bool new_program = it_pgm == program_cache.end();
     if (new_program) {
+        if (hw_stage == HwStage::Compute) {
+            Common::Perf::Add(Common::Perf::ComputeNewPrograms);
+        }
         auto new_program_ptr = std::make_unique<Program>(hw_stage, sw_stage, params);
         Program* const program = new_program_ptr.get();
         auto start = binding;
@@ -1587,6 +1649,9 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         return permutation.module && permutation.spec == spec;
     });
     if (it == program->modules.end()) {
+        if (hw_stage == HwStage::Compute) {
+            Common::Perf::Add(Common::Perf::ComputeNewPermutations);
+        }
         auto new_info = Shader::Info(hw_stage, sw_stage, params);
         module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding);
 

@@ -3,7 +3,11 @@
 
 project(ImGui_Resources)
 
-add_executable(Dear_ImGui_FontEmbed ${CMAKE_SOURCE_DIR}/externals/imgui/misc/fonts/binary_to_compressed_c.cpp)
+set(IFSS_FONT_EMBED_SOURCE "${IFSS_EXTERNALS_ROOT}/imgui/misc/fonts/binary_to_compressed_c.cpp")
+if(NOT EXISTS "${IFSS_FONT_EMBED_SOURCE}")
+    message(FATAL_ERROR "Configured ImGui font embedding source is missing: ${IFSS_FONT_EMBED_SOURCE}")
+endif()
+add_executable(Dear_ImGui_FontEmbed "${IFSS_FONT_EMBED_SOURCE}")
 
 set(FONT_LIST
     NotoSansArabic-Regular.ttf

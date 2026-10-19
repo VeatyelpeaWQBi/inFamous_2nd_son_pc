@@ -47,15 +47,20 @@ public:
     };
 
     ComputePipeline(const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,
-                    const Shader::Profile& profile, vk::PipelineCache pipeline_cache,
+                    const Shader::Profile& profile, PipelineLayoutCache& layout_cache,
+                    vk::PipelineCache pipeline_cache,
                     ComputePipelineKey compute_key, const Shader::Info& info,
                     vk::ShaderModule module, SerializationSupport& sdata, bool preloading,
                     bool defer_compile = false, std::span<const u32> cached_image_bindings = {});
     ~ComputePipeline() override;
 
     void Compile() override;
+    /// First runtime lookup only; command processor thread, independent of worker readiness.
+    void NoteFirstUse();
 
 private:
+    const bool restored;
+    bool first_use_recorded{};
     ComputePipelineKey compute_key;
     vk::ShaderModule module;
     vk::PipelineCache vk_pipeline_cache;

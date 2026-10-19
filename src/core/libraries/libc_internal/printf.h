@@ -410,10 +410,10 @@ static inline size_t _ftoa(out_fct_type out, char* buffer, size_t idx, size_t ma
 
 // internal vsnprintf
 static inline int _vsnprintf(out_fct_type out, char* buffer, const char* format,
-                             Common::VaList* va_list) {
+                             Common::VaList* va_list,
+                             size_t maxlen) {
     unsigned int flags, width, precision, n;
     size_t idx = 0U;
-    auto maxlen = static_cast<size_t>(-1);
 
     if (!buffer) {
         // use null output function
@@ -500,7 +500,8 @@ static inline int _vsnprintf(out_fct_type out, char* buffer, const char* format,
         // evaluate length field
         switch (*format) {
         case 'l':
-            flags |= FLAGS_LONG;
+            // PS4 uses LP64 even when the Windows host uses LLP64.
+            flags |= FLAGS_LONG_LONG;
             format++;
             if (*format == 'l') {
                 flags |= FLAGS_LONG_LONG;
@@ -573,13 +574,15 @@ static inline int _vsnprintf(out_fct_type out, char* buffer, const char* format,
                     auto value = vaArgLongLong(
                         va_list); // const long long value = va.next<long long>(cpu, mem);
                     idx = _ntoa_long_long(out, buffer, idx, maxlen,
-                                          (unsigned long long)(value > 0 ? value : 0 - value),
+                                          (value < 0 ? 0ULL - static_cast<unsigned long long>(value)
+                                                     : static_cast<unsigned long long>(value)),
                                           value < 0, base, precision, width, flags);
 #endif
                 } else if (flags & FLAGS_LONG) {
                     auto value = vaArgLong(va_list); // const long value = va.next<long>(cpu, mem);
                     idx = _ntoa_long(out, buffer, idx, maxlen,
-                                     (unsigned long)(value > 0 ? value : 0 - value), value < 0,
+                                     (value < 0 ? 0UL - static_cast<unsigned long>(value)
+                                                : static_cast<unsigned long>(value)), value < 0,
                                      base, precision, width, flags);
                 } else {
                     // const int value = (flags & FLAGS_CHAR) ? (char)va.next<int>(cpu, mem) :
@@ -590,7 +593,8 @@ static inline int _vsnprintf(out_fct_type out, char* buffer, const char* format,
                         : (flags & FLAGS_SHORT) ? static_cast<int16_t>(vaArgInteger(va_list))
                                                 : vaArgInteger(va_list);
                     idx = _ntoa_long(out, buffer, idx, maxlen,
-                                     (unsigned int)(value > 0 ? value : 0 - value), value < 0, base,
+                                     (value < 0 ? 0U - static_cast<unsigned int>(value)
+                                               : static_cast<unsigned int>(value)), value < 0, base,
                                      precision, width, flags);
                 }
             } else {
@@ -732,7 +736,7 @@ static inline int _vsnprintf(out_fct_type out, char* buffer, const char* format,
 static int printf_ctx(Common::VaCtx* ctx) {
     const char* format = vaArgPtr<const char>(&ctx->va_list);
     char buffer[256];
-    int result = _vsnprintf(_out_buffer, buffer, format, &ctx->va_list);
+    int result = _vsnprintf(_out_buffer, buffer, format, &ctx->va_list, sizeof(buffer));
     printf("%s", buffer);
     return result;
 }
@@ -740,24 +744,18 @@ static int printf_ctx(Common::VaCtx* ctx) {
 static int fprintf_ctx(Common::VaCtx* ctx, char* buf) {
     const char* format = vaArgPtr<const char>(&ctx->va_list);
     char buffer[256];
-    int result = _vsnprintf(_out_buffer, buffer, format, &ctx->va_list);
+    int result = _vsnprintf(_out_buffer, buffer, format, &ctx->va_list, sizeof(buffer));
     std::strcpy(buf, buffer);
     return result;
 }
 
 static int vsnprintf_ctx(char* s, size_t n, const char* format, Common::VaList* arg) {
-    std::vector<char> buffer(n);
-    int result = _vsnprintf(_out_buffer, buffer.data(), format, arg);
-    std::strcpy(s, buffer.data());
-    return result;
+    return _vsnprintf(_out_buffer, s, format, arg, n);
 }
 
 static int snprintf_ctx(char* s, size_t n, Common::VaCtx* ctx) {
     const char* format = vaArgPtr<const char>(&ctx->va_list);
-    std::vector<char> buffer(n);
-    int result = _vsnprintf(_out_buffer, buffer.data(), format, &ctx->va_list);
-    std::strcpy(s, buffer.data());
-    return result;
+    return vsnprintf_ctx(s, n, format, &ctx->va_list);
 }
 
 } // namespace Libraries::LibcInternal

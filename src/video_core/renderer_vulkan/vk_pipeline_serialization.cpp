@@ -7,6 +7,7 @@
 #include "core/emulator_settings.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
 #include "shader_recompiler/info.h"
+#include "shader_recompiler/ifss_depth_reduction.h"
 #include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_driver_cache.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -24,11 +25,13 @@ static constexpr u32 PipelineKeyVersion = 4u; // Includes auxiliary discard-frag
 /// Compute shaders compiled with a different recompiler variant (see SetComputeShaderVariant)
 /// are stored with another binary version, so changing the variant recompiles them once.
 static u32 compute_shader_variant{};
+static u32 shader_optimization_variant{};
 
 static u32 BinaryVersionFor(const Shader::Info& info) {
-    return info.hw_stage == Shader::HwStage::Compute
-               ? ShaderBinaryVersion + compute_shader_variant * 100u
-               : ShaderBinaryVersion;
+    const auto variant = Shader::Optimization::IfssShaderVariant(
+        shader_optimization_variant, info.pgm_hash, info.hw_stage == Shader::HwStage::Compute);
+    return ShaderBinaryVersion + variant * 1000u +
+           (info.hw_stage == Shader::HwStage::Compute ? compute_shader_variant * 100u : 0u);
 }
 } // namespace Serialization
 
@@ -36,6 +39,9 @@ namespace Vulkan {
 
 void SetComputeShaderVariant(u32 variant) {
     Serialization::compute_shader_variant = variant;
+}
+void SetShaderOptimizationVariant(u32 variant) {
+    Serialization::shader_optimization_variant = variant;
 }
 
 void RegisterPipelineData(const ComputePipelineKey& key,
@@ -218,7 +224,7 @@ bool PipelineCache::PrewarmComputePipeline(const ComputePipelineKey& key) {
 
     ComputePipeline::SerializationSupport sdata{}; // Compute keys have no extra layout state.
     try {
-        it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
+        it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile, layout_cache,
                                                        driver_cache->Handle(), key,
                                                        *infos[0], modules[0], sdata, true, true,
                                                        image_bindings);
@@ -312,7 +318,7 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar, bool legacy
 
     try {
         it.value() = std::make_unique<GraphicsPipeline>(
-            instance, scheduler, desc_heap, profile, graphics_key, driver_cache->Handle(), infos,
+            instance, scheduler, desc_heap, profile, layout_cache, graphics_key, driver_cache->Handle(), infos,
             runtime_infos, fetch_shader, modules, sdata, true, true);
     } catch (...) {
         graphics_pipelines.erase(it);

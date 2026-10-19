@@ -23,6 +23,7 @@
 
 #include "common/logging/log.h"
 #include "common/path_util.h"
+#include "common/path_trace.h"
 #include "common/perf_stats.h"
 #include "common/types.h"
 
@@ -141,6 +142,26 @@ void PollTuning() {
             tuning.readback_keep_ranges.store(value != "0", std::memory_order_relaxed);
         } else if (key == "threaded_recording") {
             tuning.threaded_recording.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_lighting_reduction") {
+            tuning.v3_lighting_reduction.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_descriptor_delta") {
+            tuning.v3_descriptor_delta.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_descriptor_evidence") {
+            tuning.v3_descriptor_evidence.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_layout_sharing") {
+            tuning.v3_layout_sharing.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_demand_readback") {
+            tuning.v3_demand_readback.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_prefetch_batches") {
+            tuning.v3_prefetch_batches.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_submit_prepare") {
+            tuning.v3_submit_prepare.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_lighting_schedule") {
+            tuning.v3_lighting_schedule.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_particle_schedule") {
+            tuning.v3_particle_schedule.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_particle_async") {
+            tuning.v3_particle_async.store(value != "0", std::memory_order_relaxed);
         } else if (key == "compute_compile_parallel") {
             tuning.compute_compile_parallel.store(value != "0", std::memory_order_relaxed);
         } else if (key == "async_uploads") {
@@ -214,6 +235,11 @@ void PollTuning() {
             tuning.gpu_profile.store(
                 static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 3)),
                 std::memory_order_relaxed);
+        } else if (key == "gpu_profile_compute_hash") {
+            tuning.gpu_profile_compute_hash.store(std::strtoull(value.c_str(), nullptr, 16),
+                                                  std::memory_order_relaxed);
+        } else if (key == "path_trace") {
+            tuning.path_trace.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gpu_threads_priority") {
             tuning.gpu_threads_priority.store(
                 static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 2)),
@@ -414,6 +440,9 @@ void PollTuning() {
                                                 std::memory_order_relaxed);
         }
     }
+    Common::PathTrace::Emit(Common::PathTrace::Kind::TuningReload,
+                            Common::PathTrace::NextId(), tuning.gpu_profile.load(),
+                            tuning.gpu_profile_compute_hash.load(), tuning.path_trace.load());
     LOG_INFO(Debug,
              "Perf tuning applied: readback_window_kb={} readback_write_discard={} "
              "readback_write_merge={} readback_keep_ranges={} async_readbacks={} readback_prefetch={} async_pipelines={} "
@@ -430,7 +459,7 @@ void PollTuning() {
              "gpu_threads_affinity={:#x} other_threads_affinity={:#x} rt_memo={} "
              "late_protect={} parallel_protect={} gpu_threads_priority={} gpu_profile={} "
              "readback_relaxed_sites={} asc_queue={} runtime_lookup_memo={} "
-             "compute_compile_parallel={}",
+             "compute_compile_parallel={} (V1/V2 core policies integrated)",
              tuning.readback_window_bytes.load(std::memory_order_relaxed) / 1024,
              tuning.readback_write_discard.load(std::memory_order_relaxed),
              tuning.readback_write_merge.load(std::memory_order_relaxed),
@@ -497,6 +526,13 @@ void PollTuning() {
              tuning.asc_queue.load(std::memory_order_relaxed),
              tuning.runtime_lookup_memo.load(std::memory_order_relaxed),
              tuning.compute_compile_parallel.load(std::memory_order_relaxed));
+    LOG_INFO(Debug, "C1 lighting reduction requested: {} (startup policy)", tuning.v3_lighting_reduction.load());
+    LOG_INFO(Debug, "A1 descriptor delta requested: {}", tuning.v3_descriptor_delta.load());
+    LOG_INFO(Debug, "V3 layout sharing requested: {} (startup policy)", tuning.v3_layout_sharing.load());
+    LOG_INFO(Debug, "V3 requested: demand={} batches={} submit={} lighting={} particle={} async={}",
+             tuning.v3_demand_readback.load(), tuning.v3_prefetch_batches.load(),
+             tuning.v3_submit_prepare.load(), tuning.v3_lighting_schedule.load(),
+             tuning.v3_particle_schedule.load(), tuning.v3_particle_async.load());
 }
 
 namespace {

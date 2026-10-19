@@ -1,0 +1,4 @@
+{
+  "full_gpu_collector": "nsight",
+  "gpu_assisted_validation": false
+}

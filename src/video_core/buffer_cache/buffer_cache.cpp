@@ -13,6 +13,7 @@
 #include "common/elf_info.h"
 #include "common/memory_patcher.h"
 #include "common/perf_stats.h"
+#include "common/path_trace.h"
 #include "common/scope_exit.h"
 #include "common/thread.h"
 #include "core/debug_state.h"
@@ -22,6 +23,9 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/buffer_cache/memory_tracker.h"
+#include "video_core/buffer_cache/readback_dependencies.h"
+#include "video_core/buffer_cache/readback_prefetch_policy.h"
+#include "video_core/buffer_cache/v3_readback_policy.h"
 #include "video_core/buffer_cache/region_definitions.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
@@ -69,6 +73,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
       gds_buffer{instance, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
     graphics_queue.stream_buffer = &stream_buffer;
+    if (Common::PathTrace::Active()) trace_writes = std::make_unique<FeedbackWriteHistory<>>();
     const vk::BufferCreateInfo probe_ci = {
         .flags =
             vk::BufferCreateFlagBits::eSparseBinding | vk::BufferCreateFlagBits::eSparseResidency,
@@ -106,6 +111,55 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     }
     upload_worker = std::make_unique<UploadWorker>(tracker);
     scheduler.SetSubmitDependency([this](u64 seq) { upload_worker->Wait(seq); });
+}
+
+BufferCache::ProducerTrace::ProducerTrace(BufferCache& cache_, u64 shader, u32 kind)
+    : cache{cache_}, previous{cache_.trace_producer} {
+    if (!cache.trace_writes) return;
+    id = Common::PathTrace::NextId();
+    if (!id) return;
+    cursor = cache.trace_writes->Cursor();
+    cache.trace_producer = {id, shader, kind};
+}
+
+BufferCache::ProducerTrace::~ProducerTrace() {
+    if (id) cache.trace_producer = previous;
+}
+
+void BufferCache::ProducerTrace::Commit() {
+    if (!id || committed) return;
+    committed = true;
+    cache.trace_writes->Commit(id, cursor, Common::Perf::NowNs());
+}
+
+void BufferCache::TraceFeedbackFence() {
+    using namespace Common::PathTrace;
+    if (const auto id = NextId()) {
+        Emit(Kind::FeedbackFence, id,
+             reinterpret_cast<u64>(static_cast<VkSemaphore>(Sched().GetWorkSemaphore()->Handle())),
+             Sched().CurrentTick(), Sched().SubmittedTick(), memory_tracker->CurrentWriteSeq());
+    }
+}
+
+void BufferCache::TraceReadProducers(VAddr address, u64 size, VAddr window, u64 span, u64 request) {
+    if (!request || !trace_writes) return;
+    using namespace Common::PathTrace;
+    Emit(Kind::ReadProducerWindow, request, window, span, address, size);
+    Emit(Kind::ReadProducerCoverage, request, trace_writes->OldestSequence(),
+         memory_tracker->CurrentWriteSeq(), trace_writes->Overwritten(),
+         4U | (trace_writes->Uncertain() ? 1U : 0U)); // 4: declared only; 1: BDA/alias blind spot.
+    trace_writes->VisitLatest(address, size, window, span, [&](const auto& w, u32 scopes) {
+        const u64 flags = w.queue | (u64{w.kind} << 8) | (u64{scopes} << 16);
+        Emit(Kind::ReadProducer, request, w.sequence, w.command, w.shader, flags);
+        Emit(Kind::ReadProducerRange, request, w.sequence, w.address, w.size, w.tick);
+        Emit(Kind::ReadProducerTime, request, w.sequence, w.declared_ns, w.recorded_ns, w.command);
+        auto* source = w.queue == 0 ? &scheduler : (compute_queue ? compute_queue->scheduler : nullptr);
+        const auto domain = source ? reinterpret_cast<u64>(
+            static_cast<VkSemaphore>(source->GetWorkSemaphore()->Handle())) : 0;
+        Emit(Kind::ReadProducerDomain, request, w.sequence, domain,
+             source ? source->SubmittedTick() : 0,
+             source ? source->GetWorkSemaphore()->KnownGpuTick() : 0);
+    });
 }
 
 BufferCache::~BufferCache() {
@@ -335,8 +389,12 @@ void BufferCache::WaitArenaBinds(Vulkan::SubmitInfo& info) {
 }
 
 BufferCache::WindowWriters BufferCache::WindowWritersOf(VAddr start, u64 size) {
+    return ClassifyWriters(memory_tracker->GetWriteTicks(start, size));
+}
+
+BufferCache::WindowWriters BufferCache::ClassifyWriters(std::array<u64, 2> ticks) {
     WindowWriters writers;
-    writers.ticks = memory_tracker->GetWriteTicks(start, size);
+    writers.ticks = ticks;
     if (compute_queue == nullptr) {
         writers.ticks[1] = 0;
     }
@@ -434,7 +492,19 @@ void BufferCache::NoteGdsAccess(bool is_written) {
     (is_written ? gds_write_tick : gds_read_tick)[queue] = Sched().CurrentTick();
 }
 
+void BufferCache::DisableFineReadbacks() {
+    if (trace_writes) trace_writes->InvalidateCoverage();
+    if (memory_tracker->CanRefineDemandPages() &&
+        Common::Perf::GetTuning().v3_demand_readback.load(std::memory_order_relaxed)) {
+        // Publish earlier precise copies before recording an operation whose write coverage
+        // cannot be proven. No narrowed pending copy may outlive this opt-out boundary.
+        CompleteReadbacks(true);
+    }
+    memory_tracker->DisableDemandPrecision();
+}
+
 void BufferCache::NoteBdaAccess() {
+    DisableFineReadbacks();
     if (compute_queue == nullptr) {
         return;
     }
@@ -654,6 +724,15 @@ void BufferCache::BeginRelaxedReadback(VAddr device_addr, u64 size) {
 void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool assume_locks,
                              u64 guest_rip) {
     const u64 request_ns = Common::Perf::NowNs();
+    using Common::PathTrace::Emit;
+    using Common::PathTrace::Kind;
+    const u64 path_id = Common::PathTrace::NextId();
+    u64 path_mode = 0; // synchronous, asynchronous, relaxed
+    bool path_retry = false;
+    bool path_nothing = false;
+    Emit(Kind::ReadRequest, path_id, device_addr, size, guest_rip,
+         (is_write ? 1 : 0) | (assume_locks ? 2 : 0));
+    SCOPE_EXIT { Emit(Kind::ReadReturn, path_id, path_mode, path_retry, path_nothing); };
     // Particle trace (Tuning::trace_reads): what the guest gets when it reads GPU written memory
     // in the traced range, logged once the read is complete.
     const auto& trace_tuning = Common::Perf::GetTuning();
@@ -690,7 +769,10 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
     if (!assume_locks && !is_write && IsRelaxedSite(guest_rip)) {
         // readback_relaxed_sites: this code reads GPU results without waiting for the GPU (the
         // previous ones, the new ones land in guest memory once the GPU is done).
+        path_mode = 2;
         liverpool->SendCommand<true>([&] {
+            Emit(Kind::ReadCpBegin, path_id, 3);
+            SCOPE_EXIT { Emit(Kind::ReadCpEnd, path_id, 3); };
             Common::Perf::Add(Common::Perf::ReadbackQueueNs, Common::Perf::NowNs() - request_ns);
             BeginRelaxedReadback(device_addr, size);
         });
@@ -701,17 +783,21 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
         // The command processor records and submits the download, then goes on with its work
         // while this (guest) thread waits for the GPU. Previously the command processor itself
         // waited for the GPU to become idle, hundreds of times per second in busy scenes.
+        path_mode = 1;
         u64 wait_tick = 0;
         Vulkan::Semaphore* wait_semaphore = nullptr;
         liverpool->SendCommand<true>([&] {
             Common::Perf::Add(Common::Perf::ReadbackQueueNs, Common::Perf::NowNs() - request_ns);
-            wait_tick = BeginReadback(device_addr, size, is_write, wait_semaphore);
+            Emit(Kind::ReadCpBegin, path_id, 0);
+            wait_tick = BeginReadback(device_addr, size, is_write, wait_semaphore, path_id, guest_rip);
+            Emit(Kind::ReadCpEnd, path_id, 0, 0, wait_tick);
         });
         if (wait_tick == 0) {
             trace_nothing = true;
+            path_nothing = true;
             return;
         }
-        WaitReadback(device_addr, wait_semaphore, wait_tick);
+        WaitReadback(device_addr, wait_semaphore, wait_tick, path_id, 0);
         for (u32 round = 0;; ++round) {
             // An earlier readback of the window (another queue) may still be in flight: its data
             // must land first, then this one's. The guest thread waits for it (a few times at
@@ -719,7 +805,18 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
             Vulkan::Semaphore* next_semaphore = nullptr;
             u64 next_tick = 0;
             const bool may_wait = round < 4;
+            const bool time_completion =
+                Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed);
+            const u64 completion_request_ns = time_completion ? Common::Perf::NowNs() : 0;
+            Emit(Kind::ReadCompletionRequest, path_id, round);
             liverpool->SendCommand<true>([&] {
+                Emit(Kind::ReadCpBegin, path_id, 1, round);
+                SCOPE_EXIT { Emit(Kind::ReadCpEnd, path_id, 1, round, next_tick, path_retry); };
+                Common::Perf::Add(Common::Perf::ReadbackCompletionRequests);
+                if (completion_request_ns != 0) {
+                    Common::Perf::Add(Common::Perf::ReadbackCompletionQueueNs,
+                                      Common::Perf::NowNs() - completion_request_ns);
+                }
                 CompleteReadbacks(false);
                 if (!memory_tracker->IsRegionGpuModified(device_addr, size)) {
                     if (is_write) {
@@ -732,22 +829,29 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
                     next_semaphore = pending->on_readback_queue ? &readback_queue->Semaphore()
                                                                 : scheduler.GetWorkSemaphore();
                     next_tick = pending->tick;
+                    Emit(Kind::ReadCopy, path_id, pending->tick, pending->on_readback_queue,
+                         pending->record_seq, pending->trace_id);
                     return;
                 }
                 // The GPU wrote this memory again while the download was in flight. Download it
                 // synchronously so the request completes instead of faulting again.
                 trace_retry = true;
+                path_retry = true;
                 Common::Perf::Add(Common::Perf::ReadbackAsyncRetries);
+                Emit(Kind::ReadFallbackBegin, path_id, round);
                 ReadbackSync(device_addr, size, is_write);
+                Emit(Kind::ReadFallbackEnd, path_id, round);
             });
             if (next_tick == 0) {
                 break;
             }
-            WaitReadback(device_addr, next_semaphore, next_tick);
+            WaitReadback(device_addr, next_semaphore, next_tick, path_id, round + 1);
         }
         return;
     }
-    const auto flush_request = [this, device_addr, size, is_write, request_ns] {
+    const auto flush_request = [this, device_addr, size, is_write, request_ns, path_id] {
+        Emit(Kind::ReadCpBegin, path_id, 2);
+        SCOPE_EXIT { Emit(Kind::ReadCpEnd, path_id, 2); };
         // Time spent waiting for the command processor thread to pick up the request.
         Common::Perf::Add(Common::Perf::ReadbackQueueNs, Common::Perf::NowNs() - request_ns);
         ReadbackSync(device_addr, size, is_write);
@@ -759,7 +863,11 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
     }
 }
 
-void BufferCache::WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, u64 tick) {
+void BufferCache::WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, u64 tick,
+                              u64 trace_id, u32 round) {
+    const bool on_readback_queue = readback_queue && semaphore == &readback_queue->Semaphore();
+    Common::PathTrace::Emit(Common::PathTrace::Kind::ReadWaitBegin, trace_id, round,
+                            on_readback_queue, tick);
     const u64 wait_start = Common::Perf::NowNs();
     // A readback takes milliseconds: one still waiting after seconds is reported once (hang
     // diagnostics), then the wait goes on.
@@ -774,6 +882,9 @@ void BufferCache::WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, 
         semaphore->Wait(tick);
     }
     Common::Perf::Add(Common::Perf::ReadbackAsyncWaitNs, Common::Perf::NowNs() - wait_start);
+    // CPU observation of readiness; this includes scheduling and is not GPU execution time.
+    Common::PathTrace::Emit(Common::PathTrace::Kind::ReadWaitEnd, trace_id, round,
+                            on_readback_queue, tick);
 }
 
 const BufferCache::PendingReadback* BufferCache::FirstUnfinishedReadback(VAddr device_addr,
@@ -880,13 +991,65 @@ bool BufferCache::CollectReadback(const Buffer* arena, PendingReadback& readback
         copy.dstOffset += readback.download.offset;
     }
     Common::Perf::Add(Common::Perf::ReadbackBytes, total_size_bytes);
+    readback.trace_id = Common::PathTrace::NextId();
+    Common::PathTrace::Emit(Common::PathTrace::Kind::CopyRecord, readback.trace_id,
+                            readback.window_start, readback.window_end, readback.record_seq,
+                            total_size_bytes);
     return true;
 }
 
-void BufferCache::NoteHotWindow(VAddr start, VAddr end) {
+bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback,
+                                   WindowWriters& writers, bool queue_enabled, bool& on_queue) {
+    on_queue = queue_enabled && writers.submitted;
+    // Precise downloads always refine the conservative window dependency using actual
+    // copied ranges. Unknown writers or a changed version still keep whole-window waits.
+    const bool refine = EmulatorSettings.GetReadbacksMode() == GpuReadbacksMode::Precise;
+    const u64 sequence = memory_tracker->CurrentWriteSeq();
+    if (!CollectReadback(arena, readback)) {
+        return false;
+    }
+    if (refine) {
+        Common::Perf::Add(Common::Perf::ReadbackDependencyChecks);
+        const auto ticks = SelectReadbackDependencies(
+            readback.arena_base, readback.window_start, readback.window_end, readback.copies,
+            writers.ticks, sequence,
+            (Common::Perf::GetTuning().v3_demand_readback.load(std::memory_order_relaxed) &&
+             memory_tracker->CanRefineDemandPages()) ? BYTES_PER_PAGE : BYTES_PER_WORD,
+            [this](u64 start, u64 size) { return memory_tracker->GetReadbackWriteTicks(start, size); },
+            [this] { return memory_tracker->CurrentWriteSeq(); });
+        if (ticks) {
+            if (*ticks != writers.ticks) {
+                Common::Perf::Add(Common::Perf::ReadbackDependenciesReduced);
+            }
+            writers = ClassifyWriters(*ticks);
+            const bool refined_queue = queue_enabled && writers.submitted;
+            if (refined_queue && !on_queue) {
+                Common::Perf::Add(Common::Perf::ReadbackQueuePromotions);
+            }
+            on_queue = refined_queue;
+        } else {
+            Common::Perf::Add(Common::Perf::ReadbackDependencyFallbacks);
+            // A changed version must not leave us waiting on the old window snapshot. Keep
+            // every old dependency and include any newly observed writer before copying.
+            const auto fresh = memory_tracker->GetWriteTicks(
+                readback.window_start, readback.window_end - readback.window_start);
+            for (u32 q = 0; q < 2; ++q) {
+                writers.ticks[q] = std::max(writers.ticks[q], fresh[q]);
+            }
+            writers = ClassifyWriters(writers.ticks);
+            on_queue = queue_enabled && writers.submitted;
+        }
+    }
+    if (!on_queue) {
+        runtime.CopyBuffer(arena, readback.download.buffer, readback.copies);
+    }
+    return true;
+}
+
+void BufferCache::NoteHotWindow(VAddr start, VAddr end, bool demand_pages) {
     const u64 now = Common::Perf::NowNs();
     for (auto& window : hot_windows) {
-        if (window.start == start && window.end == end) {
+        if (window.start == start && window.end == end && window.demand_pages == demand_pages) {
             window.last_read_ns = now;
             return;
         }
@@ -901,21 +1064,40 @@ void BufferCache::NoteHotWindow(VAddr start, VAddr end) {
         .prefetch_tick = 0,
         .prefetch_seq = 0,
         .prefetch_on_queue = false,
+        .demand_pages = demand_pages,
     });
 }
 
 u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
-                               Vulkan::Semaphore*& wait_semaphore) {
+                               Vulkan::Semaphore*& wait_semaphore, u64 trace_id, u64 fault_rip) {
     // Readbacks the GPU has finished are written first, the requested data may be among them.
     CompleteReadbacks(false);
 
     const u32 first_block = device_addr >> block_shift;
     const u32 last_block = (device_addr + size - 1) >> block_shift;
     const auto* arena = GetArena(first_block, last_block);
-    const auto [window_start, window_end] = GetReadbackWindow(arena, device_addr, size);
+    auto [window_start, window_end] = GetReadbackWindow(arena, device_addr, size);
+    if (!is_write) {
+        TraceReadProducers(device_addr, size, window_start, window_end - window_start, trace_id);
+    }
     if (!is_write && size <= BYTES_PER_PAGE) {
-        // Guest reads (faults), not writes nor large invalidations such as unmaps.
+        // Keep conservative windows separate from precise demand-page hints. Neither is
+        // evidence of clean data, and neither changes this fault's demand download.
         NoteHotWindow(window_start, window_end);
+        if (EmulatorSettings.GetReadbacksMode() == GpuReadbacksMode::Precise) {
+            if (const auto pages = DemandReadbackPages(device_addr, size, arena->cpu_addr,
+                                                       arena->size_bytes, BYTES_PER_PAGE)) {
+                NoteHotWindow(pages->first, pages->second, true);
+                if (Common::Perf::GetTuning().v3_demand_readback.load(std::memory_order_relaxed) &&
+                    memory_tracker->CanRefineDemandPages()) {
+                    memory_tracker->ObserveDemandPages(pages->first, pages->second);
+                    // Provenance hints must not shrink the demand download window: the
+                    // particle consumer relies on its spatial coverage to amortize faults.
+                    Common::Perf::Add(Common::Perf::V3DemandPages,
+                                      (pages->second - pages->first) / BYTES_PER_PAGE);
+                }
+            }
+        }
     }
 
     PendingReadback readback{
@@ -925,7 +1107,7 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     };
     // The command buffers that last wrote the GPU modified pages of the window, and where they
     // are now (statistics: what the guest waits for).
-    const WindowWriters writers = WindowWritersOf(window_start, window_end - window_start);
+    WindowWriters writers = WindowWritersOf(window_start, window_end - window_start);
     if (!is_write && size <= BYTES_PER_PAGE) {
         if (writers.done) {
             Common::Perf::Add(Common::Perf::ReadbackProducerDone);
@@ -943,7 +1125,7 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     // command buffer: the readback queue never waits for a signal that is not submitted yet
     // (with threaded recording, such a wait froze the game).
     const bool queue_enabled = UseReadbackQueue();
-    const bool use_queue = queue_enabled && writers.submitted;
+    bool use_queue = queue_enabled && writers.submitted;
     // Pages of the window downloaded by earlier readbacks stay protected until those complete:
     // wait for the last overlapping one (earlier ones of another queue may complete after it,
     // the guest thread then waits for them too, see ReadMemory).
@@ -961,7 +1143,7 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
         // pending one, which was recorded after the last GPU write of the window.
         memory_tracker->AddPendingReadback(window_start, window_end);
     } else {
-        recorded = use_queue ? CollectReadback(arena, readback) : RecordReadback(arena, readback);
+        recorded = PrepareReadback(arena, readback, writers, queue_enabled, use_queue);
     }
     if (!recorded) {
         // Nothing left to download in the window.
@@ -975,11 +1157,22 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
         }
         if (overlapping->prefetch) {
             Common::Perf::Add(Common::Perf::ReadbackPrefetchHits);
+            if (overlapping->demand_page_prefetch && overlapping->window_start <= device_addr &&
+                device_addr + size <= overlapping->window_end) {
+                Common::Perf::Add(Common::Perf::ReadbackPagePrefetchHits);
+            }
         }
         wait_semaphore = overlapping->on_readback_queue ? &readback_queue->Semaphore()
                                                         : scheduler.GetWorkSemaphore();
+        Common::PathTrace::Emit(Common::PathTrace::Kind::ReadCopy, trace_id,
+                                overlapping->tick, overlapping->on_readback_queue,
+                                overlapping->record_seq, overlapping->trace_id);
         return overlapping->tick;
     }
+    Common::PathTrace::Emit(Common::PathTrace::Kind::ReadDependencies, trace_id,
+                            writers.ticks[0], writers.ticks[1], readback.record_seq,
+                            (writers.done ? 1 : 0) | (writers.submitted ? 2 : 0) |
+                                (writers.current ? 4 : 0) | (use_queue ? 8 : 0));
     const u64 submit_start = Common::Perf::NowNs();
     if (queue_enabled) {
         Common::Perf::Add(use_queue ? Common::Perf::ReadbackQueueReads
@@ -1003,6 +1196,8 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     }
     Common::Perf::Add(Common::Perf::ReadbackSyncNs, Common::Perf::NowNs() - submit_start);
     const u64 wait_tick = readback.tick;
+    Common::PathTrace::Emit(Common::PathTrace::Kind::ReadCopy, trace_id, wait_tick,
+                            readback.on_readback_queue, readback.record_seq, readback.trace_id);
     pending_readbacks.push_back(std::move(readback));
     Common::Perf::Add(Common::Perf::ReadbackAsync);
     return wait_tick;
@@ -1050,10 +1245,15 @@ void BufferCache::PrefetchReadbacks() {
         return;
     }
     RetireReadbacks();
+    if (tuning.v3_prefetch_batches.load(std::memory_order_relaxed) &&
+        PrefetchDemandBatches()) {
+        return;
+    }
+    // A batch plan with no recorded copies must not suppress the working V2 prefetcher.
 
-    // Windows the guest read back recently are likely read again after this fence: download what
-    // the GPU wrote there now, in one submission. When the copies complete before the guest
-    // reads, the pages are written and unprotected without any fault.
+    // Prefetch observed CPU fault pages after this fence. Future unlearned reads still
+    // use BeginReadback's full window.
+    // Completed copies are published by the existing version-checked retirement path.
     constexpr u64 HotWindowLifetimeNs = 1'000'000'000ULL;
     constexpr u64 MaxPrefetchBytes = 8_MB;
     const u64 now = Common::Perf::NowNs();
@@ -1077,6 +1277,10 @@ void BufferCache::PrefetchReadbacks() {
         }
         HotWindow& window = *it;
         ++it;
+        if (!window.demand_pages) {
+            // A conservative/relaxed-site hint never stands in for an observed fault page.
+            continue;
+        }
         const VAddr start = window.start;
         const VAddr end = window.end;
         // One prefetch in flight per window, and only when the GPU wrote something there since.
@@ -1094,21 +1298,24 @@ void BufferCache::PrefetchReadbacks() {
             // the last prefetch tell whether there is anything new to download.
             continue;
         }
-        const WindowWriters writers = WindowWritersOf(start, end - start);
-        const bool on_queue = queue_enabled && writers.submitted;
         const auto* arena = GetArena(start >> block_shift, (end - 1) >> block_shift);
+        const auto [dependency_start, dependency_end] =
+            GetReadbackWindow(arena, start, end - start);
+        WindowWriters writers = WindowWritersOf(dependency_start, dependency_end - dependency_start);
+        bool on_queue = queue_enabled && writers.submitted;
         PendingReadback readback{
             .tick = tick,
             .arena_base = arena->cpu_addr,
             .window_start = start,
             .window_end = end,
             .prefetch = true,
-            .on_readback_queue = on_queue,
+            .demand_page_prefetch = true,
         };
-        if (!(on_queue ? CollectReadback(arena, readback) : RecordReadback(arena, readback))) {
+        if (!PrepareReadback(arena, readback, writers, queue_enabled, on_queue)) {
             memory_tracker->RemovePendingReadback(start, end);
             continue;
         }
+        readback.on_readback_queue = on_queue;
         prefetched_bytes += readback.download.size;
         window.prefetch_tick = tick;
         window.prefetch_seq = window_write_seq;
@@ -1123,7 +1330,97 @@ void BufferCache::PrefetchReadbacks() {
         }
         pending_readbacks.push_back(std::move(readback));
         Common::Perf::Add(Common::Perf::ReadbackPrefetches);
+        Common::Perf::Add(Common::Perf::ReadbackPagePrefetches);
+        for (const auto& copy : pending_readbacks.back().copies) {
+            Common::Perf::Add(Common::Perf::ReadbackPagePrefetchBytes, copy.size);
+        }
     }
+    SubmitPrefetchReadbacks(first_queued, recorded_on_graphics, recorded_on_queue,
+                             queue_wait_ticks);
+}
+
+bool BufferCache::PrefetchDemandBatches() {
+    constexpr u64 LifetimeNs = 1'000'000'000ULL;
+    constexpr u64 MaxBytes = 8_MB;
+    const u64 now = Common::Perf::NowNs();
+    const u64 tick = scheduler.CurrentTick();
+    hot_windows.erase(std::remove_if(hot_windows.begin(), hot_windows.end(), [now](const auto& window) {
+        return now - window.last_read_ns > LifetimeNs;
+    }), hot_windows.end());
+    std::array<DemandRange, 64> ranges{};
+    std::array<HotWindow*, 64> sources{};
+    size_t count = 0;
+    for (auto& window : hot_windows) {
+        if (!window.demand_pages ||
+            (window.prefetch_tick != 0 &&
+             !(window.prefetch_on_queue ? readback_queue->IsFree(window.prefetch_tick)
+                                       : scheduler.GetWorkSemaphore()->IsFree(window.prefetch_tick))) ||
+            !gpu_modified_ranges.Intersects(window.start, window.end - window.start) ||
+            !memory_tracker->IsRegionGpuModified(window.start, window.end - window.start)) continue;
+        const u64 seq = memory_tracker->GetWriteSeq(window.start, window.end - window.start);
+        if (KeepRanges() && seq <= window.prefetch_seq) continue;
+        const auto* arena = GetArena(window.start >> block_shift, (window.end - 1) >> block_shift);
+        sources[count] = &window;
+        ranges[count] = {window.start, window.end, arena->cpu_addr, static_cast<u32>(count)};
+        ++count;
+    }
+    const auto plan = PlanDemandBatches(std::span{ranges}.first(count));
+    const bool queue_enabled = UseReadbackQueue();
+    const size_t first_queued = pending_readbacks.size();
+    std::array<u64, 2> wait_ticks{};
+    bool on_graphics = false, on_readback = false;
+    u64 bytes = 0;
+    for (size_t i = 0; i < plan.count && bytes < MaxBytes; ++i) {
+        const auto& batch = plan.batches[i];
+        const auto* arena = GetArena(batch.start >> block_shift, (batch.end - 1) >> block_shift);
+        if (arena->cpu_addr != batch.arena || batch.start < arena->cpu_addr ||
+            batch.end - arena->cpu_addr > arena->size_bytes) continue;
+        const auto [dependency_start, dependency_end] =
+            GetReadbackWindow(arena, batch.start, batch.end - batch.start);
+        WindowWriters writers = WindowWritersOf(dependency_start, dependency_end - dependency_start);
+        bool on_queue = queue_enabled && writers.submitted;
+        PendingReadback readback{
+            .tick = tick, .arena_base = arena->cpu_addr,
+            .window_start = batch.start, .window_end = batch.end,
+            .prefetch = true, .demand_page_prefetch = true,
+        };
+        if (!PrepareReadback(arena, readback, writers, queue_enabled, on_queue)) {
+            memory_tracker->RemovePendingReadback(batch.start, batch.end);
+            continue;
+        }
+        readback.on_readback_queue = on_queue;
+        bytes += readback.download.size;
+        for (size_t index = 0; index < count; ++index) {
+            if ((batch.sources & (u64{1} << index)) == 0) continue;
+            auto& window = *sources[index];
+            window.prefetch_tick = tick;
+            window.prefetch_seq = memory_tracker->GetWriteSeq(window.start, window.end - window.start);
+            window.prefetch_on_queue = on_queue;
+        }
+        if (on_queue) {
+            for (u32 q = 0; q < 2; ++q) wait_ticks[q] = std::max(wait_ticks[q], writers.ticks[q]);
+            on_readback = true;
+        } else {
+            WaitComputeWriter(writers);
+            on_graphics = true;
+        }
+        for (const auto& copy : readback.copies) {
+            Common::Perf::Add(Common::Perf::ReadbackPagePrefetchBytes, copy.size);
+        }
+        pending_readbacks.push_back(std::move(readback));
+        Common::Perf::Add(Common::Perf::V3PrefetchInputs, std::popcount(batch.sources));
+        Common::Perf::Add(Common::Perf::V3PrefetchBatches);
+        Common::Perf::Add(Common::Perf::ReadbackPrefetches);
+        Common::Perf::Add(Common::Perf::ReadbackPagePrefetches);
+    }
+    const bool recorded = pending_readbacks.size() > first_queued;
+    SubmitPrefetchReadbacks(first_queued, on_graphics, on_readback, wait_ticks);
+    return recorded;
+}
+
+void BufferCache::SubmitPrefetchReadbacks(size_t first_queued, bool recorded_on_graphics,
+                                           bool recorded_on_queue,
+                                           std::array<u64, 2> queue_wait_ticks) {
     if (recorded_on_graphics) {
         scheduler.MarkReadbackSession();
         scheduler.Flush();
@@ -1154,9 +1451,16 @@ void BufferCache::PrefetchReadbacks() {
         if (!readback.on_readback_queue) {
             continue;
         }
+        const u64 placeholder_tick = readback.tick;
         readback.tick = queue_tick;
         for (auto& window : hot_windows) {
-            if (window.start == readback.window_start && window.end == readback.window_end) {
+            const bool exact_hint = window.start == readback.window_start &&
+                                    window.end == readback.window_end;
+            const bool batch_hint =
+                Common::Perf::GetTuning().v3_prefetch_batches.load(std::memory_order_relaxed) &&
+                readback.window_start <= window.start && window.end <= readback.window_end &&
+                window.prefetch_on_queue && window.prefetch_tick == placeholder_tick;
+            if ((exact_hint || batch_hint) && window.demand_pages == readback.demand_page_prefetch) {
                 window.prefetch_tick = queue_tick;
             }
         }
@@ -1220,7 +1524,17 @@ void BufferCache::CompleteReadbacks(bool wait) {
 
 void BufferCache::FinishReadback(size_t index) {
     PendingReadback& readback = pending_readbacks[index];
+    Common::PathTrace::Emit(Common::PathTrace::Kind::CopyPublishBegin, readback.trace_id,
+                            readback.tick, readback.on_readback_queue, readback.record_seq,
+                            readback.copies.size());
+    SCOPE_EXIT {
+        Common::PathTrace::Emit(Common::PathTrace::Kind::CopyPublishEnd, readback.trace_id,
+                                readback.tick, readback.on_readback_queue, readback.record_seq);
+    };
     const u64 finish_start = Common::Perf::NowNs();
+    if (readback.demand_page_prefetch) {
+        Common::Perf::Add(Common::Perf::ReadbackPagePrefetchFinished);
+    }
     if (KeepRanges()) {
         for (const auto& copy : readback.copies) {
             pending_download_ranges.Subtract(readback.arena_base + copy.srcOffset, copy.size);
@@ -1536,6 +1850,11 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         gpu_modified_ranges.Add(device_addr, size);
         // The command buffer being recorded writes the range (readback queue waits for it).
         memory_tracker->SetWriteTick(device_addr, size, Sched().CurrentTick(), active->index);
+        if (trace_writes && Common::PathTrace::Active()) {
+            trace_writes->Record({device_addr, size, Sched().CurrentTick(), memory_tracker->CurrentWriteSeq(),
+                                 trace_producer.id, trace_producer.shader, Common::Perf::NowNs(), 0,
+                                 active->index, trace_producer.kind});
+        }
     } else if (memo && have_versions) {
         // Versions read before the synchronization: a write during it changes them.
         Common::Perf::Add(Common::Perf::SyncMemoMisses);
@@ -2080,11 +2399,14 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
         return false;
     }
     auto& tile_manager = texture_cache.GetTileManager();
+    // This alias-copy path has a different provenance model; do not narrow its waits by
+    // assuming every arena write came through ObtainBuffer's descriptor range.
+    DisableFineReadbacks();
     tile_manager.TileImage(image, buffer_copies, arena, arena_offset);
     return true;
 }
 
-void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
+void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info, bool queue_locked) {
     if (pending_binds.empty()) {
         return;
     }
@@ -2117,6 +2439,8 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
     };
 
     info.AddWait(signal_sema, signal_tick);
+    std::unique_lock lock{Vulkan::Scheduler::submit_mutex, std::defer_lock};
+    if (!queue_locked) lock.lock();
     auto submit_result = instance.GetGraphicsQueue().bindSparse(sparse_info);
     if (submit_result == vk::Result::eErrorDeviceLost) {
         Vulkan::GpuCrashDiag::ReportDeviceLost(instance, "sparse binding");

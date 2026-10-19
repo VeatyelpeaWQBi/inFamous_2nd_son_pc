@@ -277,6 +277,7 @@ private:
     Scheduler& scheduler;
     AmdGpu::Liverpool* liverpool;
     DescriptorHeap desc_heap;
+    PipelineLayoutCache layout_cache;
     std::unique_ptr<DriverPipelineCache> driver_cache;
     std::function<void()> drain_pipeline_commands;
     PrewarmBudget prewarm_budget;
@@ -287,6 +288,7 @@ private:
     std::array<const Shader::StageSpecialization*, MaxShaderStages> prewarmed_specs{};
     vk::UniquePipelineLayout pipeline_layout;
     Shader::Profile profile{};
+    u32 address_schedule_mask{}; // Immutable after renderer startup; cache versioned.
     Shader::Pools pools;
     DrawIndirectParams draw_indirect_params{};
     tsl::robin_map<size_t, std::unique_ptr<Program>> program_cache;

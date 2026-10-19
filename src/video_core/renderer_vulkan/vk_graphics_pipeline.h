@@ -86,7 +86,8 @@ public:
     };
 
     GraphicsPipeline(const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,
-                     const Shader::Profile& profile, const GraphicsPipelineKey& key,
+                     const Shader::Profile& profile, PipelineLayoutCache& layout_cache,
+                     const GraphicsPipelineKey& key,
                      vk::PipelineCache pipeline_cache,
                      std::span<const Shader::Info*, MaxShaderStages> stages,
                      std::span<const Shader::RuntimeInfo, MaxShaderStages> runtime_infos,

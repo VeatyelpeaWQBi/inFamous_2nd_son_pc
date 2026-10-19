@@ -18,6 +18,7 @@
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/perf_stats.h"
+#include "common/path_trace.h"
 #include "common/scope_exit.h"
 #include "common/thread.h"
 #include "imgui/renderer/texture_manager.h"
@@ -408,8 +409,7 @@ void Scheduler::WaitForRecorderRoom(std::unique_lock<std::mutex>& lock) {
         recorder_jobs.size() >= MaxQueuedBatches) {
         const u64 start = Common::Perf::NowNs();
         recorder_space_cv.wait(lock, [this] { return recorder_jobs.size() < MaxQueuedBatches; });
-        Common::Perf::Add(Common::Perf::ComputeCompileQueueWaitNs,
-                          Common::Perf::NowNs() - start);
+        Common::Perf::Add(Common::Perf::RecorderQueueWaitNs, Common::Perf::NowNs() - start);
     }
 }
 
@@ -471,7 +471,12 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
             const vk::CommandBuffer cmdbuf = RecorderCommandBuffer();
             Check(cmdbuf.end());
             recorder_cmdbuf = vk::CommandBuffer{};
-            std::scoped_lock lk{submit_mutex};
+            std::unique_lock lk{submit_mutex, std::defer_lock};
+            {
+                Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::SubmitLock,
+                                                  Common::Perf::V3SubmitLockNs};
+                lk.lock();
+            }
             SubmitToQueue(std::span{&cmdbuf, 1}, job.info);
         }
         Common::Perf::Add(Common::Perf::RecorderBusyNs, Common::Perf::NowNs() - busy_start);
@@ -735,12 +740,17 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     if (stream_session) {
         // Threaded recording: the recording thread submits the session after recording it.
         const u64 signal_value = work_semaphore.NextTick();
-        {
-            std::scoped_lock lk{submit_mutex};
-            if (on_submit) {
-                const bool previous = std::exchange(in_submit_callback, true);
-                SCOPE_EXIT { in_submit_callback = previous; };
-                on_submit(info);
+        if (on_submit) {
+            const bool previous = std::exchange(in_submit_callback, true);
+            SCOPE_EXIT { in_submit_callback = previous; };
+            if (Common::Perf::GetTuning().v3_submit_prepare.load(std::memory_order_relaxed)) {
+                // CPU barrier preparation need not wait for a blocking queuePresentKHR.
+                // The callback acquires submit_mutex itself iff it issues sparse queue work.
+                on_submit(info, false);
+                Common::Perf::Add(Common::Perf::V3SubmitPrepared);
+            } else {
+                std::scoped_lock lk{submit_mutex};
+                on_submit(info, true);
             }
         }
         EndSession();
@@ -751,7 +761,14 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
             // CommandBuffer() made the end of the session direct: the recording thread is idle.
             Check(direct_cmdbuf.end());
             recorder_cmdbuf = vk::CommandBuffer{};
-            std::scoped_lock lk{submit_mutex};
+            std::unique_lock lk{submit_mutex, std::defer_lock};
+            {
+                Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::SubmitLock,
+                                                  Common::Perf::V3SubmitLockNs};
+                lk.lock();
+            }
+            Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitQueued,Common::PathTrace::NextId(),
+                reinterpret_cast<u64>(static_cast<VkSemaphore>(work_semaphore.Handle())),signal_value,0,0);
             SubmitToQueue(std::span{&direct_cmdbuf, 1}, info);
         } else {
             std::unique_ptr<CommandStream> next;
@@ -762,6 +779,11 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
                 if (stream && !stream->Empty()) {
                     Common::Perf::Add(Common::Perf::RecorderJobs);
                     Common::Perf::Add(Common::Perf::RecorderCommands, stream->NumCommands());
+                }
+                if(const auto id=Common::PathTrace::NextId()) {
+                    Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitQueued,id,
+                        reinterpret_cast<u64>(static_cast<VkSemaphore>(work_semaphore.Handle())),
+                        signal_value,recorder_jobs.size(),1);
                 }
                 recorder_jobs.push_back(RecorderJob{
                     .stream = std::move(stream),
@@ -787,7 +809,12 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         return;
     }
 
-    std::scoped_lock lk{submit_mutex};
+    std::unique_lock lk{submit_mutex, std::defer_lock};
+    {
+        Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::SubmitLock,
+                                          Common::Perf::V3SubmitLockNs};
+        lk.lock();
+    }
     const u64 signal_value = work_semaphore.NextTick();
 
 #if TRACY_GPU_ENABLED
@@ -801,7 +828,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     if (on_submit) {
         const bool previous = std::exchange(in_submit_callback, true);
         SCOPE_EXIT { in_submit_callback = previous; };
-        on_submit(info);
+        on_submit(info, true);
     }
 
     EndSession();
@@ -821,6 +848,8 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     const vk::Semaphore timeline = work_semaphore.Handle();
     info.AddSignal(timeline, signal_value);
 
+    Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitQueued,Common::PathTrace::NextId(),
+        reinterpret_cast<u64>(static_cast<VkSemaphore>(work_semaphore.Handle())),signal_value,0,0);
     SubmitToQueue(cmd_buffers, info);
 
     BeginSession();
@@ -859,7 +888,23 @@ void Scheduler::SubmitToQueue(std::span<const vk::CommandBuffer> cmd_buffers, Su
     if (queue == instance.GetGraphicsQueue()) {
         ImGui::Core::TextureManager::Submit();
     }
-    auto submit_result = queue.submit(submit_info, info.fence);
+    u64 trace_tick=0;
+    if (Common::PathTrace::Active()) {
+        for (u32 i=0;i<info.num_signal_semas;++i) {
+            if (info.signal_semas[i]==work_semaphore.Handle())trace_tick=info.signal_ticks[i];
+        }
+    }
+    const auto trace_submit=trace_tick ? Common::PathTrace::NextId():0;
+    const auto trace_domain=reinterpret_cast<u64>(static_cast<VkSemaphore>(work_semaphore.Handle()));
+    Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitDriverBegin,trace_submit,
+                            trace_domain,trace_tick,cmd_buffers.size(),0);
+    auto submit_result = [&] {
+        Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::QueueSubmit,
+                                          Common::Perf::V3QueueSubmitNs};
+        return queue.submit(submit_info, info.fence);
+    }();
+    Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitDriverEnd,trace_submit,
+                            trace_domain,trace_tick,cmd_buffers.size(),submit_result==vk::Result::eSuccess);
     if (submit_result == vk::Result::eErrorDeviceLost) {
         GpuCrashDiag::ReportDeviceLost(instance, "submit");
     }
@@ -945,6 +990,9 @@ void Scheduler::ProfileDispatchBegin(u64 shader_hash) {
         Common::Perf::GetTuning().gpu_profile.load(std::memory_order_relaxed) != 2) {
         return;
     }
+    const u64 filter = Common::Perf::GetTuning().gpu_profile_compute_hash.load(
+        std::memory_order_relaxed);
+    if (filter != 0 && shader_hash != filter) return;
     GpuProfile& prof = *profile;
     u64 number;
     if (!prof.Allocate(number)) {
@@ -1064,6 +1112,11 @@ void Scheduler::CollectProfile() {
                 auto& [shader_ns, shader_count] = prof.shader_ns[dispatch.hash];
                 shader_ns += ns;
                 ++shader_count;
+                // CPU event time is query retirement, NOT GPU execution time. Duration comes
+                // from GPU timestamps; keep the two clock domains distinct in the analysis.
+                Common::PathTrace::Emit(Common::PathTrace::Kind::GpuDispatchResult,
+                                        Common::PathTrace::NextId(), dispatch.hash,
+                                        session.tick, ns, std::strcmp(name, "compute") == 0);
                 Common::Perf::Add(Common::Perf::GpuProfileComputeNs, ns);
                 Common::Perf::Add(Common::Perf::GpuProfileDispatches);
             }
@@ -1151,6 +1204,28 @@ bool SkipRedundantBinds() noexcept {
 }
 } // Anonymous namespace
 
+bool DynamicState::BindCache::SkipIndexBuffer(vk::Buffer buffer, vk::DeviceSize offset,
+                                             vk::IndexType type) noexcept {
+    Common::Perf::Add(Common::Perf::IndexBufferBinds);
+    if (!buffers.NoteIndex(buffer, offset, type)) {
+        return false;
+    }
+    Common::Perf::Add(Common::Perf::IndexBufferBindsSkipped);
+    return true;
+}
+
+bool DynamicState::BindCache::SkipVertexBuffers(u32 first, u32 count, const vk::Buffer* values,
+                                               const vk::DeviceSize* offsets, bool sized_api,
+                                               const vk::DeviceSize* sizes,
+                                               const vk::DeviceSize* strides) noexcept {
+    Common::Perf::Add(Common::Perf::VertexBufferBinds);
+    if (!buffers.NoteVertices(first, count, values, offsets, sized_api, sizes, strides)) {
+        return false;
+    }
+    Common::Perf::Add(Common::Perf::VertexBufferBindsSkipped);
+    return true;
+}
+
 bool DynamicState::BindCache::SkipPipeline(vk::PipelineBindPoint bind_point,
                                            vk::Pipeline pipeline) noexcept {
     u32 index;
@@ -1203,98 +1278,65 @@ bool DynamicState::BindCache::SkipPush(vk::PipelineLayout layout, vk::ShaderStag
     return false;
 }
 
-bool DynamicState::BindCache::SkipDescriptors(vk::PipelineBindPoint bind_point,
-                                              vk::PipelineLayout layout, u32 set,
-                                              std::span<const vk::WriteDescriptorSet> writes) noexcept {
+DescriptorUpdate DynamicState::BindCache::PrepareDescriptors(
+    vk::PipelineBindPoint bind_point, vk::PipelineLayout layout, u32 set,
+    std::span<const vk::WriteDescriptorSet> writes) noexcept {
     u32 index;
     if (bind_point == vk::PipelineBindPoint::eGraphics) {
         index = 0;
     } else if (bind_point == vk::PipelineBindPoint::eCompute) {
         index = 1;
     } else {
-        return false;
+        return {};
     }
     Descriptors& cache = descriptors[index];
     Common::Perf::Add(Common::Perf::DescriptorPushes);
-    // The infos of a write as compared and kept: what the descriptor points to.
-    const auto info_at = [](const vk::WriteDescriptorSet& write, u32 i) -> Descriptors::Info {
-        switch (write.descriptorType) {
-        case vk::DescriptorType::eSampler:
-        case vk::DescriptorType::eCombinedImageSampler:
-        case vk::DescriptorType::eSampledImage:
-        case vk::DescriptorType::eStorageImage:
-        case vk::DescriptorType::eInputAttachment: {
-            const auto& info = write.pImageInfo[i];
-            return {reinterpret_cast<u64>(static_cast<VkSampler>(info.sampler)),
-                    reinterpret_cast<u64>(static_cast<VkImageView>(info.imageView)),
-                    static_cast<u64>(info.imageLayout)};
+    const bool evidence = Common::Perf::GetTuning().v3_descriptor_evidence.load(std::memory_order_relaxed);
+    if (evidence) {
+        using namespace Common::Perf;
+        const auto e = InspectDescriptors(cache, layout, set, writes);
+        Add(R4DescriptorCalls);
+        switch (e.reason) {
+        case DescriptorEvidence::Reason::Hit: Add(R4DescriptorHits); break;
+        case DescriptorEvidence::Reason::Unknown: Add(R4DescriptorUnknown); break;
+        case DescriptorEvidence::Reason::Uncacheable: Add(R4DescriptorUncacheable); break;
+        case DescriptorEvidence::Reason::Layout: Add(R4DescriptorLayout); break;
+        case DescriptorEvidence::Reason::Shape: Add(R4DescriptorShape); break;
+        case DescriptorEvidence::Reason::Payload: Add(R4DescriptorPayload); break;
         }
-        case vk::DescriptorType::eUniformTexelBuffer:
-        case vk::DescriptorType::eStorageTexelBuffer:
-            return {reinterpret_cast<u64>(static_cast<VkBufferView>(write.pTexelBufferView[i])), 0,
-                    0};
-        default: {
-            const auto& info = write.pBufferInfo[i];
-            return {reinterpret_cast<u64>(static_cast<VkBuffer>(info.buffer)), info.offset,
-                    info.range};
+        if (e.layout_only) Add(R4DescriptorLayoutOnly);
+        if (e.shape_same && e.changed_infos) {
+            Add(R4DescriptorChangedInfos,e.changed_infos);
+            Add(R4DescriptorChangedSegments,e.changed_segments);
+            Add(R4DescriptorComparableSegments,e.segments);
+            Add(e.changed_segments==1 ? R4DescriptorOneSegment :
+                e.changed_segments<=4 ? R4DescriptorFewSegments : R4DescriptorManySegments);
         }
-        }
-    };
-    // Only plain writes of set 0 are kept (no extension structures, bounded sizes).
-    bool cacheable = set == 0 && writes.size() <= Descriptors::MaxWrites;
-    u32 total_infos = 0;
-    for (const auto& write : writes) {
-        if (write.pNext != nullptr) {
-            cacheable = false;
-            break;
-        }
-        total_infos += write.descriptorCount;
+        Add(R4DescriptorBuffer,e.buffers); Add(R4DescriptorOffset,e.offsets);
+        Add(R4DescriptorRange,e.ranges); Add(R4DescriptorSampler,e.samplers);
+        Add(R4DescriptorView,e.views); Add(R4DescriptorImageLayout,e.image_layouts);
+        Add(R4DescriptorTexelView,e.texel_views);
     }
-    if (!cacheable || total_infos > Descriptors::MaxInfos) {
-        // Another set pushed with an incompatible layout can disturb set 0 too.
-        cache.num_writes = ~0U;
-        return false;
+    const auto update = UpdateDescriptorState(cache, layout, set, writes, SkipRedundantBinds(),
+        Common::Perf::GetTuning().v3_descriptor_delta.load(std::memory_order_relaxed));
+    if (update.mode == DescriptorUpdate::Mode::Skip) {
+        Common::Perf::Add(Common::Perf::DescriptorPushesSkipped);
     }
-    bool same = cache.num_writes == writes.size() && cache.layout == layout &&
-                cache.num_infos == total_infos;
-    if (same) {
-        u32 info_index = 0;
-        for (u32 w = 0; w < writes.size() && same; ++w) {
-            const auto& write = writes[w];
-            const auto& kept = cache.writes[w];
-            if (kept.binding != write.dstBinding || kept.array_element != write.dstArrayElement ||
-                kept.count != write.descriptorCount || kept.type != write.descriptorType) {
-                same = false;
-                break;
-            }
-            for (u32 i = 0; i < write.descriptorCount; ++i) {
-                if (!(cache.infos[info_index++] == info_at(write, i))) {
-                    same = false;
-                    break;
-                }
-            }
+    if (evidence) {
+        using namespace Common::Perf;
+        const auto input = static_cast<u32>(writes.size());
+        const auto emitted = update.EmittedWrites(input);
+        Add(A1DescriptorCalls);
+        Add(update.mode == DescriptorUpdate::Mode::Partial ? A1DescriptorPartial :
+            update.mode == DescriptorUpdate::Mode::Skip ? A1DescriptorSkipped : A1DescriptorFull);
+        Add(A1DescriptorInputWrites, input);
+        Add(A1DescriptorEmittedWrites, emitted);
+        Add(A1DescriptorOmittedWrites, input - emitted);
+        if (update.mode == DescriptorUpdate::Mode::Partial) {
+            Add(A1DescriptorDeltaOmittedWrites, input - emitted);
         }
     }
-    if (same) {
-        if (SkipRedundantBinds()) {
-            Common::Perf::Add(Common::Perf::DescriptorPushesSkipped);
-            return true;
-        }
-        return false;
-    }
-    cache.layout = layout;
-    cache.num_writes = static_cast<u32>(writes.size());
-    cache.num_infos = total_infos;
-    u32 info_index = 0;
-    for (u32 w = 0; w < writes.size(); ++w) {
-        const auto& write = writes[w];
-        cache.writes[w] = {write.dstBinding, write.dstArrayElement, write.descriptorCount,
-                           write.descriptorType};
-        for (u32 i = 0; i < write.descriptorCount; ++i) {
-            cache.infos[info_index++] = info_at(write, i);
-        }
-    }
-    return false;
+    return update;
 }
 
 bool DynamicState::BindCache::SkipVertexInput(
@@ -1477,9 +1519,7 @@ void DynamicState::Commit(const Instance& instance, const CommandRecorder& cmdbu
     }
     if (dirty_state.feedback_loop_enabled && instance.IsAttachmentFeedbackLoopLayoutSupported()) {
         dirty_state.feedback_loop_enabled = false;
-        cmdbuf.setAttachmentFeedbackLoopEnableEXT(feedback_loop_enabled
-                                                      ? vk::ImageAspectFlagBits::eColor
-                                                      : vk::ImageAspectFlagBits::eNone);
+        cmdbuf.setAttachmentFeedbackLoopEnableEXT(feedback_loop_enabled);
     }
 }
 

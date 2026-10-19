@@ -8,6 +8,8 @@
 #include "core/emulator_settings.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
+#include "common/path_trace.h"
+#include "common/perf_stats.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 
@@ -80,6 +82,8 @@ void Swapchain::Create(u32 width_, u32 height_) {
 }
 
 void Swapchain::Recreate(u32 width_, u32 height_) {
+    Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::Recreate,
+                                      Common::Perf::V3RecreateNs};
     LOG_DEBUG(Render_Vulkan, "Recreate the swapchain: width={} height={} HDR={}", width_, height_,
               needs_hdr);
     Create(width_, height_);
@@ -106,7 +110,7 @@ bool Swapchain::AcquireNextImage() {
     vk::Device device = instance.GetDevice();
     vk::Result result =
         device.acquireNextImageKHR(swapchain, std::numeric_limits<u64>::max(),
-                                   image_acquired[frame_index], VK_NULL_HANDLE, &image_index);
+                                   image_acquired[frame_index], acquire_available, &image_index);
 
     switch (result) {
     case vk::Result::eSuccess:
@@ -122,6 +126,19 @@ bool Swapchain::AcquireNextImage() {
                      vk::to_string(result));
         UNREACHABLE();
         break;
+    }
+
+    if (acquire_available &&
+        (result == vk::Result::eSuccess || result == vk::Result::eSuboptimalKHR)) {
+        // Validation also observes image availability on the host. Keep the binary
+        // semaphore wait for the rendering submission; the fence is an extra debug wait.
+        const auto available = device.waitForFences(
+            acquire_available, true, std::numeric_limits<u64>::max());
+        ASSERT_MSG(available == vk::Result::eSuccess,
+                   "Swapchain availability wait failed: {}", vk::to_string(available));
+        const auto reset = device.resetFences(acquire_available);
+        ASSERT_MSG(reset == vk::Result::eSuccess,
+                   "Swapchain availability fence reset failed: {}", vk::to_string(reset));
     }
 
     return !needs_recreation;
@@ -144,6 +161,7 @@ bool Swapchain::Present() {
                    vk::to_string(result));
     }
 
+    image_presented[image_index] = true;
     frame_index = (frame_index + 1) % image_count;
 
     return !needs_recreation;
@@ -277,14 +295,28 @@ void Swapchain::Destroy() {
         device.destroySemaphore(sem);
     }
 
+    if (acquire_available) {
+        device.destroyFence(acquire_available);
+        acquire_available = vk::Fence{};
+    }
     image_acquired.clear();
     present_ready.clear();
+    image_presented.clear();
 }
 
 void Swapchain::RefreshSemaphores() {
     const vk::Device device = instance.GetDevice();
+    frame_index = 0;
+    image_index = 0;
     image_acquired.resize(image_count);
     present_ready.resize(image_count);
+    if (EmulatorSettings.IsVkValidationEnabled()) {
+        const auto [result, fence] = device.createFence({});
+        ASSERT_MSG(result == vk::Result::eSuccess,
+                   "Swapchain availability fence creation failed: {}", vk::to_string(result));
+        acquire_available = fence;
+        LOG_INFO(Render_Vulkan, "Validation swapchain: host-fenced acquire availability enabled");
+    }
 
     for (vk::Semaphore& semaphore : image_acquired) {
         auto [semaphore_result, sem] = device.createSemaphore({});
@@ -313,6 +345,7 @@ void Swapchain::SetupImages() {
                vk::to_string(images_result));
     images = std::move(imgs);
     image_count = static_cast<u32>(images.size());
+    image_presented.assign(image_count, false);
     images_view.resize(image_count);
     for (u32 i = 0; i < image_count; ++i) {
         if (images_view[i]) {

@@ -293,6 +293,51 @@ enum Counter : u32 {
     ComputeBindWaits,
     ComputeBindWaitNs,
     ComputeCompileQueueWaitNs,
+    // Recorder backlog waits are not compute compiler queue waits.
+    RecorderQueueWaitNs,
+    // V1 candidates: actual buffer bindings skipped and copied-range dependency selection.
+    VertexBufferBinds,
+    VertexBufferBindsSkipped,
+    IndexBufferBinds,
+    IndexBufferBindsSkipped,
+    ReadbackDependencyChecks,
+    ReadbackDependenciesReduced,
+    ReadbackDependencyFallbacks,
+    ReadbackQueuePromotions,
+    // V2: first-use warmup coverage, compiler scheduling and precise demand-page prefetch.
+    ComputeWarmFirstUses,
+    ComputeColdFirstUses,
+    ComputeNewPrograms,
+    ComputeNewPermutations,
+    ComputePriorityJobs,
+    ComputeRuntimeCompileJobs,
+    ComputeRuntimeQueueNs,
+    ComputeDriverCompiles,
+    ComputeDriverCompileNs,
+    ComputeShaderCompiles,
+    ComputeShaderCompileNs,
+    ReadbackPagePrefetches,
+    ReadbackPagePrefetchBytes,
+    ReadbackPagePrefetchHits,
+    ReadbackPagePrefetchFinished,
+    ReadbackCompletionRequests,
+    ReadbackCompletionQueueNs,
+    // V3 candidates, independent of the integrated V1/V2 policies.
+    V3DemandPages, V3FineChecks, V3FineHits, V3FineDisabled, V3PrefetchInputs, V3PrefetchBatches,
+    V3SubmitPrepared, V3LightingMoves, V3ParticleMoves, V3LightingCse, V3ParticleCse, V3ParticleAsync,
+    V3PresentAcquireNs, V3PresentFlushNs, V3PresentLockNs, V3PresentCallNs,
+    V3SubmitLockNs, V3QueueSubmitNs, V3RecreateNs,
+    V3LayoutRequests, V3LayoutHits, V3LayoutsCreated, V3LayoutFallbacks,
+    R4DescriptorCalls, R4DescriptorHits, R4DescriptorUnknown, R4DescriptorUncacheable,
+    R4DescriptorLayout, R4DescriptorShape, R4DescriptorPayload, R4DescriptorLayoutOnly,
+    R4DescriptorChangedInfos, R4DescriptorChangedSegments, R4DescriptorComparableSegments,
+    R4DescriptorOneSegment, R4DescriptorFewSegments, R4DescriptorManySegments,
+    R4DescriptorBuffer, R4DescriptorOffset, R4DescriptorRange, R4DescriptorSampler,
+    R4DescriptorView, R4DescriptorImageLayout, R4DescriptorTexelView,
+    R4PrepareCalls, R4PrepareNs, R4BufferCalls, R4BufferNs, R4TextureCalls, R4TextureNs,
+    R4RegularSets, R4RegularWrites,
+    A1DescriptorCalls, A1DescriptorFull, A1DescriptorPartial, A1DescriptorSkipped,
+    A1DescriptorInputWrites, A1DescriptorEmittedWrites, A1DescriptorOmittedWrites, A1DescriptorDeltaOmittedWrites,
     CounterCount,
 };
 
@@ -355,6 +400,18 @@ inline u64 Total(Counter counter) {
 /// Parameters that can be changed while the game runs (perf_tuning.ini in the user folder), to
 /// compare strategies without restarting the game.
 struct Tuning {
+    // V3 remains opt-in until same-scene correctness/performance validation.
+    std::atomic<bool> v3_lighting_reduction{false}; // C1 startup shader policy, independent of old scheduling.
+    std::atomic<bool> v3_descriptor_delta{false}; // A1 candidate, independently disabled in baseline.
+    std::atomic<bool> v3_descriptor_evidence{false}; // Diagnostic comparison, no binding changes.
+    std::atomic<bool> v3_layout_sharing{false}; // Immutable policy captured at PipelineCache startup.
+    std::atomic<bool> v3_demand_readback{false};
+    std::atomic<bool> v3_prefetch_batches{false};
+    std::atomic<bool> v3_submit_prepare{false};
+    std::atomic<bool> v3_lighting_schedule{false}; // Shader policy captured at renderer startup.
+    std::atomic<bool> v3_particle_schedule{false};
+    std::atomic<bool> v3_particle_async{false};
+
     /// Size of the window downloaded around a precise readback, a power of two.
     std::atomic<u64> readback_window_bytes{512 * 1024};
     /// See GPUSettings::readbacks_write_discard.
@@ -556,6 +613,10 @@ struct Tuning {
     /// dispatch. 3 samples one in 32 graphics draw commands per shader; estimates are
     /// diagnostic rankings, not uninstrumented frame timings.
     std::atomic<u32> gpu_profile{0};
+    /// Measuring-only compute filter; zero preserves full diagnostic coverage. Hex shader hash.
+    std::atomic<u64> gpu_profile_compute_hash{0};
+    /// Startup-only bounded asynchronous CPU path trace, enabled explicitly by the launcher.
+    std::atomic<bool> path_trace{false};
     /// readback_relaxed_sites: code of the game (offsets of 256 byte blocks of its executable, as
     /// the readback site report shows them) whose reads of GPU written memory do not wait for
     /// the GPU. The read gets guest memory as it is (data of the previous download, a frame or
@@ -878,6 +939,79 @@ inline void OnFlip(float draws_per_frame, float dispatches_per_frame) {
              t[FlatbufMemoHits], t[FlatbufMemoMisses], mb(t[FlatbufMemoSavedBytes]),
              t[ComputeCompilesQueued], t[ComputeBindsDeferred], t[ComputeBindWaits],
              ms(t[ComputeBindWaitNs]), ms(t[ComputeCompileQueueWaitNs]));
+
+    if (t[VertexBufferBinds] || t[IndexBufferBinds] || t[ReadbackDependencyChecks] ||
+        t[RecorderQueueWaitNs]) {
+        LOG_INFO(Debug,
+                 "Perf V1: vertex binds skipped {}/{} index binds skipped {}/{} "
+                 "readback dependencies: checked {} reduced {} fallback {} queue promotions {} "
+                 "recorder backlog wait {:.1f} ms",
+                 t[VertexBufferBindsSkipped], t[VertexBufferBinds], t[IndexBufferBindsSkipped],
+                 t[IndexBufferBinds], t[ReadbackDependencyChecks], t[ReadbackDependenciesReduced],
+                 t[ReadbackDependencyFallbacks], t[ReadbackQueuePromotions],
+                 ms(t[RecorderQueueWaitNs]));
+    }
+
+    if (t[ComputeWarmFirstUses] || t[ComputeColdFirstUses] || t[ComputeDriverCompiles] ||
+        t[ComputePriorityJobs] || t[ReadbackPagePrefetches] || t[ReadbackPagePrefetchFinished] ||
+        t[ReadbackCompletionRequests]) {
+        LOG_INFO(Debug,
+                 "Perf V2: compute first lookups warm {} cold {} new programs {} variants {} "
+                 "priority jobs {} runtime jobs {} queue {:.1f} ms driver {} / {:.1f} ms "
+                 "translate {} / {:.1f} ms; page prefetches {} copied {:.3f} MiB "
+                 "fault joins {} finished {}; completion requests {} queue {:.1f} ms",
+                 t[ComputeWarmFirstUses], t[ComputeColdFirstUses], t[ComputeNewPrograms],
+                 t[ComputeNewPermutations], t[ComputePriorityJobs], t[ComputeRuntimeCompileJobs],
+                 ms(t[ComputeRuntimeQueueNs]), t[ComputeDriverCompiles],
+                 ms(t[ComputeDriverCompileNs]),
+                 t[ComputeShaderCompiles], ms(t[ComputeShaderCompileNs]),
+                 t[ReadbackPagePrefetches], mb(t[ReadbackPagePrefetchBytes]),
+                 t[ReadbackPagePrefetchHits], t[ReadbackPagePrefetchFinished],
+                 t[ReadbackCompletionRequests], ms(t[ReadbackCompletionQueueNs]));
+    }
+
+    if (t[R4DescriptorCalls] || t[R4PrepareCalls]) {
+        LOG_INFO(Debug, "Perf R4 descriptors: calls {} hit {} unknown {} uncacheable {} layout {} "
+                 "shape {} payload {} layout-only {}; changed segments {}/{} infos {} "
+                 "one/few/many {}/{}/{}; fields buffer {} offset {} range {} sampler {} "
+                 "view {} image-layout {} texel-view {}",
+                 t[R4DescriptorCalls],t[R4DescriptorHits],t[R4DescriptorUnknown],
+                 t[R4DescriptorUncacheable],t[R4DescriptorLayout],t[R4DescriptorShape],
+                 t[R4DescriptorPayload],t[R4DescriptorLayoutOnly],t[R4DescriptorChangedSegments],
+                 t[R4DescriptorComparableSegments],t[R4DescriptorChangedInfos],
+                 t[R4DescriptorOneSegment],t[R4DescriptorFewSegments],t[R4DescriptorManySegments],
+                 t[R4DescriptorBuffer],t[R4DescriptorOffset],t[R4DescriptorRange],
+                 t[R4DescriptorSampler],t[R4DescriptorView],t[R4DescriptorImageLayout],t[R4DescriptorTexelView]);
+        LOG_INFO(Debug, "Perf R4 prepare: calls {} ms {:.3f}; buffers {} ms {:.3f}; textures {} ms {:.3f}; "
+                 "regular sets {} writes {}",
+                 t[R4PrepareCalls],ms(t[R4PrepareNs]),t[R4BufferCalls],ms(t[R4BufferNs]),
+                 t[R4TextureCalls],ms(t[R4TextureNs]),t[R4RegularSets],t[R4RegularWrites]);
+    }
+    if (t[A1DescriptorCalls]) {
+        LOG_INFO(Debug, "Perf A1 descriptors: calls {} full {} partial {} skipped {}; "
+                        "write segments input {} emitted {} omitted {} partial-omitted {}",
+                 t[A1DescriptorCalls], t[A1DescriptorFull], t[A1DescriptorPartial], t[A1DescriptorSkipped],
+                 t[A1DescriptorInputWrites], t[A1DescriptorEmittedWrites], t[A1DescriptorOmittedWrites],
+                 t[A1DescriptorDeltaOmittedWrites]);
+    }
+    if (t[V3LayoutRequests]) {
+        LOG_INFO(Debug, "Perf V3 layouts: requested {} reused {} created {} private fallback {}",
+                 t[V3LayoutRequests], t[V3LayoutHits], t[V3LayoutsCreated], t[V3LayoutFallbacks]);
+    }
+    if (t[V3DemandPages] || t[V3FineChecks] || t[V3PrefetchInputs] || t[V3SubmitPrepared] ||
+        t[V3LightingMoves] || t[V3ParticleMoves] || t[V3LightingCse] || t[V3ParticleCse] ||
+        t[V3FineDisabled] || t[V3ParticleAsync] || t[V3PresentCallNs]) {
+        LOG_INFO(Debug,
+                 "Perf V3: demand pages {} fine deps {}/{} disabled {} prefetch inputs {} batches {} "
+                 "prepared {} shader moves lighting {} particle {} cse lighting {} particle {} async {}; "
+                 "present acquire/flush/lock/call {:.2f}/{:.2f}/{:.2f}/{:.2f} ms "
+                 "submit lock/call {:.2f}/{:.2f} ms recreate {:.2f} ms",
+                 t[V3DemandPages], t[V3FineHits], t[V3FineChecks], t[V3FineDisabled], t[V3PrefetchInputs],
+                 t[V3PrefetchBatches], t[V3SubmitPrepared], t[V3LightingMoves],
+                 t[V3ParticleMoves], t[V3LightingCse], t[V3ParticleCse], t[V3ParticleAsync], ms(t[V3PresentAcquireNs]),
+                 ms(t[V3PresentFlushNs]), ms(t[V3PresentLockNs]), ms(t[V3PresentCallNs]),
+                 ms(t[V3SubmitLockNs]), ms(t[V3QueueSubmitNs]), ms(t[V3RecreateNs]));
+    }
 
     const u64 last_flip = r.last_flip;
     const u64 flip_index = r.flip_index;

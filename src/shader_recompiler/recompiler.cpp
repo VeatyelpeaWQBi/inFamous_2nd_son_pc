@@ -61,7 +61,7 @@ void EmitControlFlowGraph(IR::Program& program, Pools& pools, Gcn::CFG& cfg,
 }
 
 IR::Program TranslateProgram(const std::span<const u32>& code, Pools& pools, Info& info,
-                             RuntimeInfo& runtime_info, const Profile& profile) {
+                             RuntimeInfo& runtime_info, const Profile& profile, u32 address_schedule_mask) {
     // Ensure first instruction is expected.
     constexpr u32 token_mov_vcchi = 0xBEEB03FF;
     if (code[0] != token_mov_vcchi) {
@@ -141,6 +141,7 @@ IR::Program TranslateProgram(const std::span<const u32>& code, Pools& pools, Inf
     Shader::Optimization::LowerHardwareIntrinsics(program);
     Shader::Optimization::ConstantPropagationPass(program.post_order_blocks);
     Shader::Optimization::DeadCodeEliminationPass(program);
+    Shader::Optimization::IfssAddressSchedulePass(program, address_schedule_mask);
     Shader::Optimization::CollectShaderInfoPass(program, profile);
     Shader::IR::DumpProgram(program, info);
 

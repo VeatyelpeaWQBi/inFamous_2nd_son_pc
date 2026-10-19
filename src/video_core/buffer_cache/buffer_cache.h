@@ -4,6 +4,7 @@
 #pragma once
 
 #include <deque>
+#include <memory>
 #include <optional>
 #include <string>
 #include <boost/container/small_vector.hpp>
@@ -13,6 +14,7 @@
 #include "common/types.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/fault_manager.h"
+#include "video_core/buffer_cache/feedback_write_history.h"
 #include "video_core/buffer_cache/range_set.h"
 #include "video_core/buffer_cache/region_definitions.h"
 #include "video_core/buffer_cache/upload_worker.h"
@@ -53,6 +55,13 @@ struct QueueContext {
 };
 
 class BufferCache {
+    struct TraceProducerContext {
+        u64 id{}, shader{};
+        u32 kind{};
+    };
+    std::unique_ptr<FeedbackWriteHistory<>> trace_writes;
+    TraceProducerContext trace_producer{};
+    void TraceReadProducers(VAddr address, u64 size, VAddr window, u64 span, u64 request);
     static constexpr u64 ADDRESS_SPACE_BITS = 40;
     static constexpr u64 ARENA_PAGE_BITS = 32;
     static constexpr u64 ARENA_PAGE_SIZE = u64{1} << ARENA_PAGE_BITS;
@@ -65,6 +74,24 @@ public:
                          Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool,
                          TextureCache& texture_cache, PageManager& tracker);
     ~BufferCache();
+
+    class ProducerTrace {
+    public:
+        ProducerTrace(BufferCache& cache, u64 shader, u32 kind);
+        ~ProducerTrace();
+        ProducerTrace(const ProducerTrace&) = delete;
+        ProducerTrace& operator=(const ProducerTrace&) = delete;
+        void Commit(); // CPU draw/dispatch recorded, not GPU completion.
+    private:
+        BufferCache& cache;
+        TraceProducerContext previous{};
+        u64 id{}, cursor{};
+        bool committed{};
+    };
+    ProducerTrace BeginProducerTrace(u64 shader, u32 kind) {
+        return ProducerTrace{*this, shader, kind};
+    }
+    void TraceFeedbackFence();
 
     /// Returns a pointer to GDS device local buffer.
     [[nodiscard]] const Buffer* GetGdsBuffer() const noexcept {
@@ -200,7 +227,7 @@ public:
     void SynchronizeDmaBuffers();
 
     /// Commits pending sparse buffer memory binds. Must be called before every scheduler submit.
-    void SubmitPendingArenaBinds(Vulkan::SubmitInfo& info);
+    void SubmitPendingArenaBinds(Vulkan::SubmitInfo& info, bool queue_locked = true);
 
 private:
     struct ArenaBinds {
@@ -235,6 +262,7 @@ private:
     struct PendingReadback {
         u64 tick{};
         u64 record_seq{}; ///< GPU writes numbered above it came after the download was recorded.
+        u64 trace_id{}; ///< Diagnostic only; zero in ordinary runs.
         Vulkan::StagingBufferRef download{};
         boost::container::small_vector<vk::BufferCopy, 8> copies;
         VAddr arena_base{};
@@ -242,6 +270,7 @@ private:
         VAddr window_end{};
         vk::Buffer arena_handle{};
         bool prefetch{};
+        bool demand_page_prefetch{};
         bool on_readback_queue{}; ///< tick is on the readback queue, else the graphics queue.
         /// readback_relaxed_sites: pages a guest read was let through while the download was in
         /// flight (no longer GPU modified): they get the new data too if unchanged since.
@@ -301,6 +330,7 @@ private:
         bool done{true};      ///< Every writer is done on the GPU.
         bool current{};       ///< A writer is in a session being recorded.
     };
+    WindowWriters ClassifyWriters(std::array<u64, 2> ticks);
     WindowWriters WindowWritersOf(VAddr start, u64 size);
     /// The waits of a readback queue copy of a window.
     boost::container::static_vector<ReadbackQueue::Wait, 2> ReadbackWaits(const WindowWriters&);
@@ -314,11 +344,23 @@ private:
     /// (the window stays registered).
     bool CollectReadback(const Buffer* arena, PendingReadback& readback);
 
+    /// Collects copies, optionally narrows producer dependencies, then selects the copy queue.
+    /// Precise mode always refines known copied-range dependencies; missing evidence keeps
+    /// the original whole-window waits and queue selection.
+    bool PrepareReadback(const Buffer* arena, PendingReadback& readback, WindowWriters& writers,
+                         bool queue_enabled, bool& on_queue);
+
     /// Collects the window and records its copies in the graphics command buffer.
     bool RecordReadback(const Buffer* arena, PendingReadback& readback);
 
-    /// Remembers a window the guest read back, candidate for prefetching.
-    void NoteHotWindow(VAddr start, VAddr end);
+    /// Remembers conservative windows and actual fault pages as separate prefetch hints.
+    void NoteHotWindow(VAddr start, VAddr end, bool demand_pages = false);
+    void DisableFineReadbacks();
+    // Returns true only when at least one copy was recorded.
+    bool PrefetchDemandBatches();
+    void SubmitPrefetchReadbacks(size_t first_queued, bool recorded_on_graphics,
+                                 bool recorded_on_queue, std::array<u64, 2> queue_wait_ticks);
+
 
     struct HotWindow {
         VAddr start;
@@ -327,6 +369,7 @@ private:
         u64 prefetch_tick; ///< Tick of the last prefetch of the window, at most one in flight.
         u64 prefetch_seq;  ///< Write sequence the last prefetch covered (readback_keep_ranges).
         bool prefetch_on_queue; ///< prefetch_tick is on the readback queue.
+        bool demand_pages; ///< Observed CPU pages, not the wider normal download window.
     };
 
     /// Downloads the GPU modified memory around a request and waits for it (command processor).
@@ -338,7 +381,7 @@ private:
     /// tick to wait for on wait_semaphore before calling CompleteReadbacks, or 0 when there is
     /// nothing to wait for.
     u64 BeginReadback(VAddr device_addr, u64 size, bool is_write,
-                      Vulkan::Semaphore*& wait_semaphore);
+                      Vulkan::Semaphore*& wait_semaphore, u64 trace_id = 0, u64 fault_rip = 0);
 
     /// Writes the pending readbacks the GPU has finished to guest memory: in any order, except
     /// after an unfinished earlier readback of the same window. With wait, waits for all of them
@@ -349,7 +392,8 @@ private:
     void FinishReadback(size_t index);
 
     /// Guest thread: waits for a readback tick (reported if it takes seconds).
-    void WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, u64 tick);
+    void WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, u64 tick,
+                      u64 trace_id = 0, u32 round = 0);
 
     /// Command processor: the in flight readback to wait for before the range can be written,
     /// nullptr if none (see CompleteReadbacks).

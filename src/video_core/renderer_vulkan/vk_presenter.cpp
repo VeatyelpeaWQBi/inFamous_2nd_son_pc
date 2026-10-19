@@ -6,6 +6,7 @@
 #include "common/io_file.h"
 #include "common/path_util.h"
 #include "common/perf_stats.h"
+#include "common/path_trace.h"
 #include "common/singleton.h"
 #include "core/debug_state.h"
 #include "core/benchmark_control.h"
@@ -867,9 +868,14 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
     }
 
-    if (!swapchain.AcquireNextImage()) {
+    const auto acquire = [&] {
+        Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::Acquire,
+                                          Common::Perf::V3PresentAcquireNs};
+        return swapchain.AcquireNextImage();
+    };
+    if (!acquire()) {
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
-        if (!swapchain.AcquireNextImage()) {
+        if (!acquire()) {
             // User resizes the window too fast and GPU can't keep up. Skip this frame.
             LOG_WARNING(Render_Vulkan, "Skipping frame!");
             free_frame();
@@ -910,7 +916,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
             vk::ImageMemoryBarrier{
                 .srcAccessMask = vk::AccessFlagBits::eNone,
                 .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
-                .oldLayout = vk::ImageLayout::eUndefined,
+                .oldLayout = swapchain.GetImageLayout(),
                 .newLayout = vk::ImageLayout::eColorAttachmentOptimal,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -924,8 +930,8 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
                 },
             },
             vk::ImageMemoryBarrier{
-                .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
-                .dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead,
+                .srcAccessMask = vk::AccessFlagBits::eMemoryWrite,
+                .dstAccessMask = vk::AccessFlagBits::eShaderRead,
                 .oldLayout = vk::ImageLayout::eGeneral,
                 .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -943,9 +949,13 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
 
         bool swapchain_copied_for_screenshot = false;
 
-        cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput,
+        // Match the acquire semaphore's wait stage to the first use of its image.
+        cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
                                vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                               vk::DependencyFlagBits::eByRegion, {}, {}, pre_barriers);
+                               {}, {}, {}, pre_barriers[0]);
+        cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                               vk::PipelineStageFlagBits::eFragmentShader,
+                               {}, {}, {}, pre_barriers[1]);
 
         { // Draw the game
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0f});
@@ -1057,9 +1067,11 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
                 .layerCount = VK_REMAINING_ARRAY_LAYERS,
             },
         };
-        cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
-                               vk::PipelineStageFlagBits::eAllCommands,
-                               vk::DependencyFlagBits::eByRegion, {}, {}, post_barrier);
+        const auto post_src_stage = swapchain_copied_for_screenshot
+                                        ? vk::PipelineStageFlagBits::eTransfer
+                                        : vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        cmdbuf.pipelineBarrier(post_src_stage, vk::PipelineStageFlagBits::eBottomOfPipe,
+                               {}, {}, {}, post_barrier);
 
         if (profiler_ctx) {
             TracyVkCollect(profiler_ctx, cmdbuf);
@@ -1077,17 +1089,32 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     }
 
     SubmitInfo info{};
-    info.AddWait(swapchain.GetImageAcquiredSemaphore());
-    info.AddWait(frame->ready_semaphore, frame->ready_tick,
-                 vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    info.AddWait(swapchain.GetImageAcquiredSemaphore(), 0,
+                 vk::PipelineStageFlagBits::eAllCommands);
+    // The frame is sampled by the fragment shader before color attachment output.
+    info.AddWait(frame->ready_semaphore, frame->ready_tick);
     info.AddSignal(swapchain.GetPresentReadySemaphore());
     info.AddSignal(frame->present_done);
-    scheduler.Flush(info);
+    {
+        Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::PresentFlush,
+                                          Common::Perf::V3PresentFlushNs};
+        scheduler.Flush(info);
+    }
 
     // Present to swapchain.
     {
-        std::scoped_lock submit_lock{Scheduler::submit_mutex};
-        if (!swapchain.Present()) {
+        std::unique_lock submit_lock{Scheduler::submit_mutex, std::defer_lock};
+        {
+            Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::PresentLock,
+                                              Common::Perf::V3PresentLockNs};
+            submit_lock.lock();
+        }
+        const bool presented = [&] {
+            Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::PresentCall,
+                                              Common::Perf::V3PresentCallNs};
+            return swapchain.Present();
+        }();
+        if (!presented) {
             swapchain.Recreate(window.GetWidth(), window.GetHeight());
         }
     }

@@ -31,39 +31,19 @@ static constexpr std::array LogicalStageToStageBit = {
 
 GraphicsPipeline::GraphicsPipeline(
     const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,
-    const Shader::Profile& profile, const GraphicsPipelineKey& key_,
+    const Shader::Profile& profile, PipelineLayoutCache& layout_cache,
+    const GraphicsPipelineKey& key_,
     vk::PipelineCache pipeline_cache, std::span<const Shader::Info*, MaxShaderStages> infos,
     std::span<const Shader::RuntimeInfo, MaxShaderStages> runtime_infos,
     const Shader::Gcn::FetchShaderData* fetch_shader_, std::span<const vk::ShaderModule> modules,
     SerializationSupport& sdata, bool preloading, bool defer_compile)
-    : Pipeline{instance, scheduler, desc_heap, profile, pipeline_cache}, key{key_} {
+    : Pipeline{instance, scheduler, desc_heap, profile, layout_cache, pipeline_cache}, key{key_} {
     if (fetch_shader_) {
         fetch_shader = *fetch_shader_;
     }
 
-    const vk::Device device = instance.GetDevice();
     std::ranges::copy(infos, stages.begin());
     BuildDescSetLayout(preloading);
-    const auto debug_str = GetDebugString();
-
-    const vk::PushConstantRange push_constants = {
-        .stageFlags = AllGraphicsStageBits,
-        .offset = 0,
-        .size = sizeof(Shader::PushData),
-    };
-
-    const vk::DescriptorSetLayout set_layout = *desc_layout;
-    const vk::PipelineLayoutCreateInfo layout_info = {
-        .setLayoutCount = 1U,
-        .pSetLayouts = &set_layout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &push_constants,
-    };
-    auto [layout_result, layout] = instance.GetDevice().createPipelineLayoutUnique(layout_info);
-    ASSERT_MSG(layout_result == vk::Result::eSuccess,
-               "Failed to create graphics pipeline layout: {}", vk::to_string(layout_result));
-    pipeline_layout = std::move(layout);
-    SetObjectName(device, *pipeline_layout, "Graphics PipelineLayout {}", debug_str);
 
     // Everything that depends on the guest state (runtime infos, vertex sharps) is gathered here,
     // on the command processor thread, into sdata. Building the create infos and creating the
@@ -447,7 +427,7 @@ void GraphicsPipeline::Compile() {
             !instance.IsExtendedDynamicState3Supported() ? &depth_stencil_info : nullptr,
         .pColorBlendState = &color_blending,
         .pDynamicState = &dynamic_info,
-        .layout = *pipeline_layout,
+        .layout = pipeline_layout,
     };
 
     auto access = driver_cache ? driver_cache->Acquire()
@@ -569,11 +549,12 @@ void GraphicsPipeline::BuildDescSetLayout(bool preloading) {
         .bindingCount = static_cast<u32>(bindings.size()),
         .pBindings = bindings.data(),
     };
-    auto [layout_result, layout] =
-        instance.GetDevice().createDescriptorSetLayoutUnique(desc_layout_ci);
-    ASSERT_MSG(layout_result == vk::Result::eSuccess,
-               "Failed to create graphics descriptor set layout: {}", vk::to_string(layout_result));
-    desc_layout = std::move(layout);
+    const vk::PushConstantRange push_constants = {
+        .stageFlags = AllGraphicsStageBits,
+        .offset = 0,
+        .size = sizeof(Shader::PushData),
+    };
+    BuildLayouts(desc_layout_ci, std::span{&push_constants, 1});
 }
 
 } // namespace Vulkan

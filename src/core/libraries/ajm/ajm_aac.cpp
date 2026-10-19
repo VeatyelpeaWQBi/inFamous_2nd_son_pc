@@ -7,7 +7,7 @@
 
 #include <aacdecoder_lib.h>
 // using this internal header to manually configure the decoder in RAW mode
-#include "externals/aacdec/fdk-aac/libAACdec/src/aacdecoder.h"
+#include <aacdecoder.h>
 
 #include <algorithm> // std::transform
 #include <iterator>  // std::back_inserter

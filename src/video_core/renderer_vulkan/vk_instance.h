@@ -365,6 +365,12 @@ public:
         return vk11_props.subgroupSize;
     }
 
+    bool SupportsComputeSubgroupArithmetic() const {
+        const auto required = vk::SubgroupFeatureFlagBits::eBasic | vk::SubgroupFeatureFlagBits::eArithmetic;
+        return (vk11_props.subgroupSupportedStages & vk::ShaderStageFlagBits::eCompute) &&
+               (vk11_props.subgroupSupportedOperations & required) == required;
+    }
+
     /// Returns the maximum size of compute shared memory.
     u32 MaxComputeSharedMemorySize() const {
         return properties.limits.maxComputeSharedMemorySize;

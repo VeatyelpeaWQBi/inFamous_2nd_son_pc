@@ -251,6 +251,13 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
         case PT_SCE_PROCPARAM:
             proc_param_virtual_addr = elf_pheader[i].p_vaddr + base_virtual_addr;
             break;
+        case PT_INTERP:
+        case PT_SCE_COMMENT:
+        case PT_SCE_LIBVERSION:
+            // The emulator resolves imports itself. Interpreter names, comments and
+            // library-version metadata do not describe segments that need loading.
+            LOG_DEBUG(Core_Linker, "Non-loadable program header: {}", header_type);
+            break;
         case PT_GNU_EH_FRAME: {
             eh_frame_hdr_addr = elf_pheader[i].p_vaddr;
             eh_frame_hdr_size = elf_pheader[i].p_memsz;

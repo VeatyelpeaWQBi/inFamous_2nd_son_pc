@@ -432,6 +432,14 @@ private:
     };
     DbMemo db_memo{};
     boost::container::static_vector<vk::DescriptorImageInfo, Shader::NUM_IMAGES> image_infos;
+    struct DescriptorImageUse {
+        u32 index;
+        VideoCore::ImageId image;
+        VideoCore::SubresourceRange range;
+        bool is_storage;
+    };
+    boost::container::static_vector<DescriptorImageUse, Shader::NUM_IMAGES> descriptor_image_uses;
+
     boost::container::static_vector<vk::DescriptorBufferInfo, Shader::NUM_BUFFERS> buffer_infos;
     boost::container::static_vector<VideoCore::ImageId, Shader::NUM_IMAGES> bound_images;
     struct BoundBuffer {
@@ -501,7 +509,7 @@ private:
     /// draw.
     u64 last_draw_context_changes{~u64{0}};
     const GraphicsPipeline* last_draw_pipeline{};
-    bool attachment_feedback_loop{};
+    vk::ImageAspectFlags attachment_feedback_loop{};
     bool needs_barrier{};
     struct SkippedWrite {
         VAddr start;

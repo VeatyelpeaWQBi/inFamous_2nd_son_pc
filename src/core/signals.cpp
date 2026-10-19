@@ -204,7 +204,7 @@ static std::string DescribeHostAddress(u64 address) {
 
 /// Logs the call stack from a context by unwinding host code with its unwind data. Stops at the
 /// first frame without unwind data after the first one (guest or generated code).
-static void LogBacktrace(const char* label, const CONTEXT& start) {
+static void LogBacktrace(const char* label, const CONTEXT& start, bool fatal = true) {
     CONTEXT context = start;
     ULONG_PTR stack_low = 0;
     ULONG_PTR stack_high = 0;
@@ -215,7 +215,11 @@ static void LogBacktrace(const char* label, const CONTEXT& start) {
         if (pc == 0) {
             break;
         }
-        LOG_CRITICAL(Debug, "CrashDiag v2 {} stack #{}: {}", label, frame, DescribeHostAddress(pc));
+        if (fatal) {
+            LOG_CRITICAL(Debug, "CrashDiag v2 {} stack #{}: {}", label, frame, DescribeHostAddress(pc));
+        } else {
+            LOG_DEBUG(Debug, "First-chance {} stack #{}: {}", label, frame, DescribeHostAddress(pc));
+        }
         DWORD64 image_base = 0;
         const PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(pc, &image_base, nullptr);
         if (function != nullptr) {
@@ -251,13 +255,13 @@ static void LogCppException(const EXCEPTION_POINTERS& exception) {
         logging = false;
     };
     const EXCEPTION_RECORD& record = *exception.ExceptionRecord;
-    LOG_CRITICAL(Debug, "CrashDiag v2: C++ exception at {}",
+    LOG_DEBUG(Debug, "CrashDiag v2: C++ exception at {}",
                  DescribeHostAddress(reinterpret_cast<u64>(record.ExceptionAddress)));
     if (record.NumberParameters >= 4) {
         const u64 object = record.ExceptionInformation[1];
         const u64 throw_info = record.ExceptionInformation[2];
         const u64 image_base = record.ExceptionInformation[3];
-        LOG_CRITICAL(Debug, "CrashDiag v2: thrown by module {}", DescribeHostAddress(image_base));
+        LOG_DEBUG(Debug, "CrashDiag v2: thrown by module {}", DescribeHostAddress(image_base));
         // x64 ThrowInfo: attributes, unwind, forward compat, catchable type array (image RVAs).
         const auto* info = reinterpret_cast<const s32*>(throw_info);
         if (image_base != 0 && IsReadable(info, 4 * sizeof(s32)) && info[3] != 0) {
@@ -278,18 +282,18 @@ static void LogCppException(const EXCEPTION_POINTERS& exception) {
                 for (size_t c = 0; c < max_length && name[c] != '\0'; ++c) {
                     type_name.push_back(name[c]);
                 }
-                LOG_CRITICAL(Debug, "CrashDiag v2: exception type {}", type_name);
+                LOG_DEBUG(Debug, "CrashDiag v2: exception type {}", type_name);
                 if (type_name == ".?AVexception@std@@" && catchable[3] == -1 && object != 0) {
                     const auto* error =
                         reinterpret_cast<const std::exception*>(object + catchable[2]);
                     if (IsReadable(error, 2 * sizeof(void*))) {
-                        LOG_CRITICAL(Debug, "CrashDiag v2: what(): {}", error->what());
+                        LOG_DEBUG(Debug, "CrashDiag v2: what(): {}", error->what());
                     }
                 }
             }
         }
     }
-    LogBacktrace("C++ exception", *exception.ContextRecord);
+    LogBacktrace("C++ exception", *exception.ContextRecord, false);
 }
 
 static LONG WINAPI SignalHandler(EXCEPTION_POINTERS* pExp) noexcept {

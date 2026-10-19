@@ -1,122 +1,141 @@
-# inFAMOUS Second Son — V2 Release
+# inFAMOUS Second Son PC
 
-Windows x86-64（CPU 支持 AVX2 / x86-64-v3，显卡驱动支持 Vulkan 1.3 以上）游戏专用引擎，基于 shadPS4/AYOUB1080p 的 GPL 源码，保留已验收的 V1/V2 内核优化。仅接受 Second Son 的 CUSA00004、CUSA00223、CUSA00305、CUSA00309，支持按地区及更新版本选择运行配置；不接受 First Light 或其他 PS4 游戏。
+基于 shadPS4 / AYOUB1080p GPL 源码的 Windows x86-64 游戏专用引擎，面向《inFAMOUS Second Son》的 1080p 与 Pro 4K 游玩和性能优化。它在 Windows 上运行 PS4 游戏程序，并非取得游戏源码后重写的 PC 移植版，也不是通用 PS4 启动器。
 
-本分支移除 V3 候选、调试面板、CPU 采样线程、性能采样、GPU 计时抓帧、RenderDoc/Nsight/VTune 联动和自动测试操作。保留必要警告/错误、游戏时钟、同步/回读、着色器缓存、输入法/存档对话框、截图、基础 FPS／帧时间显示及退出确认。
+游戏文件由使用者自行提供，项目和发布包均不附带游戏。原始文件保持只读，游戏补丁只作用于运行中的程序，并检查版本、程序指纹和原始字节。
 
-## 运行
+## 分支与优化状态
 
-共享包解压后直接运行 inFAMOUS Second Son.exe，先进入启动菜单，再启动游戏。无需 run.bat、Python、模拟器 GUI、编译器或调试工具。菜单使用系统 .NET Framework 4.8，辅助 EXE 位于 support/，不需要安装 .NET SDK。
-
-编辑根目录 launcher.json：
-
-    {
-      "game_path": "game",
-      "mode": "pro4k",
-      "display": "borderless"
-    }
-
-- game_path：默认查找 game/eboot.bin 或 game/ 下四个地区编号目录中的 eboot.bin，其他资源与程序一起放置。若存在多个游戏副本，明确指定其中一个目录或 eboot.bin；相对路径以包根目录为准，支持绝对路径。
-- mode：720p、900p、1080p、1440p、1800p 或 pro4k。1440p 及以上使用 Pro 模式。匹配已核验程序时，自动选择互斥分辨率补丁并保留光照列表、曝光及防冻结修复。其他构建自动使用基础 PS4 1080p，关闭 Pro 模式及全部 XML 功能补丁，并输出一次明确提示；精确回读、SDR 和 V1/V2 内核逻辑继续保留。
-- display：fullscreen、window 或 borderless。
-- F1 打开退出确认，Enter／手柄 A 确认，Esc／手柄 B 取消。Alt+F4 同样可退出。
-- 启动菜单可选择显示 FPS，游戏中按 F10 临时切换；右上角显示最近最多 60 个新游戏帧的平均 FPS 和平均帧间隔。界面重复绘制不计入帧数；这不是独立 GPU 执行时间，也不会启动采集工具或记录文件。
-
-可临时覆盖：
-
-    & ".\inFAMOUS Second Son.exe" --game "D:\My Games\CUSA00309" --mode 1080p
-
-常规配置位于 state/play/user/config.json，存档固定为 state/play/home/，缓存位于 state/runtime/。不从 AppData 取配置或存档；不复制、扫描历史 session 来挑选存档。根目录 launcher.json 提供游戏路径和首次菜单默认值；菜单选项（分辨率、显示模式、语言、确认键及 FPS 显示）保存在 state/play/launcher.json。命令行 --mode 覆盖本次菜单默认分辨率；旧调试配置键在本分支不起作用。
-
-游戏目录保持只读；XML 补丁只修改运行中的程序映像，继续核对原字节。包不附带游戏、个人存档、私有配置或录制数据。系统和显卡驱动由使用者提供。
-
-## 运行库安装参考 / Runtime installation reference
-
-### 中文
-
-以下对应关系依据 2026-10-19 的实际发布包核对。项目引擎为 **V2 Release**，Windows EXE 文件版本为 **0.18.1.0**；游戏的 `APP_VER`（例如 01.07）与运行库版本无关。不同构建可能使用相同 EXE 文件版本，请同时核对包内 `release-manifest.json` 的 `runtime_sha256`；下表列出其前 12 位。
-
-| 引擎与构建 | 发布包 | EXE SHA256 前缀 | VC++ 运行库安装参考 |
-| --- | --- | --- | --- |
-| V2 Release / EXE 0.18.1.0 / 2026-10-19 | `lite-20261019-160236-50f7f1.zip` | `5ddee942e856` | 安装 Microsoft Visual C++ v14 Redistributable **x64**；参考基线 **14.51.36247.0 或更新版本** |
-| V2 Release / EXE 0.18.1.0 / 2026-10-19 | `portable-20261019-154150-11b0ec.zip` | `d6428b929785` | 已携带以下四个 x64 DLL，完整解压后通常无需另装 VC++ 运行库 |
-
-| 当前构建使用的 DLL | 文件版本 | lite | portable |
-| --- | --- | --- | --- |
-| `MSVCP140.dll` | `14.51.36247.0` | 由系统运行库提供 | 包内附带 |
-| `MSVCP140_ATOMIC_WAIT.dll` | `14.51.36247.0` | 由系统运行库提供 | 包内附带 |
-| `VCRUNTIME140.dll` | `14.51.36247.0` | 由系统运行库提供 | 包内附带 |
-| `VCRUNTIME140_1.dll` | `14.51.36247.0` | 由系统运行库提供 | 包内附带 |
-
-`14.51.36247.0` 是本次实际选用的运行库及建议安装基线，未将更旧版本逐一验证为最低可用版本。后续构建更换工具链或运行库时，应重新核对并更新对应记录，不能将本表自动套用到所有使用 `0.18.1.0` 版本资源的 EXE。
-
-- **lite 安装方式**：下载并安装微软官方 [Visual C++ v14 x64 运行库](https://aka.ms/vc14/vc_redist.x64.exe)，确认版本达到上表参考基线。仅安装 x86 版本不能满足本引擎需求。微软说明运行库架构需匹配程序，版本应不早于构建工具所需版本，见 [官方版本与兼容说明](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170)。
-- **portable 使用方式**：保持上述四个 DLL 与 `inFAMOUS Second Son.exe` 在同一目录；若提示缺少其中某个文件，先重新完整解压发布包。
-- **两版均需 Vulkan 图形环境**：显卡与驱动至少支持 **Vulkan 1.3**，并满足引擎要求的扩展和功能；单有 `vulkan-1.dll` 不代表设备支持完整。按显卡型号安装或更新官方驱动：[NVIDIA](https://www.nvidia.com/en-us/drivers/)、[AMD](https://www.amd.com/en/support/download/drivers.html)、[Intel](https://www.intel.com/content/www/us/en/download-center/home.html)。Loader 与实际设备驱动的区别见 [Khronos 官方说明](https://docs.vulkan.org/guide/latest/checking_for_support.html)。一般游玩无需安装 Vulkan SDK。
-- **已内置的依赖**：FFmpeg、SDL、OpenAL、FreeType 等已静态链接到此构建的 EXE，无需另外安装这些库或 FFmpeg 命令行程序。Python、Java、Visual Studio、CMake、RenderDoc、Nsight、VTune 均不是此发布包的游玩依赖。
-- **菜单运行环境（两版相同）**：系统 .NET Framework 4.8；不携带另一套运行时，不需要 Python、PowerShell 启动脚本或 .NET SDK。缺少或无法启动菜单时，引擎会报告错误，不绕过菜单和程序校验。
-- **平台条件**：Windows x64、支持 x86-64-v3 / AVX2 的 CPU，以及上述显卡功能。当前不提供统一的自动依赖安装向导；运行库安装不能弥补硬件指令集或 GPU 功能缺失。
-
-### English
-
-The table above applies to the inspected **2026-10-19 V2 Release** packages, whose EXE file version is **0.18.1.0**. This is independent of the game's `APP_VER`. Match the package and the EXE hash in `release-manifest.json`; the same file version can identify different builds.
-
-- **lite** (`5ddee942e856…`): install [Microsoft Visual C++ v14 Redistributable x64](https://aka.ms/vc14/vc_redist.x64.exe). **14.51.36247.0 or newer** is the installation baseline for this build, not a tested minimum across all older runtime versions. The x86 package alone is insufficient. See [Microsoft's architecture and version requirements](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170).
-- **portable** (`d6428b929785…`): includes the four DLLs listed above, all version **14.51.36247.0**. Keep them beside the EXE; a separate VC++ installation is normally unnecessary.
-- **The launch menu in both editions** uses the system .NET Framework 4.8. No Python, .NET SDK or startup script is required. Keep support/Ifss.Launcher.exe in the package. The menu process exits before game loading.
-- **Both editions** require a compatible x64 Windows environment, an x86-64-v3 / AVX2 CPU, and a GPU driver providing Vulkan **1.3+** and the engine's required features/extensions. Use the official NVIDIA, AMD or Intel driver links above. A Vulkan loader alone does not establish device compatibility; see [Khronos](https://docs.vulkan.org/guide/latest/checking_for_support.html). The Vulkan SDK is not required for normal play.
-- FFmpeg, SDL, OpenAL, FreeType and other static dependencies are already linked into this EXE. No separate FFmpeg installation, compiler or profiling tools are required. Recheck this mapping for future builds; this release currently has no unified automatic dependency installer.
-
-## 多地区与更新版本
-
-地区编号来自 [shadPS4 上游 Second Son 补丁](https://github.com/shadps4-emu/ps4_cheats/blob/main/PATCHES/InfamousSecondSon.xml)。
-程序使用最终挂载的 param.sfo 和 eboot.bin 识别游戏，包含自动加载的更新层；不能只凭目录名选择补丁。
-
-| 构建 | 路径 |
-| --- | --- |
-| 港版 01.07，程序 SHA256 与现有核验指纹一致 | 保留现有 1080p / Pro 4K 全套补丁 |
-| 其他已列地区的 01.07，完整程序指纹与上述相同 | 可使用同一补丁配置；仅在程序完全一致时复用地址，仍需该地区人工验收 |
-| 四个地区中其他更新版本或不同指纹 | 基础 PS4 1080p，无固定地址补丁；可启动验证，运行正确性、性能和旧存档兼容性仍待实测 |
-| First Light、其他 PS4 游戏 | 拒绝启动 |
-
-profiles/second-son-builds.json 管理地区、更新版本、程序 SHA256 与补丁 XML 的映射。
-新增经核验构建时增加独立记录和带原字节/哈希检查的 XML；不需要改动 V1/V2 引擎代码。
-未核验构建不会继承同编号其他更新版本的地址，也不从 AppData 或历史用户补丁自动加载。
-原港版已预热的 V2 缓存继续保留；其他构建的缓存按地区、更新版本及完整程序指纹隔离在 state/runtime/versions/，避免不同更新版复用不相符的预编译数据。
-补丁整组验证通过后才写入，缺少守卫或地址重叠会在写入前停止。
-
-存档根仍为 state/play/home/，游戏按地区编号保留各自目录，不自动复制地区间存档。同编号更新版本沿用游戏原有存档逻辑，不进行存档格式转换。
-
-## 从源码构建与打包
-
-两套入口使用同一个 Release 内核及 Build/Release/，避免重复维护引擎；区别是运行库是否随包提供。
-
-| 用途 | 构建 | 打包 |
+| 分支 | 用途 | 启动方式 |
 | --- | --- | --- |
-| 精简版（lite）：复用已有运行库 | build-lite.bat | release-lite.bat |
-| 网友共享版（portable）：携带可分发运行库 | build-portable.bat | release-portable.bat |
+| `main` | 与开发分支同步的源码基线，包含 V1/V2 和诊断设施；不是未经修改的上游原版 | 构建后运行 `run.bat` |
+| `feature/fps-optimization` | 性能研究、V3 候选和对照测试 | `run.bat`、`diagnostics/` 下的专项入口 |
+| `release/optimization-v2` | 保留已验收的 V1/V2，移除 V3、采样、调试面板及外部采集器联动，供发布游玩 | 直接打开 `inFAMOUS Second Son.exe`，进入启动菜单 |
 
-源码修改后必须重新构建，运行不进行实时编译。先构建，再打包。打包不会自动构建或启动游戏。源码变化、构建失败、程序校验不符、依赖缺失会阻止打包。可复用同一次最新构建分别生成两种包。
+V1/V2 已成为引擎固定逻辑，无需开关：
 
-- 编译复用现有 CMake、Ninja、Visual Studio Clang 与 project.json 中配置的第三方源码/FFmpeg，不安装或下载依赖。
-- 配置会由 cmake/DependencyCompatibility.cmake 对已配置的共用依赖应用可重复的编译兼容修正：CMake 策略、编译器参数、Windows 版本查询、宏、头文件及等价的二进制常量写法。开发分支共用该目录时也会看到这些修正；不升级或复制依赖，不改变压缩/加密算法和数据布局。已修正的内容不重复写入，未知源码会停止并要求检查。
-- cmake/DependencyDiagnostics.cmake 仅为 protobuf/OpenAL 的条件支持字段偏移、LibreSSL 单个旧 BIO 回调源文件保留明确的 ABI 扩展诊断规则，原因逐项记录在该文件。没有全局关闭警告，引擎自身及其他过时接口、类型和布局诊断仍然启用。
-- 两种构建入口在交互控制台单行刷新 `[已完成/总数] 文件.cpp`，警告和错误完整逐行保留；输出被重定向时使用普通逐行输出。工具连续 15 秒没有新输出时显示运行状态。完整原始输出保存到 Build/Release/build.log，每次构建覆盖上一份，失败会标明所在阶段。Ninja 遇错后继续检查其他独立文件，集中报告错误并最终返回失败；已完成的编译产物仍可复用，无须删除 Build/ 重来。
-- 共享打包使用已安装 LLVM 检查 EXE/DLL 的 x64 导入及递归依赖，携带所需第三方 DLL 和现有 VC Redistributable；缺失则报错。不复制 Windows 组件或显卡驱动。
-- 精简版（lite）在 release-manifest.json 中列出需由运行电脑提供的运行库；共享版记录相同清单并附 DLL。
-- 两版均生成默认指向 game/ 的干净配置，包含分辨率补丁、许可证和逐文件 SHA256 清单，不含源码树/SDK/编译器/调试器/PDB/session/存档。
-- 输出保存在 out/release/lite-时间-编号/ 或 out/release/portable-时间-编号/ 及同名 ZIP，不覆盖旧包。
-- 游戏 EXE 打开同目录 support/Ifss.Launcher.exe 的 C# 菜单，确认后辅助进程退出，再加载游戏；菜单没有逐帧工作。包不包含开发启动、分析或测试脚本。构建同时生成两份 EXE，构建记录及包清单同时校验二者。
+| 优化 | 解决的问题与保留的正确性条件 |
+| --- | --- |
+| V1：顶点／索引缓冲绑定去重 | 省去同一命令缓冲中完全相同的绑定，保留上传、屏障和状态失效处理 |
+| V1：精确回读范围依赖 | 按实际复制范围选择需要等待的 GPU 生产者；未知写入或版本变化时保守回退 |
+| V2：必需计算管线优先编译 | 优先处理当前游戏等待的计算管线，减少被后台编译阻塞；保留有界队列、公平调度和全部 dispatch |
+| V2：实际 CPU 读页预取 | 根据已发生的 CPU 读取选择预取页，减少无效回读；保留大小、有效期、版本与完成检查 |
 
-首次构建的中间文件通常占 1～3 GiB。发布脚本只在用户执行时创建包。引擎运行、构建和打包使用同一项目锁，防止同时改写程序或共用存档/配置。
+精确回读、SDR、完整粒子及着色器／管线缓存继续保留。已核验游戏构建还使用分辨率、光照列表容量、4K 曝光缓冲容量和防冻结补丁。宽松回读会影响粒子及亮度，不能用其帧数代替完整画面的性能。
 
-本次源码清理不等于已完成游戏验收；构建及 1080p/Pro 4K 的亮度、粒子、存档和性能验证仍需执行。
+V3 仍为实验：当前 C1 光照深度归约已确认命中，但尚未证明稳定的整帧收益；A1 绑定更新等候选也不能当作已验收成果。普通 `run.bat` 和 `diagnostics/full.bat` 默认关闭 V3，Release 不包含这些候选。
+
+## 测试平台与运行表现
+
+本机硬件／系统信息于 2026-10-19 核对：
+
+| 项目 | 配置 |
+| --- | --- |
+| 电脑 | ASUS ROG Strix SCAR 18 G834JYR |
+| CPU | Intel Core i9-14900HX，24 核／32 线程 |
+| GPU | NVIDIA GeForce RTX 4090 **Laptop GPU，16 GB 显存**；另有 Intel UHD 核显 |
+| 内存 | 64 GB，系统可用约 63.6 GiB |
+| 系统／显卡驱动 | Windows 11 家庭中文版，Build 26100；NVIDIA 616.56 |
+
+以下为本机 V1/V2 开发构建的**人工游玩观察**，使用港版 CUSA00309 01.07、精确回读、SDR 和完整粒子；4K 为取消棋盘格的 Pro 3840×2160。不同记录的场景、操作和预热状态有所不同：
+
+| 场景 | 观察结果 |
+| --- | --- |
+| 1080p 常规游玩 | 约 60 FPS |
+| V1 阶段的 Pro 4K 常规场景 | 多数 40 FPS 以上，少数约 38–40 FPS；此前约 30–40 FPS |
+| V2 预热后的 Pro 4K 常规场景 | 约 50 FPS 以上 |
+| V2 移动／异能释放、双方同时释放异能 | 分别约 45 FPS 以上、41 FPS 以上 |
+| 开场车祸、大量火焰／烟雾的高压力场景 | 约 30–35 FPS，仍有优化空间 |
+
+这些记录说明用户已感知 V1/V2 的收益，但不是严格同场景 A/B 测试，不能换算成统一提升百分比，也不代表全游戏最低帧率。首次编译着色器或缓存未预热时可能卡顿；Release 包的逐场景表现仍需另行验证。full 的验证层、采样和抓帧会显著拖慢运行，其 FPS 不能代表正常游玩，也不能简单扣除固定开销还原真实帧时间。
+
+## 使用 Release 包
+
+1. 完整解压 `lite-*.zip` 或 `portable-*.zip`，保留 `support/`、`profiles/` 及配置文件。
+2. 将完整游戏文件放入包内 `game/`，使其包含 `eboot.bin` 和资源；也可使用 `game/CUSA00309/` 等地区目录，或配置外部游戏路径。
+3. 双击 `inFAMOUS Second Son.exe`，在菜单中选择分辨率、显示模式、语言、确认键和 FPS 显示，然后启动。发布包无需 `run.bat`。
+
+包根目录 `launcher.json` 提供游戏路径和首次菜单默认值：
+
+```json
+{
+  "game_path": "game",
+  "mode": "pro4k",
+  "display": "borderless"
+}
+```
+
+`game_path` 支持游戏目录或 `eboot.bin`：例如 `game/CUSA00309`、`D:/Games/inFAMOUS/CUSA00309`、`D:/Games/inFAMOUS/CUSA00309/eboot.bin`。相对路径以包根目录为准；存在多个副本时必须明确指定。也可用命令行临时覆盖：
+
+```powershell
+& ".\inFAMOUS Second Son.exe" --game "D:/Games/inFAMOUS/CUSA00309" --mode 1080p
+```
+
+菜单提供 720p、900p、1080p、1440p、1800p、Pro 4K；当前按 16:9 适配。全屏／无边框窗口覆盖当前显示器，窗口模式默认最大化。`display` 对应 `fullscreen`、`borderless`、`window`。
+
+**游戏版本兼容性：** Release 接受 Second Son 的 CUSA00004、CUSA00223、CUSA00305、CUSA00309，不接受 First Light 或其他游戏。按最终挂载的游戏（含更新层）的标题、APP_VER 和完整程序 SHA256 匹配 `profiles/second-son-builds.json`。已核验港版 01.07 可使用完整分辨率补丁；其他地区只有程序指纹完全一致才复用补丁，仍待地区实测。不同指纹／更新版本回退到基础 PS4 1080p、精确回读与 SDR，关闭 Pro 和固定地址 XML 补丁，不承诺其画面、性能及存档兼容性。main／开发分支目前仍针对 CUSA00309 01.07。
+
+### 玩家运行依赖
+
+| 依赖 | lite 精简包 | portable 共享包 |
+| --- | --- | --- |
+| Windows x64、支持 x86-64-v3（含 AVX2）的 CPU | 需要 | 需要 |
+| GPU 官方驱动，支持 Vulkan 1.3+ 及引擎要求的功能／扩展 | 需要；无需 Vulkan SDK | 相同 |
+| 系统 .NET Framework 4.8，供 C# 启动菜单使用 | 需要；无需 .NET SDK | 相同 |
+| Microsoft Visual C++ v14 **x64** 运行库 | 由系统安装提供 | 包内携带所需的四个 DLL |
+| Python、Java、编译器、模拟器 GUI、性能采集工具 | **均不需要** | **均不需要** |
+
+已核对的 2026-10-19 V2 Release 构建（EXE 文件版本 0.18.1.0）使用 VC++ DLL **14.51.36247.0**；lite 建议安装该版本或更新的 [微软官方 x64 运行库](https://aka.ms/vc14/vc_redist.x64.exe)。这不是对所有旧版运行库的最低版本验证，后续包应核对 `release-manifest.json` 中的依赖版本与 `runtime_sha256`，不能仅凭 EXE 文件版本判断。
+
+portable 附带 `MSVCP140.dll`、`MSVCP140_ATOMIC_WAIT.dll`、`VCRUNTIME140.dll`、`VCRUNTIME140_1.dll`，应保持在主 EXE 旁。FFmpeg、SDL、OpenAL、FreeType 等库已静态链接到当前引擎，因此两种包都无需安装 FFmpeg 或 Python。Windows 系统组件和显卡驱动由运行电脑提供；项目没有自动依赖安装向导。
+
+## 从 Release 分支构建与打包
+
+先切换 `release/optimization-v2`，再执行对应入口：
+
+| 版本 | 构建 | 打包 | 输出 |
+| --- | --- | --- | --- |
+| 精简版 | `build-lite.bat` | `release-lite.bat` | `out/release/lite-时间-编号/` 及同名 ZIP |
+| 共享版 | `build-portable.bat` | `release-portable.bat` | `out/release/portable-时间-编号/` 及同名 ZIP |
+
+两套入口使用同一 Release 内核与 `Build/Release/`，产物为主 EXE 和 `support/Ifss.Launcher.exe`；差别在运行库打包策略，可以复用同一次最新构建分别打包。先构建再打包，打包不自动构建或启动游戏。脚本校验源码／产物指纹与依赖，保留完整 `Build/Release/build.log`，交互控制台单行刷新编译进度，警告和错误完整输出。
+
+发布包包含干净配置、兼容性配置／补丁、许可证和逐文件校验清单；不包含游戏、个人存档、源码、PDB、SDK 或诊断脚本。两版都无需目标玩家安装 Python。更新时保留自己的 `state/` 和游戏路径配置，成套更新主 EXE、`support/` 与 `profiles/`，不要用干净配置覆盖个人数据。
+
+## 开发与诊断
+
+main／开发分支先执行 `build.bat`，再执行 `run.bat`。默认编译为带优化和调试符号的 `Build/RelWithDebInfo/inFAMOUS Second Son.exe` 与 PDB。`build.bat --check` 只检查环境。**C++ 源码修改后必须重新构建，启动脚本不实时编译，也不调用其他项目的旧 EXE。**
+
+构建复用系统现有 CMake 3.30+、Ninja、Visual Studio LLVM/Clang-cl（C++23）、Windows SDK 和 Windows .NET 编译工具；第三方源码及 FFmpeg 库位置由 `project.json` 的 `dependencies_root`、`dependency_build_root` 指定，目前保留外部共享依赖。克隆仓库不等于依赖齐备，需配置已有环境；脚本不自动安装依赖。上游构建生成步骤及开发分析／测试仍可能使用 Python，这与发布包玩家无需 Python 是两回事。首次引擎构建的中间文件通常占 1–3 GiB。
+
+| 开发入口 | 用途 |
+| --- | --- |
+| `run.bat` | 启动菜单与普通游玩；`run.bat pro4k` 可预选 4K |
+| `run.bat --debug` | 等待已有原生调试器附加，使用同次构建的 PDB |
+| `check.bat`／`test.bat` | 配置／补丁预检和离线回归，不启动游戏 |
+| `diagnostics/optimization-v3-control.bat`／`optimization-v3.bat` | V2 基线与当前 C1 候选的人工对照，均保留 V1/V2 |
+| `diagnostics/full.bat`／`full-optimization-v3.bat` | 同一游戏进程、同次运行的自动采集；后者开启当前 C1 候选 |
+
+专项调试复用已安装的 WPR/WPA、VTune、Nsight Graphics 或 RenderDoc 等工具，部分采集需要管理员权限。full 按设置选择 Nsight 或 RenderDoc，不能宣称互斥工具全部同时开启；结果及缺失项保存在本轮 `diagnostics/coverage.json`、`data-quality.json` 等记录中，必须先检查完整性再分析。
+
+诊断结果位于 `state/sessions/`，无单轮容量上限，监控空间并在剩余低于 2 GiB 时请求停止。每次诊断启动前，采集区超过 20 GB 时清理旧 session，仅保留最近一轮；普通游玩不触发该清理。重要采集请自行留存。性能收益应以同一存档、视角、输入、画质和预热条件下的普通运行对照为依据。
+
+## 存档、设置与按键
+
+以下路径均相对于项目／发布包目录，不从 AppData 自动导入：
+
+| 路径 | 内容 |
+| --- | --- |
+| `state/play/home/` | 固定正式存档根；游戏存档位于 `1000/savedata/<地区编号>/` |
+| `state/play/user/config.json` | 引擎配置及同目录用户文件 |
+| `state/play/launcher.json` | 菜单选择的分辨率、显示、语言、确认键和 FPS 偏好 |
+| `state/runtime/` | 可复用缓存；Release 对不同游戏构建进行缓存隔离 |
+| `state/sessions/` | 开发运行／诊断会话，Release 正常运行不依赖它 |
+
+开发分支普通游玩使用固定存档的会话副本，正常结束并通过文件检查后回存；诊断和 V3 实验不会自动覆盖正式存档。Release 直接使用包内固定存档根。地区之间不自动转换存档。备份或搬迁时保留整个 `state/`；`game/`、`state/`、`Build/`、`out/`、`doc/` 均忽略 Git。
+
+F1 打开退出确认，Enter／手柄 ×（Xbox A）确认，Esc／○（Xbox B）返回；Alt+F4 退出。F10 切换 FPS，F12 截图。FPS 是最近最多 60 个新游戏帧的平均值，帧时间为平均帧间隔，不是纯 GPU 时间；Release 保留此基础显示，不启动采集器。退出前请在游戏内保存。
 
 ## 来源与许可
 
-保留 shadPS4 Emulator Project、AYOUB1080p 及其他源文件中的版权和 GPL-2.0-or-later 声明，见 LICENSE、LICENSES。第三方许可随包位于 third-party-licenses。项目源代码：[VeatyelpeaWQBi/inFamous_2nd_son_pc](https://github.com/VeatyelpeaWQBi/inFamous_2nd_son_pc)。
-
-兼容性策略的独立离线检查由用户执行，不启动游戏：
-
-    cmake --build Build/Release --target ifss_second_son_compatibility_test
-    .\Build\Release\ifss_second_son_compatibility_test.exe
+保留 shadPS4 Emulator Project、AYOUB1080p 及各源文件的版权声明，采用 GPL-2.0-or-later，见 [LICENSE](LICENSE) 与 [LICENSES](LICENSES/)。分发修改后的二进制时应遵守对应源码提供义务；第三方许可随包位于 `third-party-licenses/`。项目不分发游戏或个人存档。

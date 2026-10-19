@@ -10,6 +10,7 @@ struct LaunchSelection {
     std::string display;
     int language;
     bool circle_enter;
+    bool show_fps;
 };
 std::optional<LaunchSelection> ShowLaunchMenu(const std::filesystem::path& game,
                                              const std::string& mode,

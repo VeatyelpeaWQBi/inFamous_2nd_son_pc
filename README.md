@@ -2,7 +2,7 @@
 
 Windows x86-64（CPU 支持 AVX2 / x86-64-v3，显卡驱动支持 Vulkan 1.3 以上）游戏专用引擎，基于 shadPS4/AYOUB1080p 的 GPL 源码，保留已验收的 V1/V2 内核优化。仅接受 Second Son 的 CUSA00004、CUSA00223、CUSA00305、CUSA00309，支持按地区及更新版本选择运行配置；不接受 First Light 或其他 PS4 游戏。
 
-本分支移除 V3 候选、调试面板、CPU 采样线程、性能计数、GPU 计时抓帧、RenderDoc/Nsight/VTune 联动和自动测试操作。保留必要警告/错误、游戏时钟、同步/回读、着色器缓存、输入法/存档对话框、截图及退出确认。
+本分支移除 V3 候选、调试面板、CPU 采样线程、性能采样、GPU 计时抓帧、RenderDoc/Nsight/VTune 联动和自动测试操作。保留必要警告/错误、游戏时钟、同步/回读、着色器缓存、输入法/存档对话框、截图、基础 FPS／帧时间显示及退出确认。
 
 ## 运行
 
@@ -20,12 +20,13 @@ Windows x86-64（CPU 支持 AVX2 / x86-64-v3，显卡驱动支持 Vulkan 1.3 以
 - mode：720p、900p、1080p、1440p、1800p 或 pro4k。1440p 及以上使用 Pro 模式。匹配已核验程序时，自动选择互斥分辨率补丁并保留光照列表、曝光及防冻结修复。其他构建自动使用基础 PS4 1080p，关闭 Pro 模式及全部 XML 功能补丁，并输出一次明确提示；精确回读、SDR 和 V1/V2 内核逻辑继续保留。
 - display：fullscreen、window 或 borderless。
 - F1 打开退出确认，Enter／手柄 A 确认，Esc／手柄 B 取消。Alt+F4 同样可退出。
+- 启动菜单可选择显示 FPS，游戏中按 F10 临时切换；右上角显示最近最多 60 个新游戏帧的平均 FPS 和平均帧间隔。界面重复绘制不计入帧数；这不是独立 GPU 执行时间，也不会启动采集工具或记录文件。
 
 可临时覆盖：
 
     & ".\inFAMOUS Second Son.exe" --game "D:\My Games\CUSA00309" --mode 1080p
 
-常规配置位于 state/play/user/config.json，存档固定为 state/play/home/，缓存位于 state/runtime/。不从 AppData 取配置或存档；不复制、扫描历史 session 来挑选存档。根目录 launcher.json 提供游戏路径和首次菜单默认值；菜单选项（分辨率、显示模式、语言和确认键）保存在 state/play/launcher.json。命令行 --mode 覆盖本次菜单默认分辨率；旧调试配置键在本分支不起作用。
+常规配置位于 state/play/user/config.json，存档固定为 state/play/home/，缓存位于 state/runtime/。不从 AppData 取配置或存档；不复制、扫描历史 session 来挑选存档。根目录 launcher.json 提供游戏路径和首次菜单默认值；菜单选项（分辨率、显示模式、语言、确认键及 FPS 显示）保存在 state/play/launcher.json。命令行 --mode 覆盖本次菜单默认分辨率；旧调试配置键在本分支不起作用。
 
 游戏目录保持只读；XML 补丁只修改运行中的程序映像，继续核对原字节。包不附带游戏、个人存档、私有配置或录制数据。系统和显卡驱动由使用者提供。
 

@@ -9,8 +9,9 @@
 #include <imgui.h>
 #include "core/emulator_settings.h"
 #include "imgui/renderer/imgui_core.h"
+#include "imgui/renderer/imgui_impl_sdl3.h"
 namespace {
-std::atomic<bool> quit_open{false}, volume_open{false};
+std::atomic<bool> quit_open{false}, volume_open{false}, show_simple_fps{false};
 std::atomic<std::int64_t> volume_started{};
 std::mutex quit_mutex;
 std::int64_t NowMs() {
@@ -40,6 +41,32 @@ bool Core::GameUI::Layer::ShouldKeepDrawing() {
 void Core::GameUI::Layer::DrawNullGpuNotice() { ImGui::TextUnformatted("GPU output is disabled."); }
 void Core::GameUI::Layer::Draw() {
     using namespace ImGui;
+    if (show_simple_fps.load(std::memory_order_relaxed)) {
+        const auto* viewport = GetMainViewport();
+        SetNextWindowPos({viewport->WorkPos.x + viewport->WorkSize.x - 10,
+                          viewport->WorkPos.y + 10},
+                         ImGuiCond_Always, {1, 0});
+        if (Begin("Video Info", nullptr,
+                  ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs |
+                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                      ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
+            const double frame_rate = ImGui::Sdl::GetFrameRate();
+            ImVec4 color{1, 1, 1, 1};
+            if (frame_rate < 10.0) {
+                color = {1, 0, 0, 1};
+            } else if (frame_rate < 20.0) {
+                color = {1, 0.5f, 0, 1};
+            }
+            PushStyleColor(ImGuiCol_Text, color);
+            if (frame_rate > 0.0) {
+                Text("%.0f FPS (%.1f ms)", frame_rate, 1000.0 / frame_rate);
+            } else {
+                TextUnformatted("-- FPS (-- ms)");
+            }
+            PopStyleColor();
+        }
+        End();
+    }
     if (quit_open.load(std::memory_order_acquire)) {
         SetNextWindowPos(GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
         SetNextWindowFocus();
@@ -77,6 +104,15 @@ void Core::GameUI::Layer::Draw() {
     }
 }
 namespace Overlay {
+void ToggleSimpleFps() {
+    bool current = show_simple_fps.load(std::memory_order_relaxed);
+    while (!show_simple_fps.compare_exchange_weak(current, !current,
+                                                std::memory_order_relaxed)) {
+    }
+}
+void SetSimpleFps(bool enabled) {
+    show_simple_fps.store(enabled, std::memory_order_relaxed);
+}
 void ToggleQuitWindow() {
     std::scoped_lock lock{quit_mutex};
     SetQuitLocked(!quit_open.load(std::memory_order_relaxed));

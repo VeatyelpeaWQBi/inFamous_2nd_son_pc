@@ -113,6 +113,7 @@ void Initialize(const ::Vulkan::Instance& instance, const Frontend::WindowSDL& w
     io.FontGlobalScale = 0.5f;
 
     StyleColorsDark();
+    Overlay::SetSimpleFps(EmulatorSettings.IsShowFpsCounter());
 
     Sdl::Init(window.GetSDLWindow());
 

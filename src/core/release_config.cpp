@@ -289,6 +289,7 @@ void Apply() {
     if (launch_selection) {
         EmulatorSettings.SetConsoleLanguage(launch_selection->language, true);
         EmulatorSettings.SetCircleEnter(launch_selection->circle_enter, true);
+        EmulatorSettings.SetShowFpsCounter(launch_selection->show_fps, true);
     }
     EmulatorSettings.SetNeo(resolution.pro, true);
     EmulatorSettings.SetWindowWidth(resolution.width, true);

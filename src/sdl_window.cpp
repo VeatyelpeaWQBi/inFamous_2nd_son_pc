@@ -158,6 +158,10 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
         SDL_MaximizeWindow(window);
     }
     SDL_SyncWindow(window);
+    // The Release menu grants this process activation rights before it closes.
+    if (!SDL_RaiseWindow(window)) {
+        LOG_WARNING(Frontend, "Failed to activate the game window: {}", SDL_GetError());
+    }
     // The window geometry is only final once the fullscreen transition has settled; refresh
     // the cached size so the first swapchain and the splashscreen use the real drawable size.
     SDL_GetWindowSizeInPixels(window, &width, &height);
@@ -320,6 +324,9 @@ void WindowSDL::WaitEvent() {
         }
         break;
     }
+    case SDL_EVENT_TOGGLE_SIMPLE_FPS:
+        Overlay::ToggleSimpleFps();
+        break;
     case SDL_EVENT_CHANGE_CONTROLLER:
         UNREACHABLE_MSG("todo");
         break;

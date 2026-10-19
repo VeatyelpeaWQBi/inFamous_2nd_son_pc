@@ -4,6 +4,7 @@
 // Based on imgui_impl_sdl3.cpp from Dear ImGui repository
 
 #include "imgui_impl_sdl3.h"
+#include "common/frame_rate.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
 #include "input/controller.h"
@@ -49,7 +50,7 @@ struct SdlData {
     GamepadMode gamepad_mode{};
     bool want_update_gamepads_list{};
 
-    // Framerate counting (based on ImGui impl)
+    Common::FrameRateCounter framerate;
 };
 
 // Backend data stored in io.BackendPlatformUserData to allow support for multiple Dear ImGui
@@ -819,6 +820,11 @@ static void UpdateGamepads() {
                         +thumb_dead_zone, +32767);
 }
 
+double GetFrameRate() {
+    const auto* bd = GetBackendData();
+    return bd ? bd->framerate.FramesPerSecond() : 0.0;
+}
+
 void NewFrame(bool is_reusing_frame) {
     SdlData* bd = GetBackendData();
     IM_ASSERT(bd != nullptr && "No platform backend to shutdown, or already shutdown?");
@@ -835,6 +841,7 @@ void NewFrame(bool is_reusing_frame) {
     io.DeltaTime = bd->time > 0 ? (float)((double)(current_time - bd->time) / (double)frequency)
                                 : 1.0f / 60.0f;
     bd->time = current_time;
+    bd->framerate.NewFrame(current_time, frequency, is_reusing_frame);
 
     if (bd->mouse_pending_leave_frame && bd->mouse_pending_leave_frame >= ImGui::GetFrameCount() &&
         bd->mouse_buttons_down == 0) {

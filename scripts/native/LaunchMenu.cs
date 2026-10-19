@@ -22,7 +22,7 @@ namespace Ifss.Native {
             var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, DropDownHeight = 300 };
             combo.Items.AddRange(values); combo.SelectedIndex = selected; return combo;
         }
-        public static Dictionary<string,object> Show(ProjectPaths paths, string mode, string gameDirectory = null) {
+        public static Dictionary<string,object> Show(ProjectPaths paths, string mode, string gameDirectory = null, Action beforeLaunch = null) {
             return GameIdentity.Sta(delegate {
                 var settings = LauncherSettings.Load(paths,mode,gameDirectory); var languages = LauncherSettings.Available(paths,gameDirectory);
                 using (var form = GameIdentity.Form(paths,"启动设置",580,640)) {
@@ -38,16 +38,11 @@ namespace Ifss.Native {
                     var button = Choices(new object[] {"○ 确认 / Xbox B","× 确认 / Xbox A"},(bool)settings["is_circle_enter"] ? 0 : 1); Add(table,"确认按键",button);
                     string displayKey = (string)settings["display_mode"];
                     var display = Choices(new object[] {"全屏","窗口","无边框窗口"},displayKey == "fullscreen" ? 0 : displayKey == "windowed" ? 1 : 2); Add(table,"显示模式",display);
-                    var fps = new CheckBox { Text = "在游戏左上角显示帧数（FPS）", Checked = (bool)settings["show_fps"], AutoSize = true };
-#if IFSS_RELEASE
-                    // Release removes collectors and the FPS counter; do not offer a no-op control.
-                    fps.Checked = false;
-#else
+                    var fps = new CheckBox { Text = "显示帧数（FPS）和帧时间", Checked = (bool)settings["show_fps"], AutoSize = true };
                     Add(table,"帧数显示",fps);
-#endif
                     Text(table,"鼠标体感与触摸板\nF6 开关鼠标体感；体感模式按住左键喷漆，Home 回正。\nDelete 开关触摸板：左键触摸／拖动，右键按压；双键模拟双指。\nEsc 或切换窗口释放鼠标体感／触摸板。",false);
 #if IFSS_RELEASE
-                    Text(table,"游戏期间\nF1 打开退出确认：Enter / 手柄 A 退出；Esc / 手柄 B 继续。\nF12 截图，Alt+F4 退出。",false);
+                    Text(table,"游戏期间\nF1 打开退出确认：Enter / 手柄 A 退出；Esc / 手柄 B 继续。\nF10 开关帧数显示　F12 截图，Alt+F4 退出。",false);
 #else
                     Text(table,"游戏期间\nF1 打开退出菜单：Enter / × / Xbox A 退出；Esc / ○ / Xbox B 继续。\nF10 开关帧数显示　F12 截图　F3 打开设置。\n也可双击 quit.bat 打开外部退出窗口。",false);
 #endif
@@ -64,6 +59,7 @@ namespace Ifss.Native {
                                 {"console_language",((Language)language.SelectedItem).Code},{"is_circle_enter",button.SelectedIndex == 0},
                                 {"show_fps",fps.Checked},{"display_mode",display.SelectedIndex == 0 ? "fullscreen" : display.SelectedIndex == 1 ? "windowed" : "borderless"}
                             },gameDirectory);
+                            if(beforeLaunch != null) beforeLaunch();
                             form.DialogResult = DialogResult.OK; form.Close();
                         } catch (Exception error) { errorLabel.Text = "无法保存设置：" + error.Message; }
                     };

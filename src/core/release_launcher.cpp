@@ -76,7 +76,8 @@ std::optional<LaunchSelection> ShowLaunchMenu(const std::filesystem::path& game,
                               override_mode
                                   ? std::wstring(override_mode->begin(), override_mode->end())
                                   : std::wstring{L"auto"},
-                              std::wstring(relative.begin(), relative.end())}) {
+                              std::wstring(relative.begin(), relative.end()),
+                              std::to_wstring(GetCurrentProcessId())}) {
         command += L" " + Quote(value);
     }
     STARTUPINFOW startup{};
@@ -107,13 +108,15 @@ std::optional<LaunchSelection> ShowLaunchMenu(const std::filesystem::path& game,
     std::ifstream input(response);
     const auto settings = nlohmann::json::parse(input);
     if (settings.at("schema") != 3 || !settings.at("console_language").is_number_integer() ||
-        !settings.at("is_circle_enter").is_boolean()) {
+        !settings.at("is_circle_enter").is_boolean() ||
+        !settings.at("show_fps").is_boolean()) {
         throw std::runtime_error("Invalid launch menu response.");
     }
     LaunchSelection result{settings.at("resolution").get<std::string>(),
                            settings.at("display_mode").get<std::string>(),
                            settings.at("console_language").get<int>(),
-                           settings.at("is_circle_enter").get<bool>()};
+                           settings.at("is_circle_enter").get<bool>(),
+                           settings.at("show_fps").get<bool>()};
     if ((result.display != "windowed" && result.display != "fullscreen" && result.display != "borderless") ||
         (result.language != 1 && result.language != 9 && result.language != 10)) {
         throw std::runtime_error("Unsupported launch menu settings.");

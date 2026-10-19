@@ -72,7 +72,7 @@ if(MSVC)
 endif()
 
 # Not part of the engine or either release package.
-foreach(policy buffer_bind_cache readback_dependencies optimization_v2 second_son_compatibility)
+foreach(policy buffer_bind_cache readback_dependencies optimization_v2 second_son_compatibility frame_rate)
     add_executable(ifss_${policy}_test EXCLUDE_FROM_ALL tests/test_${policy}.cpp)
     target_compile_features(ifss_${policy}_test PRIVATE cxx_std_23)
     target_include_directories(ifss_${policy}_test PRIVATE src)

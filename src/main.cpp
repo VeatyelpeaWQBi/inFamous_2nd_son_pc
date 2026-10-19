@@ -83,8 +83,9 @@ int wmain(int argc, wchar_t* argv[]) {
         Common::Log::Setup("engine.log");
         KeyManager::GetInstance()->LoadFromFile();
         EmulatorSettings.Load();
-        UserSettings.Load();
+        // Pin project paths before user initialization can create directories.
         Core::Release::Apply();
+        UserSettings.Load();
         auto* emulator = Common::Singleton<Core::Emulator>::Instance();
         emulator->executableName = executable.c_str();
         emulator->Run(eboot, guest_args, override_root, {}, {}, append_log);

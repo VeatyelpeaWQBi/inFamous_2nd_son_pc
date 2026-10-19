@@ -166,6 +166,12 @@ int main(int argc, char* argv[]) {
 
     // Load configurations
     EmulatorSettings.Load();
+    if (benchmarkDirectory) {
+        // User initialization must use the same isolated home as game execution.
+        const auto home = std::filesystem::canonical(*benchmarkDirectory) / "home";
+        EmulatorSettings.SetHomeDir(home);
+        Common::FS::SetUserPath(Common::FS::PathType::HomeDir, home);
+    }
     UserSettings.Load();
 
     if (bigPicture) {

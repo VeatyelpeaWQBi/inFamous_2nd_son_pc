@@ -8,7 +8,7 @@ $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $session=Read-ProjectSession $projectRoot $Session
 $sessionRoot=$session.Path
 $launch=$session.Launch
-$arguments=@((Get-RelativePath $projectRoot (Join-Path $sessionRoot 'frames.csv')),
+$arguments=@('-B',(Join-Path $PSScriptRoot 'metrics.py'),(Get-RelativePath $projectRoot (Join-Path $sessionRoot 'frames.csv')),
     '--start',$StartSeconds.ToString([Globalization.CultureInfo]::InvariantCulture),
     '--end',$EndSeconds.ToString([Globalization.CultureInfo]::InvariantCulture),'--mode',$launch.mode,
     '--output',(Get-RelativePath $projectRoot (Join-Path $sessionRoot 'measurement.json')))
@@ -16,5 +16,6 @@ if($SceneConfirmed){$arguments+='--scene-confirmed'}
 if($BrightnessConfirmed){$arguments+='--brightness-confirmed'}
 if($ParticlesConfirmed){$arguments+='--particles-confirmed'}
 if($ResolutionConfirmed){$arguments+='--resolution-confirmed'}
-Invoke-ProjectNativeTool 'metrics' $arguments
+$python=Resolve-InstalledPython
+& $python @arguments
 exit $LASTEXITCODE

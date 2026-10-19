@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <tuple>
+
 #include <array>
 #include <map>
 #include <string>

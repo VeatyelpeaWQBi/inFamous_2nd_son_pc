@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <cstring>
+
 #include <cstddef>
 #include <optional>
 #include <span>

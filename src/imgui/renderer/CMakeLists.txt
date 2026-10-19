@@ -30,12 +30,14 @@ FOREACH (FONT_FILE ${FONT_LIST})
     add_custom_command(
         OUTPUT "${OUTPUT}.g.cpp"
         COMMAND ${CMAKE_COMMAND} -E make_directory "generated_fonts/imgui_fonts"
-        COMMAND $<TARGET_FILE:Dear_ImGui_FontEmbed> -nostatic "${CMAKE_CURRENT_SOURCE_DIR}/fonts/${FONT_FILE}" ${fontname_cpp} > "${OUTPUT}.g.cpp"
+        COMMAND $<TARGET_FILE:Dear_ImGui_FontEmbed> -u32 -nostatic "${CMAKE_CURRENT_SOURCE_DIR}/fonts/${FONT_FILE}" ${fontname_cpp} > "${OUTPUT}.g.cpp"
         DEPENDS Dear_ImGui_FontEmbed "fonts/${FONT_FILE}"
         USES_TERMINAL
     )
     list(APPEND OutputList "${OUTPUT}.g.cpp")
 ENDFOREACH ()
 
+# Windows x86-64 is little-endian. Word arrays preserve compressed bytes
+# with 1/4 as many initializer expressions, avoiding huge Clang ASTs.
 add_library(ImGui_Resources STATIC ${OutputList})
 set(IMGUI_RESOURCES_INCLUDE ${CMAKE_CURRENT_BINARY_DIR}/generated_fonts PARENT_SCOPE)

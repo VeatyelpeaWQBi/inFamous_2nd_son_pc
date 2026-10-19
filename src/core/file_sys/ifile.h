@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <utility>
+#include <vector>
+
 #include <filesystem>
 #include <functional>
 #include <memory>

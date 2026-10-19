@@ -3,6 +3,11 @@
 
 #pragma once
 
+#include <functional>
+#include <tuple>
+
+#include <cstring>
+
 #include <array>
 #include <memory>
 #include <boost/container/static_vector.hpp>

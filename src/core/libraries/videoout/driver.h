@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <algorithm>
+#include <array>
+#include <vector>
+
 #include "common/debug.h"
 #include "common/polyfill_thread.h"
 #include "core/libraries/videoout/video_out.h"

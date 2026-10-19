@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <array>
+#include <memory>
+
 namespace Libraries::AudioOut {
 
 struct PortOut;

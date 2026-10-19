@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string>
+
 #include <cstdio>
 #include <cstring>
 #include <filesystem>

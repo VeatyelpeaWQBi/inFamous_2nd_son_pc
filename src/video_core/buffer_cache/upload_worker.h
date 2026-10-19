@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <stop_token>
+
 #include <atomic>
 #include <condition_variable>
 #include <mutex>

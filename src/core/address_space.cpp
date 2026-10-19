@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <new>
+
+#include <bit>
+
 #include "core/address_space.h"
 #include "common/alignment.h"
 #include "common/arch.h"

@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <stop_token>
+#include <tuple>
+
 #include <atomic>
 #include <boost/container/small_vector.hpp>
 #include <condition_variable>

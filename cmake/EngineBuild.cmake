@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-# Version 3.24 needed for FetchContent OVERRIDE_FIND_PACKAGE
+# Keep the imported engine policy baseline, with modern MSVC debug information.
 cmake_minimum_required(VERSION 3.24)
+cmake_policy(SET CMP0141 NEW)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -1151,6 +1152,8 @@ set(VIDEO_CORE src/video_core/amdgpu/cb_db_extent.h
                src/video_core/texture_cache/tile_manager.cpp
                src/video_core/texture_cache/tile_manager.h
                src/video_core/texture_cache/types.h
+               src/video_core/screenshot.cpp
+               src/video_core/screenshot.h
                src/video_core/cache_storage.cpp
                src/video_core/cache_storage.h
                src/video_core/runtime_memo.h
@@ -1347,7 +1350,7 @@ if (WIN32)
 
     if (MSVC)
         # MSVC likes putting opinions on what people can use, disable:
-        add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_DEPRECATE _SCL_SECURE_NO_WARNINGS)
+        target_compile_definitions(shadps4 PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_DEPRECATE _SCL_SECURE_NO_WARNINGS)
     endif()
 
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)

@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <exception>
+#include <new>
+#include <stdexcept>
+
 #include "core/libraries/audio/audioin.h"
 #include "audioin_backend.h"
 #include "audioin_error.h"

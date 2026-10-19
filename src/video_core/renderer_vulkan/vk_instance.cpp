@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <tuple>
+
 #include <boost/container/static_vector.hpp>
 #include <cstdlib>
 #include <fmt/format.h>

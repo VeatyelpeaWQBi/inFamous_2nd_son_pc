@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <cstring>
+
 #include "common/enum.h"
 #include "common/types.h"
 #include "core/libraries/ajm/ajm.h"

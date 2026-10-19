@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <limits>
+
 #include <utility>
 
 #ifdef _MSC_VER

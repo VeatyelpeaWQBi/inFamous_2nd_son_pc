@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "common/va_ctx.h"
+
 #include <mutex>
 #include "common/types.h"
 #include "core/libraries/kernel/threads.h"

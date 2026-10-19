@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <vector>
+
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/compile_readiness.h"

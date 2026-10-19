@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <cstring>
+
 #include "common/assert.h"
 #include "shader_recompiler/ir/reg.h"
 #include "shader_recompiler/ir/value.h"

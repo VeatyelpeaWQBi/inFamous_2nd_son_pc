@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <memory>
+#include <string>
+
 #include <atomic>
 #include <condition_variable>
 #include <forward_list>

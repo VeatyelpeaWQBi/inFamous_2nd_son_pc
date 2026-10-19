@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "common/assert.h"
 #include "shader_recompiler/frontend/opcodes.h"
 

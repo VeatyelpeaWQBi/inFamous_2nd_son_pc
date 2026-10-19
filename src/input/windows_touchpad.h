@@ -4,6 +4,9 @@
 // Native foreground-only Windows precision touchpad HID input (Digitizers/Touchpad 0x0D/0x05).
 // Report fields are located through Windows' HID parser, not a vendor byte layout.
 #pragma once
+
+#include <utility>
+
 #include <windows.h>
 #include <hidsdi.h>
 #include <hidpi.h>

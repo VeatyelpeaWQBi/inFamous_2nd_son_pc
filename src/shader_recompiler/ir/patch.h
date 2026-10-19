@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string>
+
 #include <fmt/format.h>
 #include "common/types.h"
 

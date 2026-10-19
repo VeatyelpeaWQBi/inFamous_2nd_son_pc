@@ -8,7 +8,7 @@
 namespace {
 
 struct CompressedFontBlob {
-    const unsigned char* data;
+    const void* data;
     int size;
 };
 

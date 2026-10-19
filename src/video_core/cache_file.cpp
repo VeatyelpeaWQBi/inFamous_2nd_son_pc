@@ -1,5 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4-AYOUB1080p contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <string>
+#include <system_error>
+
 #include "video_core/cache_file.h"
 
 #include <algorithm>

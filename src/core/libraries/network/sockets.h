@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <optional>
+
 #ifdef _WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <Ws2tcpip.h>

@@ -1,4 +1,7 @@
 ﻿# SPDX-License-Identifier: GPL-2.0-or-later
+# BAT files use Windows PowerShell. Load its own built-in module explicitly:
+# inherited PowerShell 7 module paths can otherwise shadow Get-FileHash.
+Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1') -ErrorAction Stop
 Set-StrictMode -Version Latest
 function Resolve-ProjectChild([string]$Root,[string]$Relative) {
     $base=[IO.Path]::GetFullPath($Root).TrimEnd('\')+'\'

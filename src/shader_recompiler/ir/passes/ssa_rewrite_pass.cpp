@@ -13,6 +13,8 @@
 //      https://link.springer.com/chapter/10.1007/978-3-642-37051-9_6
 //
 
+#include <unordered_map>
+
 #include <vector>
 #include "shader_recompiler/ir/basic_block.h"
 #include "shader_recompiler/ir/opcodes.h"

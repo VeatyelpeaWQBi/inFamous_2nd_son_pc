@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <optional>
+#include <string>
+
 #include "common/types.h"
 #include "core/libraries/network/net.h"
 

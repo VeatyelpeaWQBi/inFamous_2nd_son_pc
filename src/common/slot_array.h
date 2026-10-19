@@ -3,6 +3,9 @@
 
 // #include <boost/icl/interval_set.hpp>
 
+#include <array>
+#include <utility>
+
 #include <limits>
 #include <optional>
 #include <shared_mutex>

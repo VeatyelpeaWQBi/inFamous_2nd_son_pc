@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <functional>
+
 #include <span>
 
 #include "video_core/renderer_vulkan/vk_common.h"

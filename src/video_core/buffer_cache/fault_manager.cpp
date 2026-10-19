@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <bit>
+#include <limits>
+
 #include "video_core/buffer_cache/fault_manager.h"
 #include "common/div_ceil.h"
 #include "video_core/buffer_cache/buffer_cache.h"

@@ -3,6 +3,8 @@
 
 // Based on imgui_impl_vulkan.cpp from Dear ImGui repository
 
+#include <vector>
+
 #include <cstdio>
 #include <mutex>
 

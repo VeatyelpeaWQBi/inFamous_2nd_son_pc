@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <functional>
+
+#include <limits>
+
 #include <numeric>
 #include <utility>
 #include <vector>

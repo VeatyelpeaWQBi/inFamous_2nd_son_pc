@@ -5,6 +5,8 @@
 
 #include <core/libraries/rtc/rtc.h>
 #include "common/types.h"
+#include "core/libraries/np/np_types.h"
+#include "core/libraries/system/userservice.h"
 
 namespace Core::Loader {
 class SymbolsResolver;

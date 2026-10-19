@@ -3,6 +3,11 @@
 
 #pragma once
 
+#include <tuple>
+#include <utility>
+
+#include <bit>
+
 #include "common/assert.h"
 #include "common/types.h"
 

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <utility>
+
 #include "core/file_sys/devices/logger.h"
 #include "common/logging/log.h"
 #include "core/libraries/kernel/file_system.h"

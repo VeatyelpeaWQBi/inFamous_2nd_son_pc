@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <stop_token>
+
 #include <array>
 #include <atomic>
 #include <cstddef>

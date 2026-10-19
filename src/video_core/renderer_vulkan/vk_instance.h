@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <string>
+#include <vector>
+
 #include <span>
 #include <unordered_map>
 

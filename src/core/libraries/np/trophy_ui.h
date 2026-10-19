@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string_view>
+
 #include <string>
 #include <SDL3/SDL_audio.h>
 

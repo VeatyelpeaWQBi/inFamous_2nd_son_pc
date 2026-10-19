@@ -32,6 +32,7 @@ u32 g_peer_netinfo_next_id = 1;
 u32 g_peak_connection_count = 0;
 u32 g_last_assigned_context_id = 0;
 u32 g_connection_id_seed = 0;
+bool g_initialized = false;
 Libraries::Kernel::PthreadMutexT g_mutex_storage{};
 
 void InitSignalingMutex() { NpCommon::sceNpLwMutexInit(&g_mutex_storage, "SceNpSignalingLock", 1); }

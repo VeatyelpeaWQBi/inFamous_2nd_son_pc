@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <cstring>
+
 #include "common/types.h"
 #include "shader_recompiler/ir/type.h"
 #include "video_core/amdgpu/resource.h"

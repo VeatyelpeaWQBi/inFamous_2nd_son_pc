@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <compare>
+
 #include <set>
 #include <signal.h>
 #include "common/singleton.h"

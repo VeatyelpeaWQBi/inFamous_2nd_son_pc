@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <deque>
+#include <unordered_map>
+
 #include <mutex>
 #include <optional>
 #include <string>

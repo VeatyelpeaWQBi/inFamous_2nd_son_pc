@@ -1310,7 +1310,7 @@ bool Liverpool::SkipOcclusionWait(const PM4CmdWaitRegMem& wait) {
         return false;
     }
     std::optional<u32> known;
-    rasterizer->IsCountedOcclusionResult(address, known);
+    (void)rasterizer->IsCountedOcclusionResult(address, known);
     const bool skip = known && wait.TestValue(*known);
 
     return skip;

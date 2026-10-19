@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string>
+
 #include <mutex>
 #include "common/types.h"
 

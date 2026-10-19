@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <array>
+
 #include <vector>
 #include "common/object_pool.h"
 #include "common/spin_lock.h"

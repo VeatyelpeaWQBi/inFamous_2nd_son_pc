@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string>
+
 #include <filesystem>
 #include <optional>
 #include <vector>

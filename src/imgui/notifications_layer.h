@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string>
+
 #include "imgui/imgui_layer.h"
 #include "imgui/imgui_texture.h"
 

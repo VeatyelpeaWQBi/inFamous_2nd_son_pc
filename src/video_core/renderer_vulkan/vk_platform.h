@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <utility>
+
 #include <fmt/format.h>
 
 #include "common/assert.h"

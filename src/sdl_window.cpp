@@ -27,6 +27,7 @@
 #include "input/input_handler.h"
 #include "input/input_mouse.h"
 #include "sdl_window.h"
+#include "video_core/screenshot.h"
 #ifdef _WIN32
 #include "input/windows_touchpad.h"
 #include <SDL3/SDL_system.h>

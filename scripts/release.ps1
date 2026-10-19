@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 [CmdletBinding()]
-param([ValidateSet('local','portable')][string]$Variant='local')
+param([ValidateSet('lite','portable')][string]$Variant='lite')
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
 . (Join-Path $PSScriptRoot 'build_tools.ps1')
@@ -15,7 +15,7 @@ try{
     $lock=[IO.File]::Open($lockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
     $receipt=Read-JsonUtf8 $receiptPath
     if($receipt.configuration -ne 'Release' -or $receipt.source_sha256 -ne (Get-SourceFingerprint $root)){
-        throw 'The Release build does not match current sources. Run build.bat first.'
+        throw 'The Release build does not match current sources. Run build-lite.bat first.'
     }
     $exe=Resolve-ProjectChild $root $receipt.runtime
     if($receipt.runtime_sha256 -ne (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()){

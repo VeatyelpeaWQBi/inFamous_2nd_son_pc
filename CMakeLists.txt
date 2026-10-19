@@ -23,6 +23,7 @@ get_filename_component(IFSS_DEPENDENCY_BUILD_ROOT "${IFSS_DEPENDENCY_BUILD_ROOT}
 if(NOT EXISTS "${IFSS_EXTERNALS_ROOT}/CMakeLists.txt")
     message(FATAL_ERROR "Existing dependencies are missing. Downloads are not permitted.")
 endif()
+include(cmake/DependencyCompatibility.cmake)
 set(FETCHCONTENT_FULLY_DISCONNECTED ON CACHE BOOL "" FORCE)
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "" FORCE)
 set(FETCHCONTENT_SOURCE_DIR_FMT "${IFSS_EXTERNALS_ROOT}/fmt" CACHE PATH "" FORCE)
@@ -52,6 +53,7 @@ endforeach()
 target_link_libraries(ifss_ffmpeg INTERFACE psapi strmiids uuid oleaut32 shlwapi ws2_32 ole32 user32 bcrypt)
 add_compile_definitions(IFSS_PROJECT_LOCAL_USER_DATA=1)
 include(cmake/EngineBuild.cmake)
+include(cmake/DependencyDiagnostics.cmake)
 target_sources(shadps4 PRIVATE src/core/runtime_policy.h src/core/release_config.cpp
     src/core/release_config.h src/core/second_son_compatibility.h src/common/display_state.h)
 set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "inFAMOUS Second Son"

@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <span>
+
+#include <bit>
+
 #include "common/assert.h"
 #include "common/bit_field.h"
 #include "common/types.h"

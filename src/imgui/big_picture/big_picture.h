@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string>
+
 #include <filesystem>
 #include <vector>
 #include <SDL3/SDL.h>

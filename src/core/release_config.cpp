@@ -208,8 +208,9 @@ std::filesystem::path Prepare(const std::optional<std::filesystem::path>& game,
     }
     mode = "1080p"; // A verified program must be selected before enabling Pro 4K.
     MemoryPatcher::patch_file.clear();
-    auto path =
-        game.value_or(std::filesystem::u8path(config.value("game_path", std::string("game"))));
+    const auto configured_game_path = config.value("game_path", std::string("game"));
+    auto path = game.value_or(std::filesystem::path{
+        std::u8string(configured_game_path.begin(), configured_game_path.end())});
     if (path.is_relative()) {
         path = ProjectRoot() / path;
     }

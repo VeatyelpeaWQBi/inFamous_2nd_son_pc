@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <system_error>
+
+#include <algorithm>
+
 #include <filesystem>
 #include <iostream>
 #include <SDL3/SDL_messagebox.h>

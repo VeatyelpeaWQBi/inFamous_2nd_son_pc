@@ -277,9 +277,6 @@ u64 BufferCache::ReadbackQueue::Submit(std::span<const Job> jobs, std::span<cons
         .pSignalSemaphores = &signal_semaphore,
     };
     const auto result = instance.GetReadbackQueue().submit(submit_info);
-    if (result == vk::Result::eErrorDeviceLost) {
-        Vulkan::;
-    }
     ASSERT_MSG(result == vk::Result::eSuccess, "Readback submit failed: {}", vk::to_string(result));
     return signal_tick;
 }
@@ -1837,9 +1834,6 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
 
     info.AddWait(signal_sema, signal_tick);
     auto submit_result = instance.GetGraphicsQueue().bindSparse(sparse_info);
-    if (submit_result == vk::Result::eErrorDeviceLost) {
-        Vulkan::;
-    }
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");
 
     pending_binds.clear();

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 [CmdletBinding()]
-param([ValidateSet('local','portable')][string]$Variant='local')
+param([ValidateSet('lite','portable')][string]$Variant='lite')
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
 . (Join-Path $PSScriptRoot 'build_tools.ps1')
@@ -53,7 +53,9 @@ try{
     Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND $arguments $root $environment -Log $log -Activity $phase
     $phase='Compile'
     Write-ProjectBuildOutput '[Compile] Building the engine (8 parallel jobs)...' $log
-    Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND @('--build',$build,'--target','shadps4','--parallel','8') $root $environment -Log $log -Activity $phase
+    # Ninja should finish other independent translation units after a failure,
+    # so one build reports all reachable compiler errors instead of one batch.
+    Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND @('--build',$build,'--target','shadps4','--parallel','8','--','-k','0') $root $environment -Log $log -Activity $phase -SingleLineProgress
     $phase='Build verification'
     Write-ProjectBuildOutput '[Verify] Checking source and executable fingerprints...' $log
     if((Get-SourceFingerprint $root) -ne $before){throw 'Source changed during compilation. Build again.'}
@@ -74,7 +76,7 @@ try{
     }
     Write-JsonUtf8 $receipt $record
     Write-ProjectBuildOutput 'Release build complete: Build/Release/inFAMOUS Second Son.exe' $log
-    Write-ProjectBuildOutput ('Package next: '+$(if($Variant -eq 'portable'){'release-portable.bat'}else{'release.bat'})) $log
+    Write-ProjectBuildOutput ('Package next: '+$(if($Variant -eq 'portable'){'release-portable.bat'}else{'release-lite.bat'})) $log
 }catch{
     $message='Build failed ['+$phase+']: '+$_.Exception.Message
     Write-Host $message -ForegroundColor Red

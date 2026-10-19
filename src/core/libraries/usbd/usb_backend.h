@@ -3,6 +3,11 @@
 
 #pragma once
 
+#include <memory>
+#include <string>
+
+#include <cstring>
+
 #include <list>
 
 #include <libusb.h>

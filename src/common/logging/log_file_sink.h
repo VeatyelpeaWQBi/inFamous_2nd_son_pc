@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <mutex>
+
 #include <memory>
 #include <string_view>
 #include <spdlog/common.h>

@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string>
+
 #include <Zydis/Zydis.h>
 #include "common/singleton.h"
 #include "common/types.h"

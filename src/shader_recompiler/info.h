@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <cstring>
+
 #include <span>
 #include <vector>
 #include <boost/container/static_vector.hpp>

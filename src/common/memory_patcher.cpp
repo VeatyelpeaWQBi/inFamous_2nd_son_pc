@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <system_error>
+
 #include "memory_patcher.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
@@ -207,7 +209,7 @@ void OnGameLoaded() {
     if (patch_file.empty()) {
         throw std::runtime_error("A Second Son patch selection must be prepared before loading.");
     }
-    ApplyPatchesFromXML(std::filesystem::u8path(patch_file));
+    ApplyPatchesFromXML(std::filesystem::path{std::u8string(patch_file.begin(), patch_file.end())});
 }
 
 static bool WithinImage(uintptr_t address, size_t size) {

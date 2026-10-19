@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4-AYOUB1080p contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
+
+#include <stop_token>
+#include <utility>
+
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>

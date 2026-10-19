@@ -71,10 +71,23 @@ function Write-ProjectBuildOutput([string]$Message,[IO.TextWriter]$Log=$null) {
     Write-Host $Message
     if($Log){$Log.WriteLine($Message)}
 }
+function Format-ProjectBuildProgress([string]$Message,[int]$Width) {
+    $Width=[Math]::Max(1,$Width)
+    $status=[regex]::Match($Message,'^(\[\d+/\d+\])\s+Building\s+\S+\s+object\s+(.+?)\.obj\s*$')
+    if($status.Success){
+        $path=$status.Groups[2].Value -replace '^CMakeFiles[\\/]shadps4\.dir[\\/]',''
+        $Message=$status.Groups[1].Value+' '+$path.Replace('\','/')
+    }
+    if($Message.Length -le $Width){return $Message}
+    $prefix=[regex]::Match($Message,'^\[\d+/\d+\]\s+').Value
+    $remaining=$Width-$prefix.Length-3
+    if($remaining -gt 0){return $prefix+'...'+$Message.Substring($Message.Length-$remaining)}
+    return $Message.Substring(0,$Width)
+}
 function Invoke-ProjectBuildProcess(
     [string]$Executable,[string[]]$ToolArguments,[string]$Directory,
     [hashtable]$Environment=@{},[switch]$Capture,
-    [IO.TextWriter]$Log=$null,[string]$Activity='Build tool'
+    [IO.TextWriter]$Log=$null,[string]$Activity='Build tool',[switch]$SingleLineProgress
 ) {
     $start=[Diagnostics.ProcessStartInfo]::new()
     $start.FileName=$Executable;$start.WorkingDirectory=$Directory;$start.UseShellExecute=$false;$start.CreateNoWindow=$true
@@ -83,6 +96,11 @@ function Invoke-ProjectBuildProcess(
     $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
     $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false)
     $start.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
+    $progressWidth=0;$interactiveProgress=$false
+    if($SingleLineProgress -and -not $Capture){
+        try{$interactiveProgress=$Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected -and [Console]::BufferWidth -gt 1}
+        catch{$interactiveProgress=$false}
+    }
     $process=[Diagnostics.Process]::Start($start)
     try{
         if($Capture){
@@ -109,11 +127,24 @@ function Invoke-ProjectBuildProcess(
                     if($null -eq $pending[$i] -or -not $pending[$i].IsCompleted){continue}
                     $line=$pending[$i].GetAwaiter().GetResult()
                     if($null -eq $line){$pending[$i]=$null;continue}
-                    Write-ProjectBuildOutput $line $Log
+                    if($interactiveProgress -and $i -eq 0 -and $line -match '^\[\d+/\d+\]\s+'){
+                        # Keep the original Ninja line in the log; redraw only the
+                        # console status. Diagnostics always get permanent lines.
+                        if($Log){$Log.WriteLine($line)}
+                        $width=[Math]::Max(1,[Console]::BufferWidth-1)
+                        $display=Format-ProjectBuildProgress $line $width
+                        $clearWidth=[Math]::Min($width,[Math]::Max($progressWidth,$display.Length))
+                        [Console]::Write(([string][char]13)+$display.PadRight($clearWidth))
+                        $progressWidth=$display.Length
+                    }else{
+                        if($progressWidth){[Console]::WriteLine();$progressWidth=0}
+                        Write-ProjectBuildOutput $line $Log
+                    }
                     $quiet.Restart();$received=$true
                     $pending[$i]=$readers[$i].ReadLineAsync()
                 }
                 if($quiet.Elapsed.TotalSeconds -ge 15){
+                    if($progressWidth){[Console]::WriteLine();$progressWidth=0}
                     Write-ProjectBuildOutput ('['+$Activity+'] Still running; elapsed '+[int]$elapsed.Elapsed.TotalSeconds+' s, waiting for tool output.') $Log
                     $quiet.Restart()
                 }
@@ -122,9 +153,12 @@ function Invoke-ProjectBuildProcess(
             $process.WaitForExit()
         }
         if($process.ExitCode -ne 0){
-            throw ($Activity+': '+[IO.Path]::GetFileName($Executable)+' failed, exit code '+$process.ExitCode+'. See the tool output above.')
+            throw ([IO.Path]::GetFileName($Executable)+' failed, exit code '+$process.ExitCode+'. See the tool output above.')
         }
-    }finally{$process.Dispose()}
+    }finally{
+        if($progressWidth){[Console]::WriteLine()}
+        $process.Dispose()
+    }
 }
 function Get-ProjectBuildEnvironment([string]$Compiler,[string]$Root) {
     $directory=Split-Path -Parent $Compiler;$vcvars=$null
@@ -136,7 +170,7 @@ function Get-ProjectBuildEnvironment([string]$Compiler,[string]$Root) {
     }
     if(-not $vcvars){
         if($env:INCLUDE -and $env:LIB){return @{}}
-        throw 'The installed x64 Visual Studio environment was not found. Run build.bat from its existing x64 developer command prompt.'
+        throw 'The installed x64 Visual Studio environment was not found. Run build-lite.bat from its existing x64 developer command prompt.'
     }
     # Read only build-related paths from the child initialized by vcvars64.
     $probe=@'

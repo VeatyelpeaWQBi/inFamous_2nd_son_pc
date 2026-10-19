@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <exception>
+#include <optional>
+#include <utility>
+
 #include "common/logging/log.h"
 #include "common/types.h"
 #include <atomic>

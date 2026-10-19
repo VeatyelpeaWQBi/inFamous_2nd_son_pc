@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <string>
+
 #include <chrono>
 #include "common/types.h"
 

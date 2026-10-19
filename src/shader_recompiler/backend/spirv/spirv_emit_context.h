@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <optional>
+
+#include <bit>
+
 #include <array>
 #include <unordered_map>
 #include <sirit/sirit.h>

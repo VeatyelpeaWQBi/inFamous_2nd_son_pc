@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <type_traits>
+
 #include <bit>
 #include <concepts>
 #include "common/types.h"

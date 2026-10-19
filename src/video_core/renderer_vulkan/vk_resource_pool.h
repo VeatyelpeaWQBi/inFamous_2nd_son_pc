@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <span>
+#include <utility>
+
 #include <deque>
 #include <vector>
 #include <boost/container/static_vector.hpp>

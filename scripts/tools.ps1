@@ -1,20 +1,4 @@
 Set-StrictMode -Version Latest
-function Resolve-InstalledPython {
-    $candidates = [Collections.Generic.List[string]]::new()
-    $command = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($command) { $candidates.Add($command.Source) }
-    foreach ($scope in @('User','Machine')) {
-        foreach ($directory in ([Environment]::GetEnvironmentVariable('Path',$scope) -split ';')) {
-            if ($directory) { $candidates.Add((Join-Path ([Environment]::ExpandEnvironmentVariables($directory.Trim().Trim('"'))) 'python.exe')) }
-        }
-    }
-    $candidates.Add((Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\python.exe'))
-    foreach ($candidate in $candidates) {
-        if ($candidate -match 'WindowsApps|[\\/]\.codex[\\/]|[\\/]msys64[\\/]') { continue }
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Resolve-Path -LiteralPath $candidate).Path }
-    }
-    throw 'Cannot locate the installed Windows Python. Configure its existing PATH; no runtime is installed automatically.'
-}
 function Write-JsonUtf8 {
     param([string]$Path, $Value)
     $root=[IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetDirectoryName($MyInvocation.MyCommand.ScriptBlock.File)) '..'))
@@ -58,7 +42,7 @@ function Get-RelativePath([string]$Base,[string]$Path) {
     return [Uri]::UnescapeDataString($baseUri.MakeRelativeUri([Uri]::new($fullPath)).ToString())
 }
 function Convert-ProjectConfigPaths([string]$ConfigPath,[string]$FromBase,[string]$ToBase) {
-    $config=Get-Content -LiteralPath $ConfigPath -Raw|ConvertFrom-Json
+    $config=Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8|ConvertFrom-Json
     $general=$config.General
     $properties=@(@('addon_install_dir','font_dir','home_dir','sys_modules_dir')|
         ForEach-Object{$general.PSObject.Properties[$_]}|Where-Object{$_})
@@ -109,17 +93,18 @@ function Read-ProjectSession([string]$Root,[string]$Session) {
     if(-not $Session){
         $activePath=Resolve-ProjectChild $Root 'state/active.json'
         if(-not (Test-Path -LiteralPath $activePath)){throw 'No project session is recorded.'}
-        $Session=(Get-Content -LiteralPath $activePath -Raw|ConvertFrom-Json).session
+        $Session=(Get-Content -LiteralPath $activePath -Raw -Encoding UTF8|ConvertFrom-Json).session
     }
     $path=Resolve-ProjectChild $Root $Session
     $allowed=Resolve-ProjectChild $Root 'state/sessions'
     if(-not $path.StartsWith($allowed+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Untrusted session path.'}
     $launchPath=Resolve-ProjectChild $Root ($Session+'/launch.json')
-    $launch=Get-Content -LiteralPath $launchPath -Raw|ConvertFrom-Json
-    $manifest=Get-Content -LiteralPath (Join-Path $Root 'project.json') -Raw|ConvertFrom-Json
+    $launch=Get-Content -LiteralPath $launchPath -Raw -Encoding UTF8|ConvertFrom-Json
+    $manifest=Get-Content -LiteralPath (Join-Path $Root 'project.json') -Raw -Encoding UTF8|ConvertFrom-Json
     if($launch.schema -ne 3 -or $launch.path_base -ne 'project' -or
        (Resolve-ProjectPath $Root $launch.session) -ne $path -or
        (Resolve-ProjectPath $Root $launch.runtime) -ne (Resolve-ProjectPath $Root $manifest.runtime_path) -or
        $launch.runtime_sha256 -ne $manifest.runtime_sha256){throw 'Session does not match the pinned project runtime.'}
     return [pscustomobject]@{Path=$path;Launch=$launch}
 }
+. (Join-Path $PSScriptRoot 'native_tools.ps1')

@@ -17,7 +17,7 @@ $commandLock=[IO.File]::Open($lockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAcces
 try{
     $path=Resolve-ProjectChild $projectRoot ((Get-RelativePath $projectRoot $sessionPath)+'/command.json')
     $sequence=1L
-    if(Test-Path -LiteralPath $path){$sequence=1+[long](Get-Content -LiteralPath $path -Raw|ConvertFrom-Json).sequence}
+    if(Test-Path -LiteralPath $path){$sequence=1+[long](Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json).sequence}
     $command=[ordered]@{sequence=$sequence;action=$Action}
     if($Action -eq 'button'){$command.button=$Button;$command.duration_ms=$DurationMs}
     if($Action -eq 'axis'){$command.axis=$Axis;$command.value=$Value}

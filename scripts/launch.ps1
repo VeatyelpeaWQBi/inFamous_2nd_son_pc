@@ -5,14 +5,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
 $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$manifest=Get-Content -LiteralPath (Join-Path $projectRoot 'project.json') -Raw|ConvertFrom-Json
-$python=Resolve-InstalledPython
-$preflight=Join-Path $PSScriptRoot 'preflight.py'
+$manifest=Get-Content -LiteralPath (Join-Path $projectRoot 'project.json') -Raw -Encoding UTF8|ConvertFrom-Json
+
 if($Benchmark){
     if($Mode -eq 'auto'){$Mode='pro4k'}
     if($Mode -notin @('1080p','pro4k')){throw 'Frozen benchmarks support only 1080p and pro4k.'}
 }
-if($CheckOnly){& $python -B $preflight --mode $Mode; exit $LASTEXITCODE}
+if($CheckOnly){Invoke-ProjectNativeTool 'preflight' @('--mode',$Mode); exit $LASTEXITCODE}
 $runtimeState=Resolve-ProjectChild $projectRoot 'state\runtime'
 $null=[IO.Directory]::CreateDirectory($runtimeState)
 $lock=$null;$process=$null;$windowBranding=$null
@@ -21,7 +20,7 @@ try{
     $runtime=Resolve-ProjectPath $projectRoot $manifest.runtime_path
     if(Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($runtime)) -ErrorAction SilentlyContinue){throw 'The pinned engine is already running.'}
     if(-not $Benchmark -and -not $PrepareOnly -and -not $NoMenu){
-        $selection=@(& $python -B (Join-Path $PSScriptRoot 'launch_menu.py') --mode $Mode)
+        $selection=@(Invoke-ProjectNativeTool 'launch-menu' @('--mode',$Mode))
         if($LASTEXITCODE -eq 1){exit 0}
         if($LASTEXITCODE -ne 0){throw 'Launch settings could not be opened; game was not started.'}
         $Mode=($selection -join '').Trim()
@@ -30,9 +29,9 @@ try{
     $session=Resolve-ProjectChild $projectRoot ('state\sessions\'+$sessionName)
     $sessionRelative=Get-RelativePath $projectRoot $session
     $null=[IO.Directory]::CreateDirectory($session)
-    $verifyArguments=@('-B',$preflight,'--mode',$Mode,'--session',$sessionRelative)
+    $verifyArguments=@('--mode',$Mode,'--session',$sessionRelative)
     if($Benchmark){$verifyArguments+='--frozen'}
-    $result=@(& $python @verifyArguments)
+    $result=@(Invoke-ProjectNativeTool 'preflight' $verifyArguments)
     if($LASTEXITCODE -ne 0){throw 'Preflight failed; game was not started.'}
     $verified=($result -join [Environment]::NewLine)|ConvertFrom-Json
     $Mode=$verified.mode
@@ -52,7 +51,7 @@ try{
     Convert-ProjectConfigPaths (Join-Path $portableUser 'config.json') $projectRoot $session
     if($null -ne $verified.launcher_settings){
         $globalPath=Join-Path $portableUser 'config.json'
-        $globalConfig=Get-Content -LiteralPath $globalPath -Raw|ConvertFrom-Json
+        $globalConfig=Get-Content -LiteralPath $globalPath -Raw -Encoding UTF8|ConvertFrom-Json
         $globalConfig.General|Add-Member -MemberType NoteProperty -Name 'show_fps_counter' -Value ([bool]$verified.launcher_settings.show_fps) -Force
         foreach($key in @('full_screen','full_screen_mode','window_width','window_height')){
             $globalConfig.GPU|Add-Member -MemberType NoteProperty -Name $key -Value $verified.gpu_config.$key -Force
@@ -73,7 +72,7 @@ try{
     }
     $configPath=Join-Path $portableUser 'custom_configs\CUSA00309.json'
     if($Benchmark){
-        $config=Get-Content -LiteralPath $configPath -Raw|ConvertFrom-Json
+        $config=Get-Content -LiteralPath $configPath -Raw -Encoding UTF8|ConvertFrom-Json
         $config.General.volume_slider=0
         Write-JsonUtf8 $configPath $config
         Write-JsonUtf8 (Join-Path $session 'custom_configs\CUSA00309.json') $config
@@ -112,8 +111,8 @@ try{
         process_started=$launch.process_started;mode=$Mode;resolution=$verified.resolution
     })
     $brandingStart=[Diagnostics.ProcessStartInfo]::new()
-    $brandingStart.FileName=$python;$brandingStart.WorkingDirectory=$projectRoot
-    $brandingArguments=@('-B',(Join-Path $PSScriptRoot 'window_branding.py'),'--session',$sessionRelative)
+    $brandingStart.FileName=[IO.Path]::Combine([Environment]::GetFolderPath('System'),'WindowsPowerShell/v1.0/powershell.exe');$brandingStart.WorkingDirectory=$projectRoot
+    $brandingArguments=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'native.ps1'),'-Module','window-branding','-ArgumentsJson',(ConvertTo-Json -InputObject @('--session',$sessionRelative) -Compress))
     $brandingStart.Arguments=($brandingArguments|ForEach-Object{Quote-WindowsArgument $_}) -join ' '
     $brandingStart.UseShellExecute=$false;$brandingStart.CreateNoWindow=$true
     $brandingStart.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden

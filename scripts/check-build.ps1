@@ -3,7 +3,7 @@ param()
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
 $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$project=Get-Content -LiteralPath (Join-Path $projectRoot 'project.json') -Raw|ConvertFrom-Json
+$project=Get-Content -LiteralPath (Join-Path $projectRoot 'project.json') -Raw -Encoding UTF8|ConvertFrom-Json
 $dependencyBuildRoot=Resolve-ProjectPath $projectRoot $project.dependency_build_root
 $dependenciesRoot=Resolve-ProjectPath $projectRoot $project.dependencies_root
 $cachePath=Join-Path $dependencyBuildRoot 'CMakeCache.txt'
@@ -17,5 +17,5 @@ foreach($key in @('CMAKE_COMMAND','CMAKE_CXX_COMPILER','CMAKE_MAKE_PROGRAM')){
 }
 if(-not (Test-Path -LiteralPath (Join-Path $dependenciesRoot 'CMakeLists.txt'))){throw 'Existing dependency sources are missing.'}
 Write-Host ('Existing dependencies: '+$project.dependencies_root)
-Write-Host ('Existing Python: '+(Resolve-InstalledPython))
+Write-Host ('Launcher runtime: Windows PowerShell / .NET Framework '+[Environment]::Version.ToString())
 Write-Host 'BAT phase: no configure, compiler, dependency download, or new EXE was invoked.'

@@ -5,8 +5,9 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
 . (Join-Path $PSScriptRoot 'build_tools.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$lock=$null
+$lock=$null;$log=$null;$phase='Tool discovery'
 try{
+    Write-Host ('Release build ('+$Variant+'): locating installed tools...')
     $tools=Get-ProjectBuildTools $root
     $build=Resolve-ProjectChild $root 'Build/Release'
     $state=Resolve-ProjectChild $root 'state/runtime'
@@ -15,7 +16,16 @@ try{
     $null=[IO.Directory]::CreateDirectory($build)
     $receipt=Join-Path $build 'build-receipt.json'
     if(Test-Path -LiteralPath $receipt){Remove-Item -LiteralPath $receipt}
+    $logPath=Resolve-ProjectChild $root 'Build/Release/build.log'
+    $log=[IO.StreamWriter]::new($logPath,$false,[Text.UTF8Encoding]::new($false))
+    $log.AutoFlush=$true
+    Write-ProjectBuildOutput ('Release build ('+$Variant+'), started '+[DateTime]::Now.ToString('s')) $log
+    Write-ProjectBuildOutput 'Full output: Build/Release/build.log (replaced on each build).' $log
+    $phase='Source fingerprint'
+    Write-ProjectBuildOutput '[Prepare] Reading source fingerprints...' $log
     $before=Get-SourceFingerprint $root
+    $phase='Visual Studio environment'
+    Write-ProjectBuildOutput '[Prepare] Loading the installed x64 Visual Studio environment...' $log
     $environment=Get-ProjectBuildEnvironment $tools.CMAKE_CXX_COMPILER $root
     $compilerBin=Split-Path -Parent $tools.CMAKE_CXX_COMPILER
     $resourceRoot=Join-Path (Split-Path -Parent $compilerBin) 'lib/clang'
@@ -38,8 +48,14 @@ try{
         $path=Join-Path $compilerBin $item[1]
         if(Test-Path -LiteralPath $path -PathType Leaf){$arguments+=(New-CMakePathArgument $item[0] $path)}
     }
-    Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND $arguments $root $environment
-    Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND @('--build',$build,'--target','shadps4','--parallel','8') $root $environment
+    $phase='Configure'
+    Write-ProjectBuildOutput '[Configure] Generating Release build files...' $log
+    Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND $arguments $root $environment -Log $log -Activity $phase
+    $phase='Compile'
+    Write-ProjectBuildOutput '[Compile] Building the engine (8 parallel jobs)...' $log
+    Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND @('--build',$build,'--target','shadps4','--parallel','8') $root $environment -Log $log -Activity $phase
+    $phase='Build verification'
+    Write-ProjectBuildOutput '[Verify] Checking source and executable fingerprints...' $log
     if((Get-SourceFingerprint $root) -ne $before){throw 'Source changed during compilation. Build again.'}
     $exe=Join-Path $build 'inFAMOUS Second Son.exe'
     if(-not(Test-Path -LiteralPath $exe -PathType Leaf)){throw 'The Release executable was not generated.'}
@@ -51,11 +67,25 @@ try{
         built_at_utc=[DateTime]::UtcNow.ToString('o');variant=$Variant;game_started=$false
     }
     if($Variant -eq 'portable'){
+        $phase='Runtime dependencies'
+        Write-ProjectBuildOutput '[Dependencies] Inspecting portable runtime DLLs...' $log
         . (Join-Path $PSScriptRoot 'runtime_dependencies.ps1')
         $null=Get-ReleaseRuntimeFiles $root $exe $record.inspector -Portable
     }
     Write-JsonUtf8 $receipt $record
-    Write-Host 'Release build complete: Build/Release/inFAMOUS Second Son.exe'
-    Write-Host ('Package next: '+$(if($Variant -eq 'portable'){'release-portable.bat'}else{'release.bat'}))
-}catch{Write-Host ('Build failed: '+$_.Exception.Message) -ForegroundColor Red;exit 1}
-finally{if($lock){$lock.Dispose()}}
+    Write-ProjectBuildOutput 'Release build complete: Build/Release/inFAMOUS Second Son.exe' $log
+    Write-ProjectBuildOutput ('Package next: '+$(if($Variant -eq 'portable'){'release-portable.bat'}else{'release.bat'})) $log
+}catch{
+    $message='Build failed ['+$phase+']: '+$_.Exception.Message
+    Write-Host $message -ForegroundColor Red
+    if($log){
+        $log.WriteLine($message)
+        $log.WriteLine($_.InvocationInfo.PositionMessage)
+        $log.WriteLine($_.ScriptStackTrace)
+        Write-Host 'Full output: Build/Release/build.log'
+    }
+    exit 1
+}finally{
+    if($log){$log.Dispose()}
+    if($lock){$lock.Dispose()}
+}

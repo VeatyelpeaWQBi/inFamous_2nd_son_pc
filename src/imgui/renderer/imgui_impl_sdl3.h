@@ -25,7 +25,7 @@ enum GamepadMode {
     ImGui_ImplSDL3_GamepadMode_AutoAll,
     ImGui_ImplSDL3_GamepadMode_Manual
 };
-void SetGamepadMode(GamepadMode mode, SDL_Gamepad** manual_gamepads_array = NULL,
+void SetGamepadMode(GamepadMode mode, SDL_Gamepad** manual_gamepads_array = nullptr,
                     int manual_gamepads_count = -1);
 
 }; // namespace ImGui::Sdl

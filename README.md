@@ -61,6 +61,7 @@ profiles/second-son-builds.json 管理地区、更新版本、程序 SHA256 与�
 源码修改后必须重新构建，运行不进行实时编译。先构建，再打包。打包不会自动构建或启动游戏。源码变化、构建失败、程序校验不符、依赖缺失会阻止打包。可复用同一次最新构建分别生成两种包。
 
 - 编译复用现有 CMake、Ninja、Visual Studio Clang 与 project.json 中配置的第三方源码/FFmpeg，不安装或下载依赖。
+- 两种构建入口均实时显示配置与编译输出；工具连续 15 秒没有新输出时显示运行状态。完整输出保存到 Build/Release/build.log，每次构建覆盖上一份，失败会标明所在阶段。Ninja 会复用已完成的编译产物，无须删除 Build/ 重来。
 - 共享打包使用已安装 LLVM 检查 EXE/DLL 的 x64 导入及递归依赖，携带所需第三方 DLL 和现有 VC Redistributable；缺失则报错。不复制 Windows 组件或显卡驱动。
 - 本机版在 release-manifest.json 中列出需由本机环境提供的运行库；共享版记录相同清单并附 DLL。
 - 两版均生成默认指向 game/ 的干净配置，包含分辨率补丁、许可证和逐文件 SHA256 清单，不含源码树/SDK/编译器/调试器/PDB/session/存档。

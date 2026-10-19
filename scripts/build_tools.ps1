@@ -67,24 +67,63 @@ function Get-ProjectBuildTools([string]$Root) {
         CMAKE_MAKE_PROGRAM=Resolve-ExistingBuildTool 'ninja.exe' $configured['CMAKE_MAKE_PROGRAM'] $ninjaCandidates
     }
 }
-function Invoke-ProjectBuildProcess([string]$Executable,[string[]]$ToolArguments,[string]$Directory,[hashtable]$Environment=@{},[switch]$Capture) {
+function Write-ProjectBuildOutput([string]$Message,[IO.TextWriter]$Log=$null) {
+    Write-Host $Message
+    if($Log){$Log.WriteLine($Message)}
+}
+function Invoke-ProjectBuildProcess(
+    [string]$Executable,[string[]]$ToolArguments,[string]$Directory,
+    [hashtable]$Environment=@{},[switch]$Capture,
+    [IO.TextWriter]$Log=$null,[string]$Activity='Build tool'
+) {
     $start=[Diagnostics.ProcessStartInfo]::new()
     $start.FileName=$Executable;$start.WorkingDirectory=$Directory;$start.UseShellExecute=$false;$start.CreateNoWindow=$true
     $start.Arguments=($ToolArguments|ForEach-Object {Quote-WindowsArgument $_}) -join ' '
     foreach($key in $Environment.Keys){$start.EnvironmentVariables[$key]=$Environment[$key]}
-    if($Capture){
-        $start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
-        $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false)
-    }
+    $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false)
+    $start.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
     $process=[Diagnostics.Process]::Start($start)
     try{
-        if($Capture){$output=$process.StandardOutput.ReadToEndAsync();$errorText=$process.StandardError.ReadToEndAsync()}
-        $process.WaitForExit()
-        if($process.ExitCode -ne 0){
-            if($Capture -and $errorText.Result){Write-Host $errorText.Result -ForegroundColor Red}
-            throw ([IO.Path]::GetFileName($Executable)+' failed, exit code '+$process.ExitCode+'. The runtime selection was not activated by this command.')
+        if($Capture){
+            # Drain both pipes concurrently. The dependency inspector consumes stdout
+            # as data, so successful captured output must not enter the host stream.
+            $output=$process.StandardOutput.ReadToEndAsync()
+            $errorText=$process.StandardError.ReadToEndAsync()
+            $process.WaitForExit()
+            $capturedOutput=$output.GetAwaiter().GetResult()
+            $capturedError=$errorText.GetAwaiter().GetResult()
+            if($capturedError){Write-ProjectBuildOutput $capturedError $Log}
+            if($process.ExitCode -eq 0){return $capturedOutput}
+            if($capturedOutput){Write-ProjectBuildOutput $capturedOutput $Log}
+        }else{
+            # Read both pipes on the PowerShell thread. Process event callbacks
+            # cannot safely invoke PowerShell without an associated runspace.
+            $readers=@($process.StandardOutput,$process.StandardError)
+            $pending=@($readers[0].ReadLineAsync(),$readers[1].ReadLineAsync())
+            $elapsed=[Diagnostics.Stopwatch]::StartNew()
+            $quiet=[Diagnostics.Stopwatch]::StartNew()
+            while($null -ne $pending[0] -or $null -ne $pending[1] -or -not $process.HasExited){
+                $received=$false
+                for($i=0;$i -lt $pending.Count;$i++){
+                    if($null -eq $pending[$i] -or -not $pending[$i].IsCompleted){continue}
+                    $line=$pending[$i].GetAwaiter().GetResult()
+                    if($null -eq $line){$pending[$i]=$null;continue}
+                    Write-ProjectBuildOutput $line $Log
+                    $quiet.Restart();$received=$true
+                    $pending[$i]=$readers[$i].ReadLineAsync()
+                }
+                if($quiet.Elapsed.TotalSeconds -ge 15){
+                    Write-ProjectBuildOutput ('['+$Activity+'] Still running; elapsed '+[int]$elapsed.Elapsed.TotalSeconds+' s, waiting for tool output.') $Log
+                    $quiet.Restart()
+                }
+                if(-not $received){[Threading.Thread]::Sleep(50)}
+            }
+            $process.WaitForExit()
         }
-        if($Capture){return $output.Result}
+        if($process.ExitCode -ne 0){
+            throw ($Activity+': '+[IO.Path]::GetFileName($Executable)+' failed, exit code '+$process.ExitCode+'. See the tool output above.')
+        }
     }finally{$process.Dispose()}
 }
 function Get-ProjectBuildEnvironment([string]$Compiler,[string]$Root) {

@@ -1,20 +1,4 @@
 ﻿Set-StrictMode -Version Latest
-function Resolve-InstalledPython {
-    $candidates = [Collections.Generic.List[string]]::new()
-    $command = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($command) { $candidates.Add($command.Source) }
-    foreach ($scope in @('User','Machine')) {
-        foreach ($directory in ([Environment]::GetEnvironmentVariable('Path',$scope) -split ';')) {
-            if ($directory) { $candidates.Add((Join-Path ([Environment]::ExpandEnvironmentVariables($directory.Trim().Trim('"'))) 'python.exe')) }
-        }
-    }
-    $candidates.Add((Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\python.exe'))
-    foreach ($candidate in $candidates) {
-        if ($candidate -match 'WindowsApps|[\\/]\.codex[\\/]|[\\/]msys64[\\/]') { continue }
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Resolve-Path -LiteralPath $candidate).Path }
-    }
-    throw 'Cannot locate the installed Windows Python. Configure its existing PATH; no runtime is installed automatically.'
-}
 function Write-JsonUtf8 {
     param([string]$Path, $Value)
     $root=[IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetDirectoryName($MyInvocation.MyCommand.ScriptBlock.File)) '..'))

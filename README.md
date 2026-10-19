@@ -1,8 +1,8 @@
-﻿# inFamous_2nd_son_pc
+# inFamous_2nd_son_pc
 
 Windows x86-64 / inFAMOUS Second Son 港版 CUSA00309 01.07 的适配项目，使用 BAT 作为构建和启动入口。
 
-源码保留 shadPS4 的版权和 GPL 许可；原始游戏文件只读。运行引擎只接受本项目 Build/ 中的构建产物。用户运行 build.bat 才会编译 C++ 源码；缺少构建产物、构建记录或源码指纹不一致时拒绝启动，不调用外部旧 EXE。PowerShell、Python 和补丁配置按脚本执行，不能代替 C++ 编译。
+源码保留 shadPS4 的版权和 GPL 许可；原始游戏文件只读。运行引擎只接受本项目 Build/ 中的构建产物。用户运行 build.bat 才会编译 C++ 源码；缺少构建产物、构建记录或源码指纹不一致时拒绝启动，不调用外部旧 EXE。PowerShell、C# 辅助模块和补丁配置负责启动流程，不能代替 C++ 引擎编译。
 
 ## 构建
 
@@ -10,7 +10,7 @@ Windows x86-64 / inFAMOUS Second Son 港版 CUSA00309 01.07 的适配项目，�
 
 默认产物为 Build/RelWithDebInfo/inFAMOUS Second Son.exe 和同名 PDB。首次构建预计新增约 1–3 GiB；构建前要求至少 3 GiB 可用空间。按用户确认，开发阶段继续复用兄弟项目的 externals 源码及 FFmpeg 库，整体 release 打包时再考虑迁入，不自动复制或下载。FFmpeg 库供引擎的 avplayer、videodec 等模块处理视频，不运行外部 ffmpeg.exe。
 
-系统编译器、Python 和诊断工具继续使用现有安装。构建工具按 PATH、用户／系统 PATH、本项目 CMake 缓存及现有安装目录定位，已去除对兄弟项目 CMakeCache.txt 的定位依赖。
+系统编译器、Windows PowerShell／.NET Framework 和诊断工具继续使用现有安装。构建工具按 PATH、用户／系统 PATH、本项目 CMake 缓存及现有安装目录定位，已去除对兄弟项目 CMakeCache.txt 的定位依赖。
 
 只有配置、编译、链接成功，且构建前后本项目源码指纹一致，才会原子更新 project.json，令 run.bat 和诊断入口选用项目内新 EXE，并记录 EXE、源码和符号指纹。失败不会切换选择；已有项目内 EXE 若被失败构建覆盖，指纹检查会拒绝启动。再次修改本项目 C++、CMake 文件、构建脚本或资源后，启动检查要求先重新运行 build.bat。源码指纹范围不包含外部依赖内容，不能作为全部第三方文件的完整性证明。构建记录不代表已经验证游戏画面、性能或稳定性。
 
@@ -142,7 +142,7 @@ full 的 `diagnostics/coverage.json` 记录同一目标 PID、创建时间、采
     check.bat pro4k
     test.bat
 
-check.bat 不带参数时核对保存的菜单分辨率，指定档位时核对对应配置；只核对引擎、游戏、配置及启用补丁原字节；test.bat 使用系统已有 Python，运行离线输入、显示预设、原子写入和测量边界回归测试，并执行 Windows PowerShell 的真实文件替换检查，不启动游戏。后者只在 state/offline-tests/ 创建约数 KiB 的临时文件，并自动清理。
+check.bat 不带参数时核对保存的菜单分辨率，指定档位时核对对应配置；只核对引擎、游戏、配置及启用补丁原字节；test.bat 使用系统 Windows PowerShell／.NET Framework，运行 C# 离线输入、显示预设、原子写入和测量边界回归测试，并执行 Windows PowerShell 的真实文件替换检查，不启动游戏。后者只在 state/offline-tests/ 创建约数 KiB 的临时文件，并自动清理。
 
 run.bat --benchmark 1080p / run.bat --benchmark pro4k 使用基线存档副本，并仅将测试游戏音量设零。控制入口为 control.bat status / screenshot / quit；按项目清单、会话、进程路径、PID 和创建时间核对目标。
 
@@ -152,7 +152,7 @@ run.bat --benchmark 1080p / run.bat --benchmark pro4k 使用基线存档副本�
 
 逐行读取 guest flip CSV，要求记录覆盖整个指定窗口，再保留窗口内完整帧间隔；采集中断而未覆盖窗口时拒绝给出验收结果。没有画面、粒子及分辨率确认时不接受为基线；新增分辨率仅记录测量结果，不套用 1080p 或 Pro 4K 的验收门槛。它也不能证明显示面板扫描或全游戏稳定帧率。
 
-analyze.bat 使用已有 Python/LLVM 只读分析原始游戏，输出限制在 doc/。build.bat --check 定位既有开发环境；build.bat 编译当前项目并在成功后切换启动引擎。后期 C++ 缓存回归入口位于 tests/cache_runtime/，复用项目清单中的依赖；Google Test 测试只使用已安装的 GTest。
+analyze.bat 使用 C# 和已有 LLVM 只读分析原始游戏，输出限制在 doc/。build.bat --check 定位既有开发环境；build.bat 编译当前项目并在成功后切换启动引擎。后期 C++ 缓存回归入口位于 tests/cache_runtime/，复用项目清单中的依赖；Google Test 测试只使用已安装的 GTest。
 
 分析依据见 doc/01-porting-evidence.md、02-infamous-optimization-candidates.md 和 03-baseline-and-debug.md。缓存遍历／回收、补丁边界及项目数据路径等 C++ 修正只有重新构建后才进入运行引擎；游戏验收由用户执行，不将构建成功作为性能成果。
 
@@ -175,7 +175,7 @@ diagnostics/timing-baseline.bat、timing-critical.bat、timing-lighting.bat 使�
 
 本轮涉及 C++，先运行 build.bat。建议同场景 baseline → critical → baseline，再录一轮 lighting；当前无需重录 full。退出后自动生成会话内的 timing-summary.json，默认分析最后 60 秒，并全量检查原始事件完整性。它区分 CPU 等待/写回/呈现队列和 GPU 查询区间，不能还原无采集时的每帧 GPU 成本，也不自动证明优化收益。
 
-实现、字段、测量边界和用户验证命令见 doc/21-v2-critical-path-timing.md（doc/ 按约定忽略 Git）。新增纯内存回归：python -B tests/test_timing_analysis.py；可选原生队列回归目标 ifss_path_trace_queue_test。测试/构建/游戏均由用户执行。
+实现、字段、测量边界和用户验证命令见 doc/21-v2-critical-path-timing.md（doc/ 按约定忽略 Git）。新增纯内存回归：test.bat（C# NativeTimingTests）；可选原生队列回归目标 ifss_path_trace_queue_test。测试/构建/游戏均由用户执行。
 
 V3 回读回归修复：CPU 需求回读保留 V2 原有窗口，不因粒子计数访问缩小到单页；显式启用批量预取但未记录任何复制时，自动回退 V2 预取。V3 人工／full 入口均关闭 `v3_demand_readback` 和 `v3_prefetch_batches`；R4 同时关闭其余旧候选及布局共享。引擎修改需要重新执行 `build.bat` 才能生效；本次未代执行构建或游戏测试。
 
@@ -183,4 +183,4 @@ V3 R4：新增证据仅在 `full-optimization-v3.bat` 开启；普通与人工�
 
 ## 原生辅助模块迁移
 
-普通构建、启动菜单、设置、预检和退出已接入 scripts/native/ 的 C# 模块；现有 Windows PowerShell 负责流程调度。普通运行无需 Python。引擎源码未因本次迁移改变；请先 build.bat 更新来源记录，再 run.bat。性能分析与调试工具在独立提交中迁移。详见 scripts/native/README.md。
+普通构建、启动菜单、设置、预检和退出已接入 scripts/native/ 的 C# 模块；现有 Windows PowerShell 负责流程调度。普通运行无需 Python。引擎源码未因本次迁移改变；请先 build.bat 更新来源记录，再 run.bat。性能分析与调试工具已在独立提交中迁移；所有项目 Python 实现与解释器调用均已移除。C++ 埋点、full 控制流程、采集工具及原有 JSON/CSV 数据格式保持原职责，C# 负责原有离线校验与分析。详见 scripts/native/README.md。

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+﻿# SPDX-License-Identifier: GPL-2.0-or-later
 # Parse saved artifacts with the installed tools after the target has exited.
 function Get-DiagnosticCpuTimeRange([DateTime]$CollectionStart,[string]$WindowStart,[string]$WindowEnd) {
     $begin=[Math]::Max([double]0,([DateTime]::Parse($WindowStart).ToUniversalTime()-$CollectionStart).TotalSeconds+1)
@@ -114,8 +114,10 @@ function Complete-DiagnosticArtifacts([string]$Root,[string]$Session,$Plan,$Stat
     if($Plan.profile -eq 'full'){
         # Inspect the final clock/data records, not just tool exit codes and file presence.
         Write-JsonUtf8 (Join-Path $dir 'status.json') $State
-        Invoke-DiagnosticNative (Resolve-InstalledPython) @('-B',(Join-Path $PSScriptRoot 'diagnostic_quality.py'),
-            '--session',(Get-RelativePath $Root $Session)) (Join-Path $dir 'data-quality.log') 1800000
+        $nativeHost=[IO.Path]::Combine([Environment]::GetFolderPath('System'),'WindowsPowerShell/v1.0/powershell.exe')
+        $qualityArguments=ConvertTo-Json -InputObject @('--session',(Get-RelativePath $Root $Session)) -Compress
+        Invoke-DiagnosticNative $nativeHost @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',
+            (Join-Path $PSScriptRoot 'diagnostic-native.ps1'),'-Module','diagnostic-quality','-ArgumentsJson',$qualityArguments) (Join-Path $dir 'data-quality.log') 1800000
         $quality=Read-JsonUtf8 (Join-Path $dir 'data-quality.json')
         $validation['data_quality']=@{validated=[bool]$quality.complete;report=(Get-RelativePath $Root (Join-Path $dir 'data-quality.json'))}
         foreach($name in @('wpr','vtune','nsight')){

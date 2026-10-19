@@ -337,7 +337,7 @@ try{
     }
     if($diagnosticWrapper -and -not $diagnosticWrapper.HasExited -and -not $diagnosticWrapper.WaitForExit(30000)){throw 'Nsight launcher did not finish.'}
     if($isTiming -or ($OptimizationV3 -eq 'all' -and $isDiagnostic)){
-        & (Resolve-InstalledPython) -X utf8 -B (Join-Path $PSScriptRoot 'analyze_timing.py') --session $session
+        Invoke-ProjectNativeTool 'analyze-timing' @('--session',$sessionRelative)
         $correlationExit=$LASTEXITCODE
         if($OptimizationV3 -eq 'all' -and $isDiagnostic){
             $launch.v3_correlation_status=if($correlationExit -eq 0){'usable'}else{'incomplete-or-invalid'}

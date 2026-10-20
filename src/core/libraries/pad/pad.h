@@ -11,7 +11,14 @@ namespace Core::Loader {
 class SymbolsResolver;
 }
 
+namespace Input {
+struct GamepadDevice;
+}
+
 namespace Libraries::Pad {
+
+// Host metadata only; never serialized into a guest controller report.
+Input::GamepadDevice GetControllerDevice(s32 handle);
 
 constexpr int ORBIS_PAD_MAX_TOUCH_NUM = 2;
 constexpr int ORBIS_PAD_MAX_DATA_NUM = 64;

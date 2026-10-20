@@ -146,6 +146,20 @@ main／开发分支先执行 `build.bat`，再执行 `run.bat`。默认编译为
 
 F1 打开退出确认，Enter／手柄 ×（Xbox A）确认，Esc／○（Xbox B）返回；Alt+F4 退出。F10 切换 FPS，F12 截图。FPS 是最近最多 60 个新游戏帧的平均值，帧时间为平均帧间隔，不是纯 GPU 时间；Release 保留此基础显示，不启动采集器。退出前请在游戏内保存。
 
+### Release 手柄改键测试版
+
+Release 使用 `launcher.json`；开发分支和 main 使用 `project.json`。其中，`"xbox_prompts": true` 和 `"touchpad_chords": true` 表示允许对识别出的 Xbox 手柄启用相应改动，可分别设为 `false` 后重启禁用；不会强制对 PS 手柄启用。lite 与 portable 使用相同逻辑，不增加玩家运行依赖。
+
+- **自动识别：** 以游戏启动时实际分配给玩家 1 的手柄为准。PS3／PS4／PS5 保持原提示与操作；Xbox 360／Xbox One 类设备按配置启用两项改动；未连接、未知及其他类型默认不启用。请先连接手柄再启动，启动后才连接或换系列需重启游戏，使已缓存的提示和补丁选择一致。Xbox 会话中拔出或换成 PS 手柄会立即旁路组合键，并清除旧的组合状态。DS4Windows／Steam Input 等若将 PS 手柄呈现为虚拟 Xbox，按这个对外类型识别，无法保证识别出背后的实体手柄。
+
+- **共用 Xbox 图标：** 在已核验中／英／韩语言包加载时，统一替换共用图集里的 13 个按钮字形（A/B/X/Y、LB/LT/RB/RT、MENU、LS/RS 与按下状态）。不再改写零散的文字标签和程序字形表；保留字形编号、尺寸、间距与游戏绑定解析，确认／取消继续跟随菜单设置。触摸板按压说明按通用词组更新：单指显示两组组合键二选一，双拇指显示四键同时按；三种语言各发现 14 条对应文案。滑动说明保留原操作；未确认的 F089 字形不修改。
+- **触摸板指纹图案：** 已核验的共用交互资源在内存中改为宽排三列：左列 `LT / + / LB`，右列 `RT / + / RB`，单指任一侧可用时中央为 **OR**，双指同时按时为 **AND**。去掉额外边框，按触摸板底图范围扩大并调整提示网格及其显示边界，保留背景、索引、颜色、动画和资源尺寸；同步重建全部 9 级 mip。绘制器另支持仅左／仅右，只有确认资源要求后才接入；当前已定位的两个图形网格不含左右限定标识，不根据玩家已按哪侧猜测。资源加载时使用完整 SHA256 校验的内存快照，core_common 句柄打开期间额外占用约 303 MiB，句柄关闭后释放；不新增逐帧扫描或磁盘缓存。其他独立手掌／滑动教学动画尚未全部替换，不宣称全场景覆盖。
+- **LT+LB / RT+RB：** 分别对应游戏内部的左侧／右侧触摸板按压，两组同按对应双指按压。扳机需按到一半以上；按住组合可维持按压。滑动、鼠标体感和原触摸板操作不变。
+- 在游戏自身输入转换、触点数和坐标读取处应用内存钩子，不修改 SDL 或 `libScePad` 输入报告。组合成立时屏蔽同组原动作和模拟量，释放阶段持续屏蔽，直到同组两键均松开。
+- 同组首个键有约 **80 毫秒识别窗口**；短单击延后补发，单独长按在窗口后恢复。两键间隔超过窗口时，第一个键的动作可能已经执行，无法撤销。低帧率还会增加按游戏更新周期采样的等待。
+- 原始游戏和资源保持只读，只接受 `01.07` 且程序 SHA256 为 `2d1ca79630d7bbe6fa29575f59aa7996d43071d74ac8e4f7d40137967d9039ab` 的已声明 Second Son 地区。资源另验完整 SHA256；不同资源保留原提示。未识别的输入模式 2 不启用组合键。
+- 组合键、普通 Xbox 图标及当前单指提示布局已有用户实测认可；双指提示和其他剧情场景仍需逐项验证。构建后可选离线回归：`cmake --build Build/Release --target ifss_second_son_controls_test`，随后运行 `Build/Release/ifss_second_son_controls_test.exe`。建议测试：单指吸收、双指推车、提示尺寸及动画、两种释放顺序，以及原 RT/RB/LT/LB 的短按和长按。它仍通过游戏现有的触摸交互判定执行动作，没有把所有手势改为普通按键动作。
+
 ### 来源与许可
 
 保留 shadPS4 Emulator Project、AYOUB1080p 及各源文件的版权声明，采用 GPL-2.0-or-later，见 [LICENSE](LICENSE) 与 [LICENSES](LICENSES/)。分发修改后的二进制时应遵守对应源码提供义务；第三方许可随包位于 `third-party-licenses/`。项目不分发游戏或个人存档。
@@ -293,6 +307,20 @@ Paths below are relative to the project/package directory. No automatic import f
 Ordinary development play uses a session copy of the fixed save, copied back after a normal exit and file checks. Diagnostics and V3 experiments do not automatically overwrite persistent saves. Release uses the fixed package-local save root directly. Saves are not automatically converted across regions. Preserve the entire `state/` when backing up or moving the project. `game/`, `state/`, `Build/`, `out/` and `doc/` are ignored by Git.
 
 F1 opens exit confirmation; Enter / controller × (Xbox A) confirms, and Esc / ○ (Xbox B) returns. Alt+F4 exits. F10 toggles FPS; F12 takes a screenshot. FPS averages the latest up to 60 new game frames, and frame time is the mean frame interval, not pure GPU time. Release retains this basic display without starting collectors. Save in-game before exiting.
+
+### Release controller remapping test version
+
+Release reads `launcher.json`; development and main read `project.json`. In either file, `"xbox_prompts": true` and `"touchpad_chords": true` allow the respective change for recognized Xbox devices. Set either to `false` and restart to disable it; these switches do not force changes onto PlayStation devices. Both packages share the implementation and add no player dependency.
+
+- **Automatic detection:** use the device actually assigned to player 1 at startup. PS3/PS4/PS5 keep their original prompts and controls; Xbox 360/One families enable the configured changes; absent, unknown and other devices default to disabled. Connect before starting. Late connections or family changes require a restart so cached prompts and patch selection agree. During an Xbox session, disconnecting or replacing the device with a PS controller bypasses chords and discards stale chord state. If DS4Windows/Steam Input exposes a PS controller as a virtual Xbox device, detection follows that exposed type; the hidden physical model cannot be guaranteed.
+
+- **Shared Xbox icons:** while loading validated Chinese, English and Korean packs, replace 13 shared button glyphs (A/B/X/Y, LB/LT/RB/RT, MENU, LS/RS and stick clicks) in RAM. Glyph IDs, dimensions, advances and the game binding resolver remain intact; confirm/cancel follows the menu preference. The previous per-string ASCII substitutions and executable glyph-table edits are removed. Common phrase rules update touchpad-button instructions: either chord for one finger, all four buttons together for two thumbs (14 matching values per language). Swipe instructions retain their actual gesture. Unidentified F089 remains unchanged.
+- **Touchpad fingerprints:** validated shared artwork is replaced in RAM with a wide three-column layout: `LT / + / LB` on the left, `RT / + / RB` on the right, and **OR** for either-side presses or **AND** for simultaneous two-finger presses. No extra border. Overlay geometry and its culling bounds expand to fit the touchpad artwork; the background, indices, colors, animation and resource dimensions remain intact. All nine mips are rebuilt. The renderer also supports left-only and right-only requirements, but those require positively identified resources; the two identified meshes have no side-specific identifier, so the player's pressed side is not used to guess the required action. A full SHA-256-validated snapshot uses about 303 MiB while core_common is open and is released when its handle closes; no per-frame scan or disk cache is added. Standalone hand/swipe tutorial artwork is not fully covered.
+- **LT+LB / RT+RB:** left/right game-side touchpad presses; both chords together produce a two-finger press. Pull triggers at least halfway. Hold the chords to maintain contact. Existing touchpad, swipe and mouse motion controls remain available.
+- Version-guarded hooks change the game's input conversion, contact count and coordinate accessors, without modifying SDL or `libScePad` reports. Original actions and trigger values are suppressed during a chord and its release until both keys on that side are released.
+- The first key has an **80 ms arbitration window**. Short single taps are replayed after release; single holds resume after the window. If the second key arrives later, the first action may already have fired and cannot be undone. Slow game updates may add sampling latency.
+- Only declared Second Son titles with APP_VER `01.07` and executable SHA256 `2d1ca79630d7bbe6fa29575f59aa7996d43071d74ac8e4f7d40137967d9039ab` receive these hooks. Resource files are separately hash-checked; different packs retain their original prompts. Unidentified input mode 2 does not enable chords. Original files remain read-only.
+- Chords, ordinary Xbox icons and the current single-finger hint layout have received user acceptance. Two-finger hints and other story interactions still require scenario-specific validation. After building, optional offline regression: `cmake --build Build/Release --target ifss_second_son_controls_test`, then run `Build/Release/ifss_second_son_controls_test.exe`. Check single-finger absorption, two-finger pushes, hint sizing/animation, both release orders and original single-button taps/holds. Existing game touch interaction predicates still execute the actions; this does not rebind every gesture to a normal button action.
 
 ### Credits and license
 

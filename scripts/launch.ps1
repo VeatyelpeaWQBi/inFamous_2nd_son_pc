@@ -263,6 +263,15 @@ try{
     $start.Arguments=($arguments|ForEach-Object{Quote-WindowsArgument $_}) -join ' '
     $start.UseShellExecute=$false
     $start.EnvironmentVariables['SHADPS4_GAME_PROFILE']='1'
+    foreach($setting in @('xbox_prompts','touchpad_chords')){
+        $property=$manifest.PSObject.Properties[$setting]
+        $enabled=$true
+        if($null -ne $property){
+            if($property.Value -isnot [bool]){throw ('project.json '+$setting+' must be true or false.')}
+            $enabled=$property.Value
+        }
+        $start.EnvironmentVariables['IFSS_'+$setting.ToUpperInvariant()]=if($enabled){'1'}else{'0'}
+    }
     $start.EnvironmentVariables['IFSS_USER_ROOT']=Get-RelativePath $projectRoot $portableUser
     $running=Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($runtime)) -ErrorAction SilentlyContinue
     if($running){throw 'Another instance of the pinned engine is running. Close it before this session.'}

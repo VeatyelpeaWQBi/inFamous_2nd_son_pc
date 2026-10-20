@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <fmt/format.h>
+#include "core/second_son_controls.h"
 #include "common/alignment.h"
 #include "common/arch.h"
 #include "common/assert.h"
@@ -136,7 +137,9 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
                                MemoryProt::CpuReadWrite | MemoryProt::CpuExec,
                                MemoryMapFlags::Fixed, VMAType::Code, name);
     ASSERT_MSG(result == ORBIS_OK, "Failed to map trampoline area for module {}", name);
-    RegisterPatchModule(*out_addr, aligned_base_size, trampoline_addr, TrampolineSize);
+    // Reserve the final page for the version-guarded Second Son input/UI hooks.
+    RegisterPatchModule(*out_addr, aligned_base_size, trampoline_addr,
+                        TrampolineSize - SecondSon::ControlsTrampolineSize);
 #endif
 
     LOG_INFO(Core_Linker, "======== Load Module to Memory ========");
@@ -353,6 +356,13 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
             MemoryPatcher::g_eboot_image_size = base_size;
             MemoryPatcher::g_eboot_name = name;
             MemoryPatcher::OnGameLoaded();
+#ifdef ARCH_X86_64
+            SecondSon::InstallControls(
+                base_virtual_addr, base_size,
+                reinterpret_cast<void*>(base_virtual_addr + aligned_base_size + TrampolineSize -
+                                        SecondSon::ControlsTrampolineSize),
+                SecondSon::ControlsTrampolineSize);
+#endif
         }
     }
 }

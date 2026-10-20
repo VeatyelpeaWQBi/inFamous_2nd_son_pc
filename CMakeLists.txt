@@ -49,6 +49,11 @@ target_link_libraries(ifss_ffmpeg INTERFACE psapi strmiids uuid oleaut32 shlwapi
 add_compile_definitions(IFSS_PROJECT_LOCAL_USER_DATA=1)
 include(cmake/EngineBuild.cmake)
 if(TARGET shadps4)
+    target_sources(shadps4 PRIVATE
+        src/core/second_son_controls.cpp src/core/second_son_controls.h
+        src/core/second_son_chords.h src/core/second_son_prompts.cpp
+        src/core/second_son_prompts.h src/core/second_son_touchpad_icons.h
+        src/input/gamepad_type.h)
     set_target_properties(shadps4 PROPERTIES
         OUTPUT_NAME "inFAMOUS Second Son"
         PDB_NAME "inFAMOUS Second Son"
@@ -146,3 +151,9 @@ add_executable(ifss_depth_reduction_test EXCLUDE_FROM_ALL
 target_compile_features(ifss_depth_reduction_test PRIVATE cxx_std_23)
 target_include_directories(ifss_depth_reduction_test PRIVATE src
     "${IFSS_EXTERNALS_ROOT}/sirit/externals/SPIRV-Headers/include")
+
+# Shared Xbox/touchpad policy checks; no device, game or default-build execution.
+add_executable(ifss_second_son_controls_test EXCLUDE_FROM_ALL tests/test_second_son_controls.cpp)
+target_compile_features(ifss_second_son_controls_test PRIVATE cxx_std_23)
+target_include_directories(ifss_second_son_controls_test PRIVATE src)
+target_link_libraries(ifss_second_son_controls_test PRIVATE SDL3::Headers)

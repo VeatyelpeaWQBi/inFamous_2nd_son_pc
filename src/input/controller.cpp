@@ -251,6 +251,8 @@ void GameController::SetTouchpadState(int touch_index, bool touch_down, float x,
 void GameController::ConnectController(SDL_Gamepad* pad) {
     std::lock_guard lock{m_state_mutex};
     m_sdl_gamepad = pad;
+    m_device = {pad ? IdentifyGamepad(SDL_GetRealGamepadType(pad)) : GamepadFamily::None,
+                pad ? SDL_GetGamepadID(pad) : 0, m_device.generation + 1};
     if (override_colour) {
         SetLightBarRGB({});
     }
@@ -266,10 +268,16 @@ void GameController::ConnectController(SDL_Gamepad* pad) {
     PushStateLocked();
 }
 
+GamepadDevice GameController::GetDevice() {
+    std::lock_guard lock{m_state_mutex};
+    return m_device;
+}
+
 void GameController::DisconnectController() {
     std::lock_guard lock{m_state_mutex};
     m_states_queue.Clear();
     m_sdl_gamepad = nullptr;
+    m_device = {.generation = m_device.generation + 1};
 
     const u8 connected_count = m_state.connected_count;
     m_state = {};

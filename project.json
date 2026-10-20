@@ -10,6 +10,8 @@
   "game_sha256": "2d1ca79630d7bbe6fa29575f59aa7996d43071d74ac8e4f7d40137967d9039ab",
   "title": "CUSA00309",
   "version": "01.07",
+  "xbox_prompts": true,
+  "touchpad_chords": true,
   "dependencies_mode": "reuse-existing",
   "dependencies_root": "../shadPS4-AYOUB1080p-hkopt/externals",
   "dependency_build_root": "../shadPS4-AYOUB1080p-hkopt/Build/x64-Clang-Release",

@@ -3,11 +3,13 @@
 
 #include <algorithm>
 #include <ctime>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <set>
 #include <sstream>
+#include <string_view>
 #include <fmt/core.h>
 #include <fmt/xchar.h>
 #include <hwinfo/hwinfo.h>
@@ -44,6 +46,7 @@
 #include "core/libraries/np/np_trophy.h"
 #include "core/libraries/save_data/save_backup.h"
 #include "core/linker.h"
+#include "core/second_son_controls.h"
 #include "core/memory.h"
 #include "core/perf_sampler.h"
 #include "core/user_settings.h"
@@ -675,6 +678,22 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
 
     // Initialize kernel and library facilities.
     Libraries::InitHLELibs(&linker->GetHLESymbols());
+
+    // Configure from the mounted executable before the loader installs fixed-address hooks.
+    // Diagnostics and ordinary play use the same guards and controller-family selection.
+    std::string controls_sha256;
+    if (id == "CUSA00309" && app_version == "01.07") {
+        if (auto program = mnt->Open(guest_eboot_path, false)) {
+            controls_sha256 = SecondSon::HashFile(*program);
+        }
+    }
+    const auto controls_enabled = [](const char* name) {
+        const char* value = std::getenv(name);
+        return value == nullptr || std::string_view{value} == "1";
+    };
+    SecondSon::ConfigureControls(id, app_version, controls_sha256,
+                                controls_enabled("IFSS_XBOX_PROMPTS"),
+                                controls_enabled("IFSS_TOUCHPAD_CHORDS"));
 
     // Load the module with the linker.
     if (linker->LoadModule(guest_eboot_path) == -1) {

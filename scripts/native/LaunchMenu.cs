@@ -42,6 +42,8 @@ namespace Ifss.Native {
                     Add(table,"帧数显示",fps);
                     Text(table,"鼠标体感与触摸板\nF6 开关鼠标体感；体感模式按住左键喷漆，Home 回正。\nDelete 开关触摸板：左键触摸／拖动，右键按压；双键模拟双指。\nEsc 或切换窗口释放鼠标体感／触摸板。",false);
 #if IFSS_RELEASE
+                    Text(table,"自动识别手柄（以启动时玩家 1 为准）\nPS 系列：保留原提示和操作，不启用这两项改动。\nXbox 系列：按配置启用 Xbox 提示和触摸板组合键。\n未连接／未知类型：默认不启用。请先连接再启动。\n游戏中换系列或启动后才连接，请重启游戏更新提示。\nDS4Windows／Steam Input 若映射为虚拟 Xbox，\n将按虚拟 Xbox 识别，无法保证识别其实体手柄。",false);
+                    Text(table,"Xbox 操作（可在 launcher.json 关闭对应改动）\nRT + RB：触摸板右侧按压；LT + LB：左侧按压。\n两组同按：双指按压；扳机需按过一半。\n同组两键尽量同时按，组合识别窗口约 80 毫秒；单按这些键也会短暂等待。\n组合释放后需先松开同组两键，再恢复技能。\n共用按钮图标按 Xbox 显示；触摸板按压文案随组合键更新。\n单指指纹：LT+LB 或 RT+RB；双指：两组同按。\n滑动操作不变；其他独立手掌动画尚未完整替换。",false);
                     Text(table,"游戏期间\nF1 打开退出确认：Enter / 手柄 A 退出；Esc / 手柄 B 继续。\nF10 开关帧数显示　F12 截图，Alt+F4 退出。",false);
 #else
                     Text(table,"游戏期间\nF1 打开退出菜单：Enter / × / Xbox A 退出；Esc / ○ / Xbox B 继续。\nF10 开关帧数显示　F12 截图　F3 打开设置。\n也可双击 quit.bat 打开外部退出窗口。",false);

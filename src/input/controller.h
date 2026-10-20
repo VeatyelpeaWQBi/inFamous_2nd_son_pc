@@ -16,6 +16,7 @@
 #include "core/libraries/pad/pad.h"
 #include "core/libraries/system/userservice.h"
 #include "input/mouse_motion.h"
+#include "input/gamepad_type.h"
 #include "input/touchpad_input.h"
 
 namespace Input {
@@ -92,6 +93,7 @@ public:
     virtual ~GameController() = default;
     void ConnectController(SDL_Gamepad* pad);
     void DisconnectController();
+    GamepadDevice GetDevice();
 
     State ReadState();
     int ReadStates(State* states, int states_num);
@@ -129,6 +131,7 @@ private:
     std::optional<Colour> override_colour{};
 
     State m_state;
+    GamepadDevice m_device;
     MouseMotion m_mouse_motion;
     MotionReport m_mouse_motion_report;
     bool m_mouse_motion_active{}, m_mouse_touch_active{}, m_mouse_trigger{};

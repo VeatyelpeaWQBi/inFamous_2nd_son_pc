@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <optional>
+#include <mutex>
 
 namespace Libraries::Pad {
 
@@ -42,11 +43,28 @@ static bool g_initialized = false;
 static u64 pad_handle_counter = 1;
 static std::unordered_map<HandleKey, s32, HandleKeyHash> pad_handle_map{};
 static std::unordered_map<s32, GameController*> handle_to_controller_map{};
+static std::mutex device_lookup_mutex;
+
+Input::GamepadDevice GetControllerDevice(s32 handle) {
+    GameController* controller{};
+    {
+        std::scoped_lock lock{device_lookup_mutex};
+        const auto found = handle_to_controller_map.find(handle);
+        if (found == handle_to_controller_map.end()) {
+            return {};
+        }
+        controller = found->second;
+    }
+    return controller->GetDevice();
+}
 
 int PS4_SYSV_ABI scePadClose(s32 handle) {
     LOG_WARNING(Lib_Pad, "called, handle: {}", handle);
-    if (handle_to_controller_map.erase(handle) == 0) {
-        return ORBIS_PAD_ERROR_INVALID_HANDLE;
+    {
+        std::scoped_lock lock{device_lookup_mutex};
+        if (handle_to_controller_map.erase(handle) == 0) {
+            return ORBIS_PAD_ERROR_INVALID_HANDLE;
+        }
     }
     for (auto& it : pad_handle_map) {
         if (it.second == handle) {
@@ -316,7 +334,10 @@ int PS4_SYSV_ABI scePadOpen(Libraries::UserService::OrbisUserServiceUserId userI
         if (type == ORBIS_PAD_PORT_TYPE_REMOTE_CONTROL) {
             s32 new_handle = pad_handle_counter++;
             pad_handle_map[{userId, type, index}] = new_handle;
-            handle_to_controller_map[new_handle] = controllers[4];
+            {
+                std::scoped_lock lock{device_lookup_mutex};
+                handle_to_controller_map[new_handle] = controllers[4];
+            }
             return new_handle;
         }
         return ORBIS_DEVICE_SERVICE_ERROR_INVALID_USER;
@@ -331,10 +352,13 @@ int PS4_SYSV_ABI scePadOpen(Libraries::UserService::OrbisUserServiceUserId userI
     s32 new_handle = pad_handle_counter++;
     pad_handle_map[{userId, type, index}] = new_handle;
 
-    handle_to_controller_map[new_handle] =
-        controllers[type == (EmulatorSettings.IsUsingSpecialPad() ? 2 : 0)
-                        ? UserManagement.GetUserByID(userId)->player_index - 1
-                        : 4];
+    {
+        std::scoped_lock lock{device_lookup_mutex};
+        handle_to_controller_map[new_handle] =
+            controllers[type == (EmulatorSettings.IsUsingSpecialPad() ? 2 : 0)
+                            ? UserManagement.GetUserByID(userId)->player_index - 1
+                            : 4];
+    }
     scePadResetLightBar(new_handle);
     scePadResetOrientation(new_handle);
     return new_handle;

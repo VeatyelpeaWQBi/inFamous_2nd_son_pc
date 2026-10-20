@@ -56,7 +56,10 @@ include(cmake/EngineBuild.cmake)
 include(cmake/DependencyDiagnostics.cmake)
 target_sources(shadps4 PRIVATE src/core/runtime_policy.h src/core/release_config.cpp
     src/core/release_config.h src/core/second_son_compatibility.h src/common/display_state.h
-    src/core/release_launcher.cpp src/core/release_launcher.h)
+    src/core/release_launcher.cpp src/core/release_launcher.h
+    src/core/second_son_controls.cpp src/core/second_son_controls.h
+    src/core/second_son_chords.h src/core/second_son_prompts.cpp src/core/second_son_prompts.h
+    src/input/gamepad_type.h src/core/second_son_touchpad_icons.h)
 set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "inFAMOUS Second Son"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 set(IFSS_GAME_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/inFAMOUS Second Son.ico")
@@ -72,9 +75,10 @@ if(MSVC)
 endif()
 
 # Not part of the engine or either release package.
-foreach(policy buffer_bind_cache readback_dependencies optimization_v2 second_son_compatibility frame_rate)
+foreach(policy buffer_bind_cache readback_dependencies optimization_v2 second_son_compatibility second_son_controls frame_rate)
     add_executable(ifss_${policy}_test EXCLUDE_FROM_ALL tests/test_${policy}.cpp)
     target_compile_features(ifss_${policy}_test PRIVATE cxx_std_23)
     target_include_directories(ifss_${policy}_test PRIVATE src)
 endforeach()
 target_link_libraries(ifss_buffer_bind_cache_test PRIVATE Vulkan::Headers)
+target_link_libraries(ifss_second_son_controls_test PRIVATE SDL3::Headers)

@@ -76,7 +76,7 @@ try{
     $null=[IO.Directory]::CreateDirectory((Join-Path $destination 'support'))
     Copy-Item -LiteralPath $menu -Destination (Join-Path $destination 'support/Ifss.Launcher.exe')
     Write-JsonUtf8 (Join-Path $destination 'launcher.json') ([ordered]@{
-        game_path='game';mode='pro4k';display='borderless'
+        game_path='game';mode='pro4k';display='borderless';xbox_prompts=$true;touchpad_chords=$true
     })
     $null=[IO.Directory]::CreateDirectory((Join-Path $destination 'profiles'))
     foreach($profile in $profileFiles){

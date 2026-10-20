@@ -13,6 +13,7 @@
 #include "core/file_sys/devices/logger.h"
 #include "core/file_sys/devices/nop_device.h"
 #include "core/file_sys/fs.h"
+#include "core/second_son_controls.h"
 
 namespace Core::FileSys {
 
@@ -483,7 +484,9 @@ std::unique_ptr<IFile> MntPoints::Open(std::string_view guest_path,
 
     for (const auto& backend : mount->backends) {
         if (backend->Exists(rel) && !backend->IsDirectory(rel)) {
-            return backend->Open(rel_copy, mode);
+            auto file = backend->Open(rel_copy, mode);
+            return writable ? std::move(file)
+                            : SecondSon::XboxPromptFile(*corrected, std::move(file));
         }
     }
     return nullptr;

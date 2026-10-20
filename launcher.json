@@ -1,5 +1,7 @@
 {
   "game_path": "game",
   "mode": "pro4k",
-  "display": "borderless"
+  "display": "borderless",
+  "xbox_prompts": true,
+  "touchpad_chords": true
 }

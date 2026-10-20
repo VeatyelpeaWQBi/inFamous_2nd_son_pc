@@ -8,6 +8,7 @@
 #include "core/emulator_settings.h"
 #include "core/file_sys/ifile.h"
 #include "core/second_son_compatibility.h"
+#include "core/second_son_controls.h"
 #include <algorithm>
 #include <array>
 #include <fstream>
@@ -26,6 +27,7 @@ namespace Core::Release {
 namespace {
 std::string requested_mode, mode, display;
 std::optional<LaunchSelection> launch_selection;
+bool xbox_prompts = true, touchpad_chords = true;
 
 // Hash the effective mounted program, including an update overlay when present.
 std::string HashExecutable(FileSys::IFile& file) {
@@ -187,6 +189,8 @@ void PreparePatches(std::string_view serial, std::string_view version,
 }
 } // namespace
 
+std::string HashFile(FileSys::IFile& file) { return HashExecutable(file); }
+
 std::filesystem::path ProjectRoot() {
     return Common::FS::GetUserPath(Common::FS::PathType::UserDir)
         .parent_path()
@@ -203,6 +207,8 @@ std::filesystem::path Prepare(const std::optional<std::filesystem::path>& game,
     const auto config = nlohmann::json::parse(input);
     requested_mode = requested.value_or(config.value("mode", std::string("pro4k")));
     display = config.value("display", std::string("borderless"));
+    xbox_prompts = config.value("xbox_prompts", true);
+    touchpad_chords = config.value("touchpad_chords", true);
     SecondSon::FindResolution(requested_mode);
     if (display != "window" && display != "fullscreen" && display != "borderless") {
         throw std::runtime_error("display must be window, fullscreen or borderless.");
@@ -263,6 +269,7 @@ void SelectGame(std::string_view serial, std::string_view version, FileSys::IFil
     }
     const auto sha256 = HashExecutable(executable);
     const auto build = FindBuild(serial, version, sha256);
+    SecondSon::ConfigureControls(serial, version, sha256, xbox_prompts, touchpad_chords);
     mode = SecondSon::EffectiveMode(requested_mode, build.has_value());
     SelectCaches(serial, version, sha256, build && build->legacy_cache_title == serial);
     PreparePatches(serial, version, build);

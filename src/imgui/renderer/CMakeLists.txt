@@ -8,6 +8,11 @@ if(NOT EXISTS "${IFSS_FONT_EMBED_SOURCE}")
     message(FATAL_ERROR "Configured ImGui font embedding source is missing: ${IFSS_FONT_EMBED_SOURCE}")
 endif()
 add_executable(Dear_ImGui_FontEmbed "${IFSS_FONT_EMBED_SOURCE}")
+if(MSVC)
+    # The vendor source defines this macro itself, without a value. Remove the
+    # inherited /D definition first, rather than ignoring macro-redefinition warnings.
+    target_compile_options(Dear_ImGui_FontEmbed PRIVATE /U_CRT_SECURE_NO_WARNINGS)
+endif()
 
 set(FONT_LIST
     NotoSansArabic-Regular.ttf

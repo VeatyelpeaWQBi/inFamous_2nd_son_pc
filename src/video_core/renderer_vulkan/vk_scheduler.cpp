@@ -18,6 +18,7 @@
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/perf_stats.h"
+#include "common/recording_workers.h"
 #include "common/path_trace.h"
 #include "common/scope_exit.h"
 #include "common/thread.h"
@@ -311,6 +312,8 @@ struct Scheduler::GpuProfile {
     bool open_graphics{};
     std::unordered_map<u64, std::pair<u64, u64>> graphics_ns;
     std::unordered_map<u64, u64> graphics_seen;
+    u64 graphics_samples_issued{}; // Lifetime budget; report/reset does not replenish it.
+    u64 compute_samples_issued{}; // Shared by compute hashes; reload/report never replenishes it.
     std::unordered_map<u64, std::pair<u64, u64>> shader_ns; ///< hash: GPU ns, dispatches.
     u64 report_start_ns{};
     std::vector<u64> results;
@@ -344,6 +347,13 @@ void Scheduler::AllowThreadedRecording() {
         return;
     }
     threading_allowed = true;
+    recording_workers = Common::Perf::GetTuning().v3_recording_workers.load(std::memory_order_relaxed);
+    if (recording_workers != 2 && recording_workers != 4) recording_workers = 0;
+    if (instance.GetProfilerContext()) recording_workers = 0;
+    if (recording_workers) {
+        LOG_INFO(Render_Vulkan, "V3 complete-session recorder configured: workers={} ordering=FIFO",
+                 recording_workers);
+    }
     recorder_thread = std::jthread(std::bind_front(&Scheduler::RecorderThread, this));
 }
 
@@ -368,7 +378,14 @@ CommandStream& Scheduler::Stream() {
     session_used = true;
     // Batches of commands go to the recording thread while the next ones are recorded.
     static constexpr size_t DispatchCommands = 256;
-    if (stream->NumCommands() >= DispatchCommands && !in_submit_callback) {
+    // A new Vulkan command buffer starts with invalidated state, so an entire
+    // session is self-contained. Never distribute arbitrary 256-command slices.
+    // Large sessions retain the original single-recorder continuation path.
+    if (recording_workers && stream->NumCommands() >= 65536) {
+        parallel_session_fallback = true;
+    }
+    if ((!recording_workers || parallel_session_fallback) &&
+        stream->NumCommands() >= DispatchCommands && !in_submit_callback) {
         DispatchStream();
     }
     return *stream;
@@ -404,11 +421,11 @@ void Scheduler::DispatchStream() {
 void Scheduler::WaitForRecorderRoom(std::unique_lock<std::mutex>& lock) {
     // A first-use compile can hold the recorder at a retained bind. Bound the producer's
     // lead to 64 batches (normally 256 commands each), instead of retaining unlimited frames.
-    static constexpr size_t MaxQueuedBatches = 64;
-    if (Common::Perf::GetTuning().compute_compile_parallel.load(std::memory_order_relaxed) &&
+    const size_t MaxQueuedBatches = recording_workers ? 8 : 64;
+    if ((recording_workers || Common::Perf::GetTuning().compute_compile_parallel.load(std::memory_order_relaxed)) &&
         recorder_jobs.size() >= MaxQueuedBatches) {
         const u64 start = Common::Perf::NowNs();
-        recorder_space_cv.wait(lock, [this] { return recorder_jobs.size() < MaxQueuedBatches; });
+        recorder_space_cv.wait(lock, [this, MaxQueuedBatches] { return recorder_jobs.size() < MaxQueuedBatches; });
         Common::Perf::Add(Common::Perf::RecorderQueueWaitNs, Common::Perf::NowNs() - start);
     }
 }
@@ -433,6 +450,10 @@ vk::CommandBuffer Scheduler::RecorderCommandBuffer() {
 }
 
 void Scheduler::RecorderThread(std::stop_token stoken) {
+    if (recording_workers) {
+        ParallelRecorderThread(stoken);
+        return;
+    }
     Common::SetCurrentThreadName("shadPS4:GpuCommandRecorder");
     while (true) {
         // Optionally wait a little for the next commands before sleeping: the command processor
@@ -490,6 +511,107 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
             if (recorder_jobs.empty()) {
                 recorder_idle_cv.notify_all();
             }
+        }
+    }
+}
+
+void Scheduler::ParallelRecorderThread(std::stop_token stoken) {
+    Common::SetCurrentThreadName("shadPS4:RecordPublish");
+    struct Recorded {
+        vk::CommandBuffer buffer;
+        std::unique_ptr<CommandStream> stream;
+    };
+    struct Pending {
+        std::future<Recorded> result;
+        SubmitInfo info;
+    };
+    // Pools are touched exclusively by their respective worker. They outlive
+    // all recording tasks and all GPU uses, including the final queued submit.
+    std::array<std::unique_ptr<CommandPool>, 4> pools;
+    Common::RecordingWorkers<Recorded> workers{recording_workers};
+    std::deque<Pending> pending;
+    SCOPE_EXIT { work_semaphore.Wait(submitted_tick.load(std::memory_order_acquire)); };
+    bool reported_parallel{}, reported_fallback{};
+    const auto publish = [&](vk::CommandBuffer buffer, SubmitInfo& info) {
+        std::unique_lock lock{submit_mutex, std::defer_lock};
+        {
+            Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::SubmitLock,
+                                              Common::Perf::V3SubmitLockNs};
+            lock.lock();
+        }
+        SubmitToQueue(std::span{&buffer, 1}, info);
+    };
+    const auto retire = [&] {
+        auto ready = pending.front().result.get();
+        publish(ready.buffer, pending.front().info);
+        pending.pop_front();
+        std::scoped_lock lock{recorder_mutex};
+        free_streams.push_back(std::move(ready.stream));
+    };
+    for (;;) {
+        RecorderJob job;
+        bool have_job{};
+        {
+            std::unique_lock lock{recorder_mutex};
+            recorder_waiting = pending.empty();
+            recorder_cv.wait(lock, stoken, [&] { return !recorder_jobs.empty() || !pending.empty(); });
+            recorder_waiting = false;
+            if (recorder_jobs.empty() && pending.empty()) return;
+            if (!recorder_jobs.empty() && pending.size() < recording_workers * 2) {
+                job = std::move(recorder_jobs.front());
+                recorder_jobs.pop_front();
+                recorder_queued.fetch_sub(1, std::memory_order_relaxed);
+                have_job = true;
+            }
+            recorder_busy = true;
+        }
+        recorder_space_cv.notify_one();
+        if (have_job && job.submit && job.parallel && !recorder_cmdbuf) {
+            if (!reported_parallel) {
+                reported_parallel = true;
+                LOG_INFO(Render_Vulkan, "V3 complete-session recorder active: workers={} commands={}",
+                         recording_workers, job.stream ? job.stream->NumCommands() : 0);
+            }
+            auto result = workers.Submit([this, &pools, stream = std::move(job.stream)]
+                                         (std::size_t index) mutable {
+                if (!pools[index]) {
+                    Common::SetCurrentThreadName("shadPS4:RecordWorker");
+                    pools[index] = std::make_unique<CommandPool>(instance, &work_semaphore);
+                }
+                const auto buffer = pools[index]->Commit();
+                Check(buffer.begin(vk::CommandBufferBeginInfo{
+                    .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}));
+                if (stream) stream->Execute(buffer);
+                Check(buffer.end());
+                return Recorded{buffer, std::move(stream)};
+            });
+            pending.push_back(Pending{std::move(result), job.info});
+        } else if (have_job) {
+            // A direct-command escape or oversized continuation is a boundary:
+            // drain earlier independent sessions before using the original pool.
+            while (!pending.empty()) retire();
+            if (!reported_fallback) {
+                reported_fallback = true;
+                LOG_INFO(Render_Vulkan, "V3 complete-session recorder fallback: direct/continuation boundary");
+            }
+            if (job.stream) job.stream->Execute(RecorderCommandBuffer());
+            if (job.submit) {
+                const auto buffer = RecorderCommandBuffer();
+                Check(buffer.end());
+                recorder_cmdbuf = vk::CommandBuffer{};
+                publish(buffer, job.info);
+            }
+            if (job.stream) {
+                std::scoped_lock lock{recorder_mutex};
+                free_streams.push_back(std::move(job.stream));
+            }
+        } else {
+            retire(); // FIFO publication even when later recordings finish first.
+        }
+        {
+            std::scoped_lock lock{recorder_mutex};
+            recorder_busy = !pending.empty();
+            if (!recorder_busy && recorder_jobs.empty()) recorder_idle_cv.notify_all();
         }
     }
 }
@@ -634,6 +756,7 @@ void Scheduler::BeginSession() {
     stream_session = threading_allowed &&
                      Common::Perf::GetTuning().threaded_recording.load(std::memory_order_relaxed);
     if (stream_session) {
+        parallel_session_fallback = Common::Perf::FrameDumpActive().load(std::memory_order_relaxed);
         // The recording thread allocates and records the command buffer of the session.
         recorder_used = true;
         direct_cmdbuf = vk::CommandBuffer{};
@@ -789,6 +912,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
                     .stream = std::move(stream),
                     .submit = true,
                     .info = info,
+                    .parallel = recording_workers && !parallel_session_fallback,
                 });
                 recorder_queued.fetch_add(1, std::memory_order_release);
                 if (!free_streams.empty()) {
@@ -990,13 +1114,20 @@ void Scheduler::ProfileDispatchBegin(u64 shader_hash) {
         Common::Perf::GetTuning().gpu_profile.load(std::memory_order_relaxed) != 2) {
         return;
     }
-    const u64 filter = Common::Perf::GetTuning().gpu_profile_compute_hash.load(
-        std::memory_order_relaxed);
+    const auto& tuning = Common::Perf::GetTuning();
+    const u64 filter = tuning.gpu_profile_compute_hash.load(std::memory_order_relaxed);
+    const u32 limit = tuning.gpu_profile_compute_limit.load(std::memory_order_relaxed);
     if (filter != 0 && shader_hash != filter) return;
     GpuProfile& prof = *profile;
+    if (limit && prof.compute_samples_issued >= limit) return;
     u64 number;
     if (!prof.Allocate(number)) {
         return;
+    }
+    ++prof.compute_samples_issued;
+    if (limit && prof.compute_samples_issued == limit) {
+        LOG_INFO(Render_Vulkan, "GPU compute profile sample budget exhausted: shader={:016x} issued={}",
+                 shader_hash, prof.compute_samples_issued);
     }
     prof.open_dispatch = number;
     prof.open_hash = shader_hash;
@@ -1032,10 +1163,21 @@ void Scheduler::ProfileDrawBegin(u64 shader_hash) {
     if (!profile || !profile->current.active ||
         Common::Perf::GetTuning().gpu_profile.load(std::memory_order_relaxed) != 3) return;
     auto& prof = *profile;
+    const auto& tuning = Common::Perf::GetTuning();
+    const u64 filter = tuning.gpu_profile_draw_hash.load(std::memory_order_relaxed);
+    const u32 limit = tuning.gpu_profile_draw_limit.load(std::memory_order_relaxed);
+    if ((filter && filter != shader_hash) || (limit && prof.graphics_samples_issued >= limit)) {
+        return;
+    }
     const u64 seen = prof.graphics_seen[shader_hash]++;
     if ((seen & 31) != 0) return;
     u64 number;
     if (!prof.Allocate(number)) return;
+    ++prof.graphics_samples_issued;
+    if (limit && prof.graphics_samples_issued == limit) {
+        LOG_INFO(Render_Vulkan, "GPU draw profile sample budget exhausted: shader={:016x} issued={}",
+                 shader_hash, prof.graphics_samples_issued);
+    }
     prof.open_dispatch = number;
     prof.open_hash = shader_hash;
     prof.open_graphics = true;
@@ -1169,6 +1311,8 @@ void Scheduler::CollectProfile() {
                  "Perf GPU compute shader {:016x}: {:.2f} ms/s, {:.0f} dispatches/s, {:.1f} us avg",
                  hash, stats.first / 1e6 / seconds, stats.second / seconds,
                  stats.second ? stats.first / 1e3 / static_cast<double>(stats.second) : 0.0);
+        LOG_INFO(Render_Vulkan, "Perf GPU compute samples {:016x}: count={} total_ns={}",
+                 hash, stats.second, stats.first);
     }
 }
 

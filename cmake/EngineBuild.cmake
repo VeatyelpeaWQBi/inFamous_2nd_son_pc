@@ -811,6 +811,7 @@ set(COMMON src/common/logging/classes.cpp
            src/common/native_clock.h
            src/common/path_util.cpp
            src/common/path_trace.cpp
+           src/common/consumer_evidence.cpp
            src/common/path_trace.h
            src/common/path_trace_queue.h
            src/common/path_util.h
@@ -1050,6 +1051,10 @@ set(SHADER_RECOMPILER src/shader_recompiler/profile.h
                       src/shader_recompiler/ir/passes/inverse_ballot_elimination_pass.cpp
                       src/shader_recompiler/ir/passes/ir_passes.h
                       src/shader_recompiler/ir/passes/ifss_address_schedule.cpp
+                      src/shader_recompiler/ir/passes/ifss_lighting_cse.cpp
+                      src/shader_recompiler/ir/passes/ifss_lighting_cse.h
+                      src/shader_recompiler/ir/passes/ifss_lighting_vector.cpp
+                      src/shader_recompiler/ir/passes/ifss_lighting_vector.h
                       src/shader_recompiler/ifss_depth_reduction.cpp
                       src/shader_recompiler/ifss_depth_reduction.h
                       src/shader_recompiler/ir/passes/lower_buffer_format_to_raw.cpp

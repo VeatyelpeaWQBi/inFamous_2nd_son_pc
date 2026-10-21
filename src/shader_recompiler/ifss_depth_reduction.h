@@ -7,10 +7,13 @@
 namespace Shader::Optimization {
 inline constexpr std::uint64_t IfssLightingHash = 0xce1675e0ULL;
 inline constexpr std::uint32_t IfssDepthReductionBit = 4u;
+inline constexpr std::uint32_t IfssLightingCseBit = 8u;
+inline constexpr std::uint32_t IfssLightingVectorBit = 16u;
 
 // Keep unrelated cached shaders on their existing binary version.
 constexpr std::uint32_t IfssShaderVariant(std::uint32_t mask, std::uint64_t hash, bool compute) {
-    return compute && hash == IfssLightingHash ? mask : mask & ~IfssDepthReductionBit;
+    return compute && hash == IfssLightingHash ? mask :
+        mask & ~(IfssDepthReductionBit | IfssLightingCseBit | IfssLightingVectorBit);
 }
 inline bool IsIfssDepthShader(std::span<const std::uint32_t> code) {
     if (code.size_bytes() != 7312) {

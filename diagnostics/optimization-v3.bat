@@ -1,9 +1,9 @@
 @echo off
 setlocal
-title inFAMOUS Second Son - V3 R6 C1 candidate
+title inFAMOUS Second Son - V3 R11 lighting vector reads candidate
 set "PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 if exist "%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe" set "PS=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
-echo V3 R6 candidate: C1 depth reduction ON. A1 and earlier V3 candidates OFF.
+echo V3 R11 candidate: guarded pinned lighting vector reads ON. Earlier V3 candidates OFF.
 echo Manual play. F1: exit confirmation. Saves/settings stay in this session.
 "%PS%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\scripts\launch.ps1" -NoMenu -OptimizationV3 all %*
 set "RESULT=%errorlevel%"

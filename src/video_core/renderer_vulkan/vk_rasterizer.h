@@ -274,12 +274,14 @@ private:
     void TraceShaderResources(const Shader::Info& stage);
     void TraceBufferWriters(const Shader::Info& stage);
     void BindBuffers(const Shader::Info& stage, Shader::Backend::Bindings& binding,
-                     Shader::PushData& push_data);
+                     Shader::PushData& push_data,
+                     const std::array<u32, 5>* write_prefixes = nullptr);
     /// Finish immutable table uploads after vertex/index preparation, immediately before
     /// recording descriptors. This prevents a later ring wrap from overwriting reused data.
     void FinalizeFlatbufUploads();
     void BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding);
-    bool BindResources(const Pipeline* pipeline);
+    bool BindResources(const Pipeline* pipeline,
+                       const std::array<u32, 5>* write_prefixes = nullptr);
 
     /// Tuning::bind_prefetch: prefetches the memo entries the bindings of a draw read first,
     /// from its scout entry (the current draw if not done yet, and the next one), and the
@@ -450,6 +452,8 @@ private:
         VAddr address{}; ///< Guest address (frame x-ray), 0 for emulator buffers.
     };
     boost::container::static_vector<BoundBuffer, Shader::NUM_BUFFERS> bound_buffers;
+    bool sort_write_bounds_reported{};
+    bool sort_write_fallback_reported{};
 
     u32 set_write_index{};
     Pipeline::DescriptorWrites set_writes;

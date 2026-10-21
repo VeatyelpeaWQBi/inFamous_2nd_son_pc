@@ -15,6 +15,7 @@
 #include <boost/container/static_vector.hpp>
 
 #include "common/interval_set.h"
+#include "common/perf_stats.h"
 #include "common/unique_function.h"
 #include "video_core/amdgpu/regs_color.h"
 #include "video_core/amdgpu/regs_primitive.h"
@@ -23,6 +24,7 @@
 #include "video_core/renderer_vulkan/vk_command_stream.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
+#include "video_core/buffer_cache/copy_coalesce.h"
 #include "vulkan/vulkan.hpp"
 
 namespace tracy {
@@ -552,6 +554,12 @@ public:
     /// Records the commands of the session: directly in the command buffer, or through the
     /// recording thread (threaded recording). Use this rather than CommandBuffer().
     [[nodiscard]] CommandRecorder Recorder() noexcept;
+    void NoteCopyCoalesced(std::size_t before, std::size_t after) {
+        if (!copy_coalesce_reported) {
+            copy_coalesce_reported = true;
+            LOG_INFO(Render_Vulkan, "V3 copy regions coalesced: {} -> {} within one command", before, after);
+        }
+    }
 
     /// Returns the current command buffer, to record in it directly. With threaded recording,
     /// waits for the recording thread to record what it was given, and the rest of the session
@@ -658,6 +666,7 @@ private:
     /// Threaded recording: the recording thread records the command streams it is given in the
     /// command buffer of their session, and submits the sessions.
     void RecorderThread(std::stop_token stoken);
+    void ParallelRecorderThread(std::stop_token stoken);
     /// Hands the commands recorded so far to the recording thread.
     void DispatchStream();
     /// Waits until the recording thread has recorded and submitted all it was given.
@@ -671,6 +680,7 @@ private:
         std::unique_ptr<CommandStream> stream;
         bool submit{};
         SubmitInfo info{};
+        bool parallel{};
     };
 
 private:
@@ -720,6 +730,9 @@ private:
     bool threading_allowed{};
     bool stream_session{};     ///< This session started recorded by the recording thread.
     bool recorder_used{};      ///< The recording thread may still use the command pool.
+    u32 recording_workers{};   ///< Immutable after AllowThreadedRecording.
+    bool parallel_session_fallback{};
+    bool copy_coalesce_reported{};
     std::unique_ptr<CommandStream> stream; ///< Commands not handed to the recording thread yet.
     std::mutex recorder_mutex;
     std::condition_variable_any recorder_cv;
@@ -985,6 +998,29 @@ public:
 
     void copyBuffer(vk::Buffer src, vk::Buffer dst,
                     vk::ArrayProxy<const vk::BufferCopy> const& regions) const {
+        if (regions.size() > 1 &&
+            Common::Perf::GetTuning().v3_copy_coalesce.load(std::memory_order_relaxed)) {
+            // Bound extra work; long lists retain their original recording path.
+            constexpr std::size_t Limit = 128;
+            if (regions.size() <= Limit) {
+                std::array<vk::BufferCopy, Limit> merged;
+                const auto count = VideoCore::CoalesceCopyRegions<vk::BufferCopy>(
+                    {regions.data(), regions.size()}, merged);
+                if (count < regions.size()) {
+                    if (const vk::CommandBuffer c = Direct()) {
+                        c.copyBuffer(src, dst, static_cast<u32>(count), merged.data());
+                    } else {
+                        CommandStream& s = scheduler->Stream();
+                        const auto* owned = s.Copy(merged.data(), count);
+                        s.Record([=](vk::CommandBuffer c) {
+                            c.copyBuffer(src, dst, static_cast<u32>(count), owned);
+                        });
+                    }
+                    if (scheduler) scheduler->NoteCopyCoalesced(regions.size(), count);
+                    return;
+                }
+            }
+        }
         if (const vk::CommandBuffer c = Direct()) {
             c.copyBuffer(src, dst, regions);
             return;

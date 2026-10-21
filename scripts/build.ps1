@@ -1,11 +1,11 @@
 ﻿# SPDX-License-Identifier: GPL-2.0-or-later
 [CmdletBinding()]
-param([ValidateSet('RelWithDebInfo','Release','Debug')][string]$Configuration='RelWithDebInfo')
+param([ValidateSet('RelWithDebInfo','Release','Debug')][string]$Configuration='RelWithDebInfo',[switch]$CleanFirst)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
 . (Join-Path $PSScriptRoot 'build_tools.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$lock=$null
+$lock=$null;$log=$null
 try{
     $project=Read-JsonUtf8 (Join-Path $root 'project.json')
     $tools=Get-ProjectBuildTools $root
@@ -17,6 +17,10 @@ try{
     $volume=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($root))
     if($volume.AvailableFreeSpace -lt 3GB){throw 'At least 3 GiB of free space is required before this build.'}
     $null=[IO.Directory]::CreateDirectory($build)
+    $log=[IO.StreamWriter]::new((Join-Path $build 'build.log'),$false,[Text.UTF8Encoding]::new($false))
+    $log.AutoFlush=$true
+    $log.WriteLine('Project build ('+$Configuration+'), started '+[DateTime]::Now.ToString('s')+'; clean_first='+[bool]$CleanFirst)
+    Write-Host ('Full compiler output: Build/'+$Configuration+'/build.log (replaced on each build).')
     Write-Host ('Build current project sources: '+$Configuration)
     Write-Host ('Output: Build/'+$Configuration+' (first build roughly 1-3 GiB, including symbols and intermediate files).')
     Write-Host ('Existing dependency sources: '+$project.dependencies_root)
@@ -56,15 +60,19 @@ try{
         $path=Join-Path $compilerBin $item[1]
         if(Test-Path -LiteralPath $path -PathType Leaf){$arguments+=(New-CMakePathArgument $item[0] $path)}
     }
-    Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND $arguments $root $environment
-    Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND @('--build',$build,'--target','shadps4','--parallel','8') $root $environment
+    Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND $arguments $root $environment -Log $log
+    $compileArguments=@('--build',$build,'--target','shadps4','--parallel','8')
+    if($CleanFirst){$compileArguments+='--clean-first'}
+    Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND $compileArguments $root $environment -Log $log
     # Failed configure/compile/link commands throw before this activation step.
     $null=Invoke-ProjectNativeTool 'build-identity' @('activate','--configuration',$Configuration,'--source-sha256',$snapshot.source_sha256)
     if($LASTEXITCODE -ne 0){throw 'Native build activation failed; the runtime was not switched.'}
+    $log.WriteLine('Build succeeded; runtime activated; no game started.')
     Write-Host ('Build succeeded. run.bat and diagnostics now use Build/'+$Configuration+'/inFAMOUS Second Son.exe.')
     Write-Host 'No game or acceptance test was started. Run diagnostics/full.bat yourself to verify runtime fixes.'
 }catch{
+    if($log){$log.WriteLine('Build failed: '+$_.Exception.Message)}
     Write-Host ('Build failed: '+$_.Exception.Message) -ForegroundColor Red
     exit 1
-}finally{if($lock){$lock.Dispose()}}
+}finally{if($log){$log.Dispose()};if($lock){$lock.Dispose()}}
 exit 0

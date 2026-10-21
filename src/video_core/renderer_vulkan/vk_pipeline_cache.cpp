@@ -31,6 +31,7 @@
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/buffer_cache/region_definitions.h"
+#include "video_core/buffer_cache/ifss_sort_write_bounds.h"
 #include "video_core/cache_storage.h"
 #include "video_core/priority_compile_queue.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
@@ -762,6 +763,15 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
     if (depth_requested && depth_supported) address_schedule_mask |= Shader::Optimization::IfssDepthReductionBit;
     LOG_INFO(Render_Vulkan, "C1 depth reduction: requested={} supported={} active={}",
              depth_requested, depth_supported, depth_requested && depth_supported);
+    const bool cse_requested = Common::Perf::GetTuning().v3_lighting_cse.load(std::memory_order_relaxed);
+    if (cse_requested) address_schedule_mask |= Shader::Optimization::IfssLightingCseBit;
+    LOG_INFO(Render_Vulkan, "C1 lighting CSE: requested={} (startup policy)", cse_requested);
+    const bool vector_requested = Common::Perf::GetTuning().v3_lighting_vector.load(std::memory_order_relaxed);
+    const bool vector_supported = instance.StorageMinAlignment() >= 16 &&
+                                  instance.StorageMinAlignment() % 16 == 0;
+    if (vector_requested && vector_supported) address_schedule_mask |= Shader::Optimization::IfssLightingVectorBit;
+    LOG_INFO(Render_Vulkan, "R11 lighting vector: requested={} supported={} (startup policy)",
+             vector_requested, vector_supported);
     SetShaderOptimizationVariant(address_schedule_mask);
     LOG_INFO(Render_Vulkan, "V3 shader policy locked at startup: mask {}", address_schedule_mask);
     const bool lds_multi_wave = profile.needs_lds_barriers && profile.lds_barriers_multi_wave;
@@ -1031,7 +1041,8 @@ Shader::ShaderParams PipelineCache::GetStageParams(const ProgramRegs& pgm) {
     bool hit = same_mapping && memo.num_dwords != 0 && memo.epoch == epoch &&
                memo.host_write_gen == host_write_gen;
     const bool revalidate =
-        Common::Perf::GetTuning().runtime_lookup_memo.load(std::memory_order_relaxed);
+        Common::Perf::GetTuning().runtime_lookup_memo.load(std::memory_order_relaxed) &&
+        !Common::Perf::GetTuning().v3_disable_params_lookup.load(std::memory_order_relaxed);
     if (!hit && same_mapping && memo.num_dwords != 0 && revalidate &&
         memo.scan_input.Size() != 0) {
         const auto* bytes = reinterpret_cast<const std::byte*>(code);
@@ -1329,6 +1340,13 @@ bool PipelineCache::RefreshComputeKey() {
     Shader::Backend::Bindings binding{};
     const auto& cs_pgm = liverpool->GetCsRegs();
     const auto cs_params = GetStageParams(cs_pgm);
+    // Recheck the actual bounded code span, including cache hits. Never infer this from the
+    // game's short shader ID alone. External/replaced modules retain full descriptor writes.
+    ifss_sort_code_pinned =
+        Common::Perf::GetTuning().v3_sort_write_bounds.load(std::memory_order_relaxed) &&
+        !shader_replaced.load(std::memory_order_acquire) && !EmulatorSettings.IsPatchShaders() &&
+        cs_params.hash == VideoCore::IfssSortShaderHash &&
+        VideoCore::IsPinnedIfssSortCode(cs_params.code);
     std::tie(infos[0], modules[0], compute_key.value) =
         GetProgram(HwStage::Compute, SwStage::Compute, cs_params, binding);
     return true;
@@ -1346,11 +1364,14 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
              perm_idx != 0 ? "(permutation)" : "");
     DumpShader(code, info.pgm_hash, info.hw_stage, perm_idx, "bin");
 
-    const auto ir_program = Shader::TranslateProgram(code, pools, info, runtime_info, profile,
-                                                     address_schedule_mask);
-    auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir_program, binding);
     auto patch = GetShaderPatch(info.pgm_hash, info.hw_stage, perm_idx, "spv");
     const bool is_patched = patch && EmulatorSettings.IsPatchShaders();
+    const auto compile_policy = is_patched ?
+        address_schedule_mask & ~(Shader::Optimization::IfssLightingCseBit |
+                                  Shader::Optimization::IfssLightingVectorBit) : address_schedule_mask;
+    const auto ir_program = Shader::TranslateProgram(code, pools, info, runtime_info, profile,
+                                                     compile_policy);
+    auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir_program, binding);
     if ((address_schedule_mask & Shader::Optimization::IfssDepthReductionBit) &&
         info.hw_stage == HwStage::Compute && info.pgm_hash == Shader::Optimization::IfssLightingHash) {
         Shader::Optimization::DepthReductionResult result{false, "guest-fingerprint"};
@@ -1584,6 +1605,8 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
                          sw_stage != SwStage::TessellationEval;
     const bool exact_memo = memoize && scouted == nullptr &&
                             Common::Perf::GetTuning().runtime_lookup_memo.load(
+                                std::memory_order_relaxed) &&
+                            !Common::Perf::GetTuning().v3_disable_params_lookup.load(
                                 std::memory_order_relaxed);
     boost::container::small_vector<u32, 160> selection_words;
     const auto runtime_bytes = std::as_bytes(std::span{&runtime_info, 1});
@@ -1677,6 +1700,7 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
 
 std::optional<vk::ShaderModule> PipelineCache::ReplaceShader(vk::ShaderModule module,
                                                              std::span<const u32> spv_code) {
+    shader_replaced.store(true, std::memory_order_release);
     // Pipelines being compiled use the modules and can be erased below.
     compiler->WaitIdle();
     // Retained binds hold pipeline pointers until replay; also finish GPU use of old handles.

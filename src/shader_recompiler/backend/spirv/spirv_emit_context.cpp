@@ -871,6 +871,10 @@ void EmitContext::DefineBuffers() {
             spv_buffer.Alias(PointerType::U32) =
                 DefineBuffer(desc.is_written, is_coherent, 2, desc.buffer_type, U32[1]);
         }
+        if (True(desc.used_types & IR::Type::U32x4)) {
+            spv_buffer.Alias(PointerType::U32x4) =
+                DefineBuffer(desc.is_written, is_coherent, 4, desc.buffer_type, U32[4]);
+        }
         if (True(desc.used_types & IR::Type::F32)) {
             spv_buffer.Alias(PointerType::F32) =
                 DefineBuffer(desc.is_written, is_coherent, 2, desc.buffer_type, F32[1]);

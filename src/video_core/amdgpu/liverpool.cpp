@@ -4,6 +4,8 @@
 #include <boost/preprocessor/stringize.hpp>
 
 #include "common/assert.h"
+#include "common/auxiliary_evidence.h"
+#include "common/scope_exit.h"
 #include "common/debug.h"
 #include "common/perf_stats.h"
 #include "common/polyfill_thread.h"
@@ -1044,7 +1046,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
 }
 
 template <bool is_indirect>
-Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u64 submit_ns) {
+Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u64 submit_ns, u64 aux_parent) {
     FIBER_ENTER(acb_task_name[vqid]);
     auto& queue = asc_queues[{vqid}];
     if (submit_ns != 0) {
@@ -1065,6 +1067,9 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u6
 
     auto base_addr = reinterpret_cast<VAddr>(acb.data());
     size_t acb_size = acb.size_bytes();
+    auto aux = Common::AuxiliaryEvidence::Begin(vqid, base_addr, acb_size, aux_parent);
+    bool aux_finished{};
+    SCOPE_EXIT { Common::AuxiliaryEvidence::End(aux, aux_finished, acb.empty(), is_indirect); };
     while (!acb.empty()) {
         ProcessCommands();
         ++processed_packets;
@@ -1114,6 +1119,18 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u6
 
         const PM4ItOpcode opcode = header->type3.opcode;
 
+        if (aux.id) {
+            const unsigned kind = opcode == PM4ItOpcode::DmaData ? 1 :
+                                  opcode == PM4ItOpcode::ReleaseMem ? 2 :
+                                  opcode == PM4ItOpcode::IndirectBuffer ? 3 : 0;
+            if (kind) {
+                const auto address = reinterpret_cast<VAddr>(header);
+                const bool buffered = address < base_addr || address >= base_addr + acb_size;
+                Common::AuxiliaryEvidence::Packet(aux, kind, address, buffered,
+                    {reinterpret_cast<const u32*>(header), header->type3.NumWords() + 1});
+            }
+        }
+
         const auto* it_body = reinterpret_cast<const u32*>(header) + 1;
         switch (opcode) {
         case PM4ItOpcode::Nop: {
@@ -1123,7 +1140,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u6
         case PM4ItOpcode::IndirectBuffer: {
             const auto* indirect_buffer = reinterpret_cast<const PM4CmdIndirectBuffer*>(header);
             auto task = ProcessCompute<true>(
-                {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size}, vqid);
+                {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size}, vqid, 0, aux.id);
             RESUME_ASC(task, vqid);
 
             while (!task.handle.done()) {
@@ -1361,6 +1378,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u6
         rasterizer->SetAsyncCompute(false);
         rasterizer->FlushComputeQueue();
     }
+    aux_finished = true;
     FIBER_EXIT;
 }
 

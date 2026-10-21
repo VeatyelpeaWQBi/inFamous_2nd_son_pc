@@ -144,6 +144,10 @@ void PollTuning() {
             tuning.threaded_recording.store(value != "0", std::memory_order_relaxed);
         } else if (key == "v3_lighting_reduction") {
             tuning.v3_lighting_reduction.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_lighting_cse") {
+            tuning.v3_lighting_cse.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_lighting_vector") {
+            tuning.v3_lighting_vector.store(value != "0", std::memory_order_relaxed);
         } else if (key == "v3_descriptor_delta") {
             tuning.v3_descriptor_delta.store(value != "0", std::memory_order_relaxed);
         } else if (key == "v3_descriptor_evidence") {
@@ -154,6 +158,10 @@ void PollTuning() {
             tuning.v3_demand_readback.store(value != "0", std::memory_order_relaxed);
         } else if (key == "v3_prefetch_batches") {
             tuning.v3_prefetch_batches.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_window_prefetch") {
+            tuning.v3_window_prefetch.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_sort_write_bounds") {
+            tuning.v3_sort_write_bounds.store(value != "0", std::memory_order_relaxed);
         } else if (key == "v3_submit_prepare") {
             tuning.v3_submit_prepare.store(value != "0", std::memory_order_relaxed);
         } else if (key == "v3_lighting_schedule") {
@@ -162,6 +170,22 @@ void PollTuning() {
             tuning.v3_particle_schedule.store(value != "0", std::memory_order_relaxed);
         } else if (key == "v3_particle_async") {
             tuning.v3_particle_async.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_recording_workers") {
+            const auto count = std::strtoul(value.c_str(), nullptr, 10);
+            tuning.v3_recording_workers.store(count == 2 || count == 4 ? count : 0,
+                                              std::memory_order_relaxed);
+        } else if (key == "v3_copy_coalesce") {
+            tuning.v3_copy_coalesce.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_completion_elision") {
+            tuning.v3_completion_elision.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_disable_params_lookup") {
+            tuning.v3_disable_params_lookup.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "v3_disable_flatbuf_reuse") {
+            tuning.v3_disable_flatbuf_reuse.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "auxiliary_evidence_limit") {
+            tuning.auxiliary_evidence_limit.store(static_cast<u32>(std::min<unsigned long>(std::strtoul(value.c_str(), nullptr, 10), 1024)), std::memory_order_relaxed);
+        } else if (key == "auxiliary_evidence_delay_seconds") {
+            tuning.auxiliary_evidence_delay_seconds.store(static_cast<u32>(std::min<unsigned long>(std::strtoul(value.c_str(), nullptr, 10), 600)), std::memory_order_relaxed);
         } else if (key == "compute_compile_parallel") {
             tuning.compute_compile_parallel.store(value != "0", std::memory_order_relaxed);
         } else if (key == "async_uploads") {
@@ -238,8 +262,25 @@ void PollTuning() {
         } else if (key == "gpu_profile_compute_hash") {
             tuning.gpu_profile_compute_hash.store(std::strtoull(value.c_str(), nullptr, 16),
                                                   std::memory_order_relaxed);
+        } else if (key == "gpu_profile_compute_limit") {
+            tuning.gpu_profile_compute_limit.store(
+                static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 4096)),
+                std::memory_order_relaxed);
+        } else if (key == "gpu_profile_draw_hash") {
+            tuning.gpu_profile_draw_hash.store(std::strtoull(value.c_str(), nullptr, 16),
+                                               std::memory_order_relaxed);
+        } else if (key == "gpu_profile_draw_limit") {
+            tuning.gpu_profile_draw_limit.store(
+                static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 4096)),
+                std::memory_order_relaxed);
         } else if (key == "path_trace") {
             tuning.path_trace.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "consumer_evidence_limit") {
+            tuning.consumer_evidence_limit.store(static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 1024)), std::memory_order_relaxed);
+        } else if (key == "consumer_evidence_delay_seconds") {
+            tuning.consumer_evidence_delay_seconds.store(static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 600)), std::memory_order_relaxed);
+        } else if (key == "consumer_trace_only") {
+            tuning.consumer_trace_only.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gpu_threads_priority") {
             tuning.gpu_threads_priority.store(
                 static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 2)),
@@ -527,8 +568,21 @@ void PollTuning() {
              tuning.runtime_lookup_memo.load(std::memory_order_relaxed),
              tuning.compute_compile_parallel.load(std::memory_order_relaxed));
     LOG_INFO(Debug, "C1 lighting reduction requested: {} (startup policy)", tuning.v3_lighting_reduction.load());
+    LOG_INFO(Debug, "C1 lighting CSE requested: {} (startup policy)", tuning.v3_lighting_cse.load());
+    LOG_INFO(Debug, "R11 lighting vector requested: {} (startup policy)", tuning.v3_lighting_vector.load());
+    LOG_INFO(Debug, "GPU draw profiling: filter={:016x} sample_limit={} (per profiler lifetime)",
+             tuning.gpu_profile_draw_hash.load(), tuning.gpu_profile_draw_limit.load());
+    LOG_INFO(Debug, "GPU compute profiling: filter={:016x} sample_limit={} (per profiler lifetime)",
+             tuning.gpu_profile_compute_hash.load(), tuning.gpu_profile_compute_limit.load());
     LOG_INFO(Debug, "A1 descriptor delta requested: {}", tuning.v3_descriptor_delta.load());
+    LOG_INFO(Debug, "R8 full-window prefetch requested: {}", tuning.v3_window_prefetch.load());
+    LOG_INFO(Debug, "R9 sort write bounds requested: {}", tuning.v3_sort_write_bounds.load());
     LOG_INFO(Debug, "V3 layout sharing requested: {} (startup policy)", tuning.v3_layout_sharing.load());
+    LOG_INFO(Debug, "V3 remaining policies: recorder_workers={} copy_coalesce={} completion_elision={} "
+                    "disable_params_lookup={} disable_flatbuf_reuse={}",
+             tuning.v3_recording_workers.load(), tuning.v3_copy_coalesce.load(),
+             tuning.v3_completion_elision.load(), tuning.v3_disable_params_lookup.load(),
+             tuning.v3_disable_flatbuf_reuse.load());
     LOG_INFO(Debug, "V3 requested: demand={} batches={} submit={} lighting={} particle={} async={}",
              tuning.v3_demand_readback.load(), tuning.v3_prefetch_batches.load(),
              tuning.v3_submit_prepare.load(), tuning.v3_lighting_schedule.load(),

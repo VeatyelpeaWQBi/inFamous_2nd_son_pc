@@ -134,6 +134,8 @@ struct Info : InfoPersistent {
     bool stores_tess_level_outer{};
     bool stores_tess_level_inner{};
     bool translation_failed{};
+    // Translation-only R11 origin metadata. Never persisted or used by the default policy.
+    bool ifss_vector_read_origins{};
 
     std::array<Interpolation, IR::NumParams> fs_interpolation{};
 

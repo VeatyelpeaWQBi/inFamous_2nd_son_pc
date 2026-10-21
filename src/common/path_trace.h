@@ -13,7 +13,15 @@ enum class Kind : u32 {
     HostPhaseBegin, HostPhaseEnd,
     ReadProducer, ReadProducerRange, ReadProducerTime, ReadProducerDomain, ReadProducerCoverage, ReadProducerWindow,
     SubmitQueued, SubmitDriverBegin, SubmitDriverEnd, FeedbackFence,
+    ReadConsumer, ReadConsumerRegs0, ReadConsumerRegs1, ReadConsumerRegs2,
+    ReadCompletionPublished, ReadCompletionElided,
+    AuxBegin, AuxPacket, AuxWords, AuxEnd,
 };
+constexpr bool ConsumerTraceKind(Kind kind) {
+    return kind <= Kind::ReadReturn ||
+           (kind >= Kind::ReadProducer && kind <= Kind::ReadProducerWindow) ||
+           (kind >= Kind::ReadConsumer && kind <= Kind::AuxEnd);
+}
 // Explicit startup-only diagnostic. No allocation, file I/O, mutex, or wait in Emit/NextId.
 // IDs identify one request, NOT one rendered frame. guest_frame is contextual SubmitDone count.
 void Start(const std::filesystem::path& directory) noexcept;

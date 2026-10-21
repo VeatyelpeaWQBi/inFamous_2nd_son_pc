@@ -402,15 +402,30 @@ inline u64 Total(Counter counter) {
 struct Tuning {
     // V3 remains opt-in until same-scene correctness/performance validation.
     std::atomic<bool> v3_lighting_reduction{false}; // C1 startup shader policy, independent of old scheduling.
+    std::atomic<bool> v3_lighting_cse{false}; // R7 exact-expression candidate; startup only.
+    std::atomic<bool> v3_lighting_vector{false}; // R11 guarded original-SMRD vector reads; startup only.
     std::atomic<bool> v3_descriptor_delta{false}; // A1 candidate, independently disabled in baseline.
     std::atomic<bool> v3_descriptor_evidence{false}; // Diagnostic comparison, no binding changes.
     std::atomic<bool> v3_layout_sharing{false}; // Immutable policy captured at PipelineCache startup.
     std::atomic<bool> v3_demand_readback{false};
     std::atomic<bool> v3_prefetch_batches{false};
+    // R8: prefetch recent full demand windows at existing fences; never shrink fault coverage.
+    std::atomic<bool> v3_window_prefetch{false};
+    std::atomic<bool> v3_sort_write_bounds{false};
     std::atomic<bool> v3_submit_prepare{false};
     std::atomic<bool> v3_lighting_schedule{false}; // Shader policy captured at renderer startup.
     std::atomic<bool> v3_particle_schedule{false};
     std::atomic<bool> v3_particle_async{false};
+    // Startup policy. Full, independently invalidated sessions may record in parallel;
+    // submission, resource state and guest command ordering stay serialized.
+    std::atomic<u32> v3_recording_workers{0}; // 0 original recorder, or 2/4 workers.
+    std::atomic<bool> v3_copy_coalesce{false};
+    std::atomic<bool> v3_completion_elision{false};
+    // Independent ablations of existing baseline memoization; never in combined candidates.
+    std::atomic<bool> v3_disable_params_lookup{false};
+    std::atomic<bool> v3_disable_flatbuf_reuse{false};
+    std::atomic<u32> auxiliary_evidence_limit{0};
+    std::atomic<u32> auxiliary_evidence_delay_seconds{0};
 
     /// Size of the window downloaded around a precise readback, a power of two.
     std::atomic<u64> readback_window_bytes{512 * 1024};
@@ -615,8 +630,17 @@ struct Tuning {
     std::atomic<u32> gpu_profile{0};
     /// Measuring-only compute filter; zero preserves full diagnostic coverage. Hex shader hash.
     std::atomic<u64> gpu_profile_compute_hash{0};
+    /// Optional lifetime limit across compute hashes; zero retains full diagnostic coverage.
+    std::atomic<u32> gpu_profile_compute_limit{0};
+    /// Optional draw filter and per-profiler-lifetime sample budget. Both zero in full/baseline.
+    std::atomic<u64> gpu_profile_draw_hash{0};
+    std::atomic<u32> gpu_profile_draw_limit{0};
     /// Startup-only bounded asynchronous CPU path trace, enabled explicitly by the launcher.
     std::atomic<bool> path_trace{false};
+    /// R13 startup-only bounded fault context evidence. No extra guest data reads.
+    std::atomic<u32> consumer_evidence_limit{0};
+    std::atomic<u32> consumer_evidence_delay_seconds{0};
+    std::atomic<bool> consumer_trace_only{false};
     /// readback_relaxed_sites: code of the game (offsets of 256 byte blocks of its executable, as
     /// the readback site report shows them) whose reads of GPU written memory do not wait for
     /// the GPU. The read gets guest memory as it is (data of the previous download, a frame or

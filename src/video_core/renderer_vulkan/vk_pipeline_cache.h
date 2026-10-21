@@ -194,6 +194,9 @@ public:
     const GraphicsPipeline* GetGraphicsPipeline(const DrawIndirectParams params = {});
 
     const ComputePipeline* GetComputePipeline();
+    bool IfssSortCodePinned() const noexcept {
+        return ifss_sort_code_pinned && !shader_replaced.load(std::memory_order_acquire);
+    }
 
     using Result = std::tuple<const Shader::Info*, vk::ShaderModule, u64>;
     Result GetProgram(Shader::HwStage hw_stage, Shader::SwStage sw_stage,
@@ -332,6 +335,8 @@ private:
     Shader::Gcn::FetchShaderData* fetch_shader{};
     GraphicsPipelineKey graphics_key{};
     ComputePipelineKey compute_key{};
+    bool ifss_sort_code_pinned{};
+    std::atomic<bool> shader_replaced{false};
     u32 num_new_pipelines{}; // new pipelines added to the cache since the game start
 
     // Only if Config::collectShadersForDebug()

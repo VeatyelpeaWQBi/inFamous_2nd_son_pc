@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
+#include "video_core/buffer_cache/readback_completion.h"
 
 #include <deque>
 #include <memory>
@@ -200,7 +201,8 @@ public:
     /// Finds a buffer for the specified region.
     [[nodiscard]] std::pair<const Buffer*, u64> ObtainBuffer(VAddr device_addr, u32 size,
                                                            bool is_written,
-                                                           bool is_texel_buffer = false);
+                                                           bool is_texel_buffer = false,
+                                                           std::optional<u32> write_prefix = {});
 
     /// Attempts to obtain a buffer without modifying the cache contents.
     [[nodiscard]] std::pair<const Buffer*, u64> ObtainBufferForImage(VAddr device_addr, u32 size);
@@ -341,14 +343,14 @@ private:
 
     /// Registers the window as pending and collects the copies of its GPU modified ranges into a
     /// download buffer, without recording them. Returns false when there is nothing to download
-    /// (the window stays registered).
-    bool CollectReadback(const Buffer* arena, PendingReadback& readback);
+    /// or the speculative allocation exceeds budget (the window stays registered).
+    bool CollectReadback(const Buffer* arena, PendingReadback& readback, u64 budget = ~u64{0});
 
     /// Collects copies, optionally narrows producer dependencies, then selects the copy queue.
     /// Precise mode always refines known copied-range dependencies; missing evidence keeps
     /// the original whole-window waits and queue selection.
     bool PrepareReadback(const Buffer* arena, PendingReadback& readback, WindowWriters& writers,
-                         bool queue_enabled, bool& on_queue);
+                         bool queue_enabled, bool& on_queue, u64 budget = ~u64{0});
 
     /// Collects the window and records its copies in the graphics command buffer.
     bool RecordReadback(const Buffer* arena, PendingReadback& readback);
@@ -357,7 +359,7 @@ private:
     void NoteHotWindow(VAddr start, VAddr end, bool demand_pages = false);
     void DisableFineReadbacks();
     // Returns true only when at least one copy was recorded.
-    bool PrefetchDemandBatches();
+    bool PrefetchDemandBatches(bool full_windows = false);
     void SubmitPrefetchReadbacks(size_t first_queued, bool recorded_on_graphics,
                                  bool recorded_on_queue, std::array<u64, 2> queue_wait_ticks);
 
@@ -387,6 +389,10 @@ private:
     /// after an unfinished earlier readback of the same window. With wait, waits for all of them
     /// and writes them in submission order.
     void CompleteReadbacks(bool wait);
+    void PublishReadbackCompletions();
+    // CP-only list, capped at 128; guest code owns only its individual atomic ticket.
+    std::vector<std::shared_ptr<ReadbackCompletion>> completion_watchers;
+    std::atomic<bool> completion_elision_reported{false};
 
     /// Writes the pending readback at this position of pending_readbacks to guest memory.
     void FinishReadback(size_t index);
@@ -453,6 +459,8 @@ private:
     std::deque<PendingReadback> pending_readbacks;
     std::unique_ptr<ReadbackQueue> readback_queue;
     boost::container::static_vector<HotWindow, 64> hot_windows;
+    u64 window_prefetch_frame{~u64{0}};
+    bool window_prefetch_reported{};
 
     std::unique_ptr<FaultManager> fault_manager;
     std::unique_ptr<Buffer> bda_pagetable_buffer;

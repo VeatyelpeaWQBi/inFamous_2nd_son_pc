@@ -10,7 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from analyze_timing import (Event, flip_path, read_path, stats, host_phase_path,
                             producer_path, submission_paths, feedback_summary, descriptor_line,
                             descriptor_invariants, frame_summary, descriptor_update_line,
-                            descriptor_update_invariants, descriptor_summary, depth_spirv_facts)
+                            descriptor_update_invariants, descriptor_summary, depth_spirv_facts,
+                            lighting_cse_summary, feedback_submit_opportunities,
+                            summarize_submit_opportunities, compute_sample_summary)
 
 
 def chain():
@@ -25,6 +27,92 @@ def chain():
 
 
 class TimingAnalysisTests(unittest.TestCase):
+    def test_completion_elision_requires_exact_published_range_and_finished_wait(self):
+        events = chain()[:5] + [Event(45, 1, 'read_completion_published', 4096, 8),
+                               Event(52, 0, 'read_completion_elided', 0, 4096, 8),
+                               Event(80, 0, 'read_return', 1)]
+        row = read_path(events)
+        self.assertEqual(row['completion_elided'], 1)
+        self.assertNotIn('completion_cp_ns', row)
+        for replacement in (Event(45, 1, 'read_completion_published', 4097, 8),
+                            Event(53, 1, 'read_completion_published', 4096, 8)):
+            bad = [replacement if e.kind == 'read_completion_published' else e for e in events]
+            with self.assertRaises(ValueError):
+                read_path(bad)
+        with self.assertRaises(ValueError):
+            read_path([e for e in events if e.kind != 'read_wait_end'])
+        with self.assertRaises(ValueError):
+            read_path([e for e in events if e.kind != 'read_completion_published'])
+
+    def test_completion_elision_rejects_writes_wrong_thread_and_duplicate_completion(self):
+        events = chain()[:5] + [Event(45, 1, 'read_completion_published', 4096, 8),
+                               Event(52, 0, 'read_completion_elided', 0, 4096, 8),
+                               Event(80, 0, 'read_return', 1)]
+        for bad in ([Event(0, 0, 'read_request', 4096, 8, 123, 1)] + events[1:],
+                    [Event(52, 3, 'read_completion_elided', 0, 4096, 8)
+                     if e.kind == 'read_completion_elided' else e for e in events],
+                    events + [Event(53, 0, 'read_completion_request', 0)]):
+            with self.assertRaises(ValueError):
+                read_path(bad)
+
+    def test_exact_compute_reports_use_counts_not_rounded_rates(self):
+        log = ('Perf GPU compute samples 00000000ce1675e0: count=2 total_ns=1000000\n'
+               'Perf GPU compute samples 00000000ce1675e0: count=1 total_ns=8000000\n'
+               'GPU compute profile sample budget exhausted: shader=00000000ce1675e0 issued=3\n')
+        with patch.object(Path, 'open', return_value=io.StringIO(log)):
+            row = compute_sample_summary(Path('session'), single_profiler=True)
+        self.assertEqual(row['shaders'][0]['mean_ms'], 3)
+        self.assertEqual(row['shaders'][0]['reports'], 2)
+        self.assertTrue(row['all_issued_samples_reported'])
+        self.assertFalse(row['performance_acceptance'])
+
+    def test_compute_reports_do_not_conflate_multiple_profiler_budgets(self):
+        log = ('Perf GPU compute samples 00000000ce1675e0: count=2 total_ns=1000000\n'
+               'GPU compute profile sample budget exhausted: shader=00000000ce1675e0 issued=2\n')
+        with patch.object(Path, 'open', return_value=io.StringIO(log)):
+            row = compute_sample_summary(Path('session'))
+        self.assertIsNone(row['resolved_issued_budget'])
+        self.assertIsNone(row['all_issued_samples_reported'])
+        with patch.object(Path, 'open', return_value=io.StringIO(log * 2)):
+            row = compute_sample_summary(Path('session'), single_profiler=True)
+        self.assertEqual(row['reported_samples'], 4)
+        self.assertIsNone(row['resolved_issued_budget'])
+        self.assertIsNone(row['all_issued_samples_reported'])
+
+    def test_compute_reports_reject_malformed_or_over_budget_counts(self):
+        for sample in ('count=0 total_ns=0', 'count=broken total_ns=1', 'count=3 total_ns=1'):
+            log = ('Perf GPU compute samples 00000000ce1675e0: ' + sample + '\n'
+                   'GPU compute profile sample budget exhausted: shader=00000000ce1675e0 issued=2\n')
+            with patch.object(Path, 'open', return_value=io.StringIO(log)):
+                row = compute_sample_summary(Path('session'), single_profiler=True)
+            self.assertTrue(row['issues'])
+            self.assertFalse(row['all_issued_samples_reported'])
+
+    def test_lighting_cse_is_not_binary_or_performance_acceptance(self):
+        log = ('C1 lighting CSE: requested=true (startup policy)\n'
+               'C1 lighting CSE shader 0xce1675e0: pinned=true removed=8 '
+               'cross_block=5 floating=2 budget_reached=false\n')
+        with patch.object(Path, 'open', return_value=io.StringIO(log)), \
+                patch.object(Path, 'glob', return_value=[]):
+            summary = lighting_cse_summary(Path('session'))
+        self.assertEqual(summary['mechanism_status'], 'reported-ir-reuse')
+        self.assertEqual(summary['transformations'][0]['removed'], 8)
+        self.assertFalse(summary['performance_acceptance'])
+        self.assertEqual(summary['final_binaries'], [])
+        self.assertEqual(summary['issues'], [])
+
+    def test_lighting_cse_rejects_inconsistent_or_malformed_evidence(self):
+        for row in ('pinned=false removed=1 cross_block=0 floating=0 budget_reached=false',
+                    'pinned=true removed=1 cross_block=2 floating=0 budget_reached=false',
+                    'pinned=true removed=1 cross_block=0 floating=2 budget_reached=false',
+                    'pinned=true removed=broken'):
+            with patch.object(Path, 'open', return_value=io.StringIO(
+                    'C1 lighting CSE shader 0xce1675e0: ' + row)), \
+                    patch.object(Path, 'glob', return_value=[]):
+                summary = lighting_cse_summary(Path('session'))
+                self.assertTrue(summary['issues'])
+                self.assertEqual(summary['mechanism_status'], 'invalid-evidence')
+
     def test_host_phase_ordering_and_identity(self):
         begin = Event(10, 2, 'host_phase_begin', 2)
         end = Event(35, 2, 'host_phase_end', 2)
@@ -144,6 +232,92 @@ class TimingAnalysisTests(unittest.TestCase):
                    Event(25,1,'submit_driver_end',111,7,0,1)]}
         rows,_=submission_paths(groups)
         self.assertEqual(len(rows),1)
+
+    def test_graphics_wait_partition_clips_driver_intervals(self):
+        for begin, end, expected in ((25, 30, (4, 5, 20)), (10, 20, (0, 0, 29)),
+                                      (10, 60, (0, 29, 0)), (60, 70, (29, 0, 0))):
+            events = self.producer_events()
+            for event in events:
+                if event.kind in ('read_wait_begin', 'read_wait_end'):
+                    event.b, event.c = 0, 7
+            groups = {9: events, 2: [Event(begin, 2, 'submit_driver_begin', 111, 7, 1),
+                                      Event(end, 2, 'submit_driver_end', 111, 7, 1, 1)]}
+            summary = feedback_summary(groups, [{'request_id': 9, **read_path(events)}])
+            parts = summary['graphics_wait_partition']
+            self.assertEqual(summary['counts']['partitioned_graphics_waits'], 1)
+            for name, ns in zip(('before_driver_ns', 'during_driver_ns', 'after_driver_ns'), expected):
+                self.assertEqual(parts[name]['mean_ms'], ns / 1e6)
+            self.assertEqual(sum(expected), 29)
+
+    def test_readback_queue_wait_is_not_joined_by_tick_alone(self):
+        groups = {9: self.producer_events(),
+                  2: [Event(25, 2, 'submit_driver_begin', 111, 99, 1),
+                      Event(30, 2, 'submit_driver_end', 111, 99, 1, 1)]}
+        summary = feedback_summary(groups, [{'request_id': 9, **read_path(groups[9])}])
+        self.assertEqual(summary['graphics_wait_partition'], {})
+        self.assertEqual(summary['counts']['waits_without_resolved_graphics_domain'], 1)
+
+    def opportunity_events(self):
+        events = self.producer_events() + [Event(15, 1, 'read_dependencies', 7, 0)]
+        for event in events:
+            if event.kind in ('read_wait_begin', 'read_wait_end'):
+                event.b, event.c = 0, 7
+        return events
+
+    def opportunities(self, events, domain=111, tick=7):
+        submissions, _ = submission_paths({1: [Event(20, 1, 'submit_queued', domain, tick, 0, 1)]})
+        return feedback_submit_opportunities(events, producer_path(events), submissions)
+
+    def test_submit_opportunity_preserves_request_and_window_scope(self):
+        for scope in (2, 3):
+            events = self.opportunity_events()
+            next(e for e in events if e.kind == 'read_producer').d = (3 << 8) | (scope << 16)
+            rows = self.opportunities(events)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]['scopes'], scope)
+            self.assertEqual(rows[0]['recorded_to_enqueue_cpu_ns'], 18)
+            self.assertEqual(rows[0]['request_to_enqueue_cpu_ns'], 20)
+            self.assertEqual(rows[0]['request_before_recorded_cpu_ns'], 2)
+            self.assertEqual(rows[0]['cpu_wait_ns'], 29)
+            self.assertTrue(rows[0]['beyond_submitted_snapshot'])
+        next(e for e in events if e.kind == 'read_request').ns = 3
+        row = self.opportunities(events)[0]
+        self.assertEqual(row['recorded_before_request_cpu_ns'], 1)
+        self.assertNotIn('request_before_recorded_cpu_ns', row)
+
+    def test_submit_opportunity_requires_exact_queue_domain_and_dependency_tick(self):
+        self.assertEqual(self.opportunities(self.opportunity_events(), domain=222), [])
+        self.assertEqual(self.opportunities(self.opportunity_events(), tick=8), [])
+        for field, value in (('read_dependencies', 8), ('read_wait_begin', 8)):
+            events = self.opportunity_events()
+            event = next(e for e in events if e.kind == field)
+            if field == 'read_dependencies': event.a = value
+            else: event.c = value
+            self.assertEqual(self.opportunities(events), [])
+        events = self.opportunity_events()
+        for event in events:
+            if event.kind in ('read_wait_begin', 'read_wait_end'): event.b = 1
+        self.assertEqual(self.opportunities(events), [])
+
+    def test_submit_opportunity_excludes_reused_and_ambiguous_retry_copies(self):
+        events = [e for e in self.opportunity_events() if e.kind != 'read_dependencies']
+        self.assertEqual(self.opportunities(events), [])
+        events += [Event(15, 1, 'read_dependencies', 7, 0),
+                   Event(16, 1, 'read_dependencies', 7, 0)]
+        self.assertEqual(self.opportunities(events), [])
+
+    def test_submit_opportunity_does_not_clamp_recorder_race_into_headroom(self):
+        events = self.opportunity_events()
+        # Producer Commit's CPU timestamp can follow enqueue; it is not GPU completion.
+        next(e for e in events if e.kind == 'read_producer_time').c = 11
+        submissions, _ = submission_paths({1: [Event(5, 1, 'submit_queued', 111, 7, 0, 1)]})
+        rows = feedback_submit_opportunities(events, producer_path(events), submissions)
+        self.assertTrue(rows[0]['recorded_after_enqueue'])
+        self.assertNotIn('recorded_to_enqueue_cpu_ns', rows[0])
+        summary = summarize_submit_opportunities(rows * 2)[0]
+        self.assertEqual(summary['matched_read_candidates'], 2)
+        self.assertEqual(summary['distinct_declared_commands'], 1)
+        self.assertEqual(summary['intervals_not_additive']['recorded_to_enqueue_cpu_ns']['count'], 0)
 
     def test_submit_pair_must_share_request_identity(self):
         groups={1:[Event(20,1,'submit_driver_begin',111,7,1)],

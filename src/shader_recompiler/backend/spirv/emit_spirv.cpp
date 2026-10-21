@@ -663,7 +663,10 @@ std::vector<u32> EmitSPIRV(const Profile& profile, const RuntimeInfo& runtime_in
     SetupCapabilities(program.info, profile, runtime_info, ctx);
     SetupFloatMode(ctx, profile, runtime_info, main);
     PatchPhiNodes(program, ctx);
-    return ctx.Assemble();
+    auto words = ctx.Assemble();
+    ASSERT_MSG(Shader::Optimization::FinalizeIfssArrayLengths(words, ctx.ifss_array_lengths),
+               "R11 array-length placeholder mismatch");
+    return words;
 }
 
 Id EmitPhi(EmitContext& ctx, IR::Inst* inst) {

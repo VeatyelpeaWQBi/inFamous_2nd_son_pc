@@ -32,7 +32,8 @@ void ApplyGameProfile(std::string_view serial);
  * unconditional and are not controlled by this file. V3 candidates are separate, default off:
  * v3_descriptor_evidence (diagnostic comparison only), v3_layout_sharing (renderer startup only),
  * v3_demand_readback, v3_prefetch_batches, v3_submit_prepare, v3_lighting_schedule,
- * v3_particle_schedule, v3_particle_async. Shader scheduling is captured at renderer startup;
+ * v3_particle_schedule, v3_particle_async, v3_lighting_reduction, v3_lighting_cse.
+ * Shader scheduling is captured at renderer startup;
  * changing those keys during play does not change compiled code. Lines are "key = value":
  *   readback_window_kb = 512      window downloaded around a precise readback (power of two)
  *   readback_write_discard = 0    see GPUSettings::readbacks_write_discard

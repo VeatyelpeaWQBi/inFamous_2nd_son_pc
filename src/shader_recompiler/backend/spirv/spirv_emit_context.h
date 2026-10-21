@@ -9,6 +9,7 @@
 
 #include "shader_recompiler/backend/bindings.h"
 #include "shader_recompiler/info.h"
+#include "shader_recompiler/ifss_vector_array_length.h"
 #include "shader_recompiler/ir/value.h"
 #include "shader_recompiler/profile.h"
 
@@ -316,6 +317,7 @@ public:
         F32,
         U64,
         F64,
+        U32x4,
         NumAlias,
     };
 
@@ -352,6 +354,7 @@ public:
     Bindings& binding;
     boost::container::small_vector<Id, 16> buf_type_ids;
     boost::container::small_vector<BufferDefinition, 16> buffers;
+    std::vector<Shader::Optimization::IfssArrayLength> ifss_array_lengths;
     boost::container::small_vector<TextureDefinition, 8> images;
     boost::container::small_vector<Id, 4> samplers;
     std::unordered_map<u32, Id> first_to_last_label_map;

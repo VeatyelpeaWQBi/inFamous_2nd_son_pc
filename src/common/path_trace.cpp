@@ -14,6 +14,8 @@
 #include <windows.h>
 #endif
 #include "common/logging/log.h"
+#include "common/consumer_evidence.h"
+#include "common/auxiliary_evidence.h"
 #include "common/path_trace_queue.h"
 #include "common/perf_stats.h"
 #include "common/thread.h"
@@ -54,8 +56,11 @@ constexpr std::array Names{
     "copy_record", "copy_publish_begin", "copy_publish_end", "gpu_dispatch_result", "frame_sample", "tuning_reload", "host_phase_begin", "host_phase_end",
     "read_producer", "read_producer_range", "read_producer_time", "read_producer_domain", "read_producer_coverage", "read_producer_window",
     "submit_queued", "submit_driver_begin", "submit_driver_end", "feedback_fence",
+    "read_consumer", "read_consumer_regs0", "read_consumer_regs1", "read_consumer_regs2",
+    "read_completion_published", "read_completion_elided",
+    "aux_begin", "aux_packet", "aux_words", "aux_end",
 };
-static_assert(Names.size() == static_cast<u32>(Kind::FeedbackFence) + 1);
+static_assert(Names.size() == static_cast<u32>(Kind::AuxEnd) + 1);
 struct State {
     std::array<Slot, MaxThreads> slots;
     std::atomic<u32> next_slot{0};
@@ -72,6 +77,7 @@ struct State {
     u64 initial_compute_hash{};
     u64 events{}, cutoff_publishers{};
     bool io_failed{};
+    bool consumer_only{};
 
     bool Drain() {
         bool any = false;
@@ -112,7 +118,12 @@ struct State {
              << ",\"gpu_profile_at_start\":" << initial_gpu_profile
              << ",\"compute_hash_at_start\":" << initial_compute_hash
              << ",\"queue_bytes\":" << sizeof(slots)
-             << ",\"guest_frame_semantics\":\"SubmitDone context only; not a causal frame ID\"}\n";
+             << ",\"consumer_only\":" << (consumer_only ? "true" : "false")
+             << ",\"consumer_evidence\":";
+        ConsumerEvidence::WriteMetadata(meta);
+        meta << ",\"auxiliary_evidence\":";
+        AuxiliaryEvidence::WriteMetadata(meta);
+        meta << ",\"guest_frame_semantics\":\"SubmitDone context only; not a causal frame ID\"}\n";
         meta.close();
         if (!meta) throw std::runtime_error("path trace metadata write failed");
     }
@@ -164,6 +175,7 @@ void Start(const std::filesystem::path& directory) noexcept {
     try {
         auto state = std::make_unique<State>();
         state->directory = directory;
+        state->consumer_only = Perf::GetTuning().consumer_trace_only.load(std::memory_order_relaxed);
         state->file.open(directory / "path-trace.csv", std::ios::trunc);
         state->file.imbue(std::locale::classic());
         state->file << "thread,seq,ns,guest_frame,event,id,a,b,c,d\n";
@@ -204,6 +216,8 @@ void Emit(Kind kind, u64 id, u64 a, u64 b, u64 c, u64 d) noexcept {
     if (!id) return;
     State* state = active.load(std::memory_order_acquire);
     if (!state) return;
+    if (state->consumer_only &&
+        (!(id & ConsumerEvidence::ConsumerIdBit) || !ConsumerTraceKind(kind))) return;
     const u64 gate = state->gate.fetch_add(2, std::memory_order_acq_rel);
     if (gate & 1) {
         state->gate.fetch_sub(2, std::memory_order_release);

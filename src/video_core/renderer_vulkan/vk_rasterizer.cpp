@@ -20,6 +20,7 @@
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
+#include "video_core/buffer_cache/ifss_sort_write_bounds.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -33,6 +34,32 @@
 namespace Vulkan {
 
 namespace {
+
+std::optional<std::array<u32, 5>> SortWritePrefixes(const Shader::Info& info,
+                                                  const AmdGpu::ComputeProgram& program) {
+    if (info.hw_stage != Shader::HwStage::Compute || info.sw_stage != Shader::SwStage::Compute ||
+        info.uses_dma || !info.images.empty() || !info.samplers.empty() || !info.fmasks.empty() ||
+        info.buffers.size() < 5) return {};
+    std::array<VideoCore::IfssSortBuffer, 5> buffers{};
+    for (size_t i = 0; i < info.buffers.size(); ++i) {
+        const auto& resource = info.buffers[i];
+        if (i >= buffers.size()) {
+            if (resource.buffer_type != Shader::BufferType::Flatbuf || resource.is_written)
+                return {};
+            continue;
+        }
+        if (resource.IsSpecial() || resource.post_op != Shader::SharpFetchPostOp::None) return {};
+        const auto sharp = resource.GetSharp(info);
+        buffers[i] = {sharp.base_address, sharp.GetSize(), sharp.GetStride(), resource.is_written,
+                      resource.is_formatted, bool(sharp.swizzle_enable), bool(sharp.add_tid_enable)};
+    }
+    return VideoCore::IfssSortWritePrefixes(
+        {{program.dim_x, program.dim_y, program.dim_z},
+         {program.num_thread_x.full, program.num_thread_y.full, program.num_thread_z.full},
+         {program.start_x, program.start_y, program.start_z}, program.settings.num_user_regs,
+         program.settings.tgid_enable, bool(program.settings.scratch_en)},
+        buffers);
+}
 
 // Keep sampled read-only depth and its stencil attachment in the same layout.
 vk::ImageLayout DepthTargetLayout(bool has_stencil, bool depth_write, bool stencil_write) {
@@ -1133,7 +1160,21 @@ void Rasterizer::DispatchDirect() {
     const ComputeQueueScope queue_scope{*this, UseComputeQueue(pipeline)};
     auto trace_producer = buffer_cache.BeginProducerTrace(
         pipeline->GetStage(Shader::SwStage::Compute).pgm_hash, 3);
-    if (!BindResources(pipeline)) {
+    const auto write_prefixes = pipeline_cache.IfssSortCodePinned()
+                                    ? SortWritePrefixes(cs, cs_program) : std::nullopt;
+    if (!write_prefixes && cs.pgm_hash == VideoCore::IfssSortShaderHash &&
+        Common::Perf::GetTuning().v3_sort_write_bounds.load(std::memory_order_relaxed) &&
+        !sort_write_fallback_reported) {
+        sort_write_fallback_reported = true;
+        LOG_INFO(Render_Vulkan,
+                 "R9 sort write bounds fallback: pinned={} groups={}x{}x{} threads={}x{}x{} "
+                 "user_regs={} tgid={}", pipeline_cache.IfssSortCodePinned(), cs_program.dim_x,
+                 cs_program.dim_y, cs_program.dim_z, cs_program.num_thread_x.full,
+                 cs_program.num_thread_y.full, cs_program.num_thread_z.full,
+                 u32(cs_program.settings.num_user_regs), u32(cs_program.settings.tgid_enable));
+        TraceShaderResources(cs);
+    }
+    if (!BindResources(pipeline, write_prefixes ? &*write_prefixes : nullptr)) {
         return;
     }
     if (g_dump.frames_left != 0) [[unlikely]] {
@@ -1160,6 +1201,13 @@ void Rasterizer::DispatchDirect() {
     }
     Sched().ProfileDispatchBegin(cs.pgm_hash);
     cmdbuf.dispatch(cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
+    if (write_prefixes && !sort_write_bounds_reported) {
+        sort_write_bounds_reported = true;
+        LOG_INFO(Render_Vulkan,
+                 "R9 sort write bounds active: groups={} arrays={} bytes each state={} bytes; "
+                 "full descriptor reads and barriers retained",
+                 cs_program.dim_x, (*write_prefixes)[3], (*write_prefixes)[1]);
+    }
     trace_producer.Commit();
     if (on_compute_queue && cs.pgm_hash == 0x3ea96db0ULL &&
         Common::Perf::GetTuning().v3_particle_async.load(std::memory_order_relaxed)) {
@@ -1373,7 +1421,7 @@ void Rasterizer::PrefetchTexMemo(u64 key) const noexcept {
     VideoCore::PrefetchLine(reinterpret_cast<const u8*>(entry) + sizeof(TexMemo) - 1);
 }
 
-bool Rasterizer::BindResources(const Pipeline* pipeline) {
+bool Rasterizer::BindResources(const Pipeline* pipeline, const std::array<u32, 5>* write_prefixes) {
     const bool evidence =
         Common::Perf::GetTuning().v3_descriptor_evidence.load(std::memory_order_relaxed);
     std::optional<Common::Perf::ScopedTimer> prepare_timer;
@@ -1410,7 +1458,7 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
         {
             std::optional<Common::Perf::ScopedTimer> timer;
             if (evidence) timer.emplace(Common::Perf::R4BufferCalls, Common::Perf::R4BufferNs);
-            BindBuffers(*stage, binding, push_data);
+            BindBuffers(*stage, binding, push_data, write_prefixes);
         }
         {
             std::optional<Common::Perf::ScopedTimer> timer;
@@ -1896,7 +1944,8 @@ void Rasterizer::TraceShaderResources(const Shader::Info& stage) {
 }
 
 void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Bindings& binding,
-                             Shader::PushData& push_data) {
+                             Shader::PushData& push_data,
+                             const std::array<u32, 5>* write_prefixes) {
     const u64 alignment = instance.StorageMinAlignment();
     for (const auto& trace : Common::Perf::GetTuning().trace_shaders) {
         const u64 hash = trace.load(std::memory_order_relaxed);
@@ -1941,6 +1990,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                 auto& vk_buffer = buffer_cache.GetStreamBuffer();
                 const u32 ubo_size = stage.flattened_ud_buf.size() * sizeof(u32);
                 if (Common::Perf::GetTuning().runtime_lookup_memo.load(std::memory_order_relaxed) &&
+                    !Common::Perf::GetTuning().v3_disable_flatbuf_reuse.load(std::memory_order_relaxed) &&
                     !Common::Perf::FrameDumpActive().load(std::memory_order_relaxed) &&
                     ubo_size <= 4096) {
                     pending_flatbufs.push_back(PendingFlatbuf{
@@ -2005,8 +2055,12 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                     LOG_ERROR(Render, "Clamped size from {} to {} for stage {:#x}",
                               vsharp.GetSize(), size, stage.pgm_hash);
                 }
+                std::optional<u32> prefix;
+                const size_t resource_index = &desc - stage.buffers.data();
+                if (write_prefixes && desc.is_written && resource_index < write_prefixes->size() &&
+                    size == vsharp.GetSize()) prefix = (*write_prefixes)[resource_index];
                 const auto [buffer, offset] = buffer_cache.ObtainBuffer(
-                    vsharp.base_address, size, desc.is_written, desc.is_formatted);
+                    vsharp.base_address, size, desc.is_written, desc.is_formatted, prefix);
                 const u64 offset_aligned = Common::AlignDown(offset, alignment);
                 const u64 adjust = offset - offset_aligned;
                 if (adjust % 4 != 0) {

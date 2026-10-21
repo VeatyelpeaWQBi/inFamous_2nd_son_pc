@@ -21,3 +21,5 @@ if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
 & (Join-Path $testRoot 'test_diagnostic_usage.ps1')
 & (Join-Path $testRoot 'test_diagnostic_retention.ps1')
 & (Join-Path $testRoot 'test_control_protocol.ps1')
+& (Join-Path $testRoot 'test_v3_profiles.ps1')
+& (Join-Path $testRoot 'test_v3_matrix_gates.ps1')

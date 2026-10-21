@@ -26,6 +26,7 @@
 #include "common/path_trace.h"
 #include "common/path_util.h"
 #include "core/emulator_settings.h"
+#include "core/debug_state.h"
 #include "input/controller.h"
 #include "video_core/renderdoc.h"
 #ifdef IFSS_HAVE_ITT
@@ -78,6 +79,32 @@ ClockStamp SampleClock() {
         std::chrono::system_clock::now().time_since_epoch()).count();
     return {utc, before, Clock::now().time_since_epoch().count()};
 #endif
+}
+void PublishStatus(const nlohmann::json& status) {
+    const auto path = root / "status.json";
+    const auto pending = root / "status.json.pending";
+    try {
+        {
+            std::ofstream output{pending, std::ios::binary | std::ios::trunc};
+            output << status.dump(2);
+            output.close();
+            if (!output) throw std::runtime_error("Could not persist native status snapshot");
+        }
+        // Readers allow delete sharing and keep either the old or the new complete file.
+#ifdef _WIN32
+        if (!MoveFileExW(pending.c_str(), path.c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            throw std::runtime_error("Could not publish native status snapshot: Windows error " +
+                                     std::to_string(GetLastError()));
+        }
+#else
+        std::filesystem::rename(pending, path);
+#endif
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(pending, ignored);
+        throw;
+    }
 }
 void Acknowledge(u64 sequence, std::string_view action, bool accepted,
                  std::string_view error = {}) {
@@ -446,7 +473,11 @@ void Poll(Input::GameController& controller) {
         } else if (action == "status") {
             const auto& tuning = Common::Perf::GetTuning();
             nlohmann::json status{
+                {"schema", 2},
                 {"sequence", sequence}, {"game_serial", Common::ElfInfo::Instance().GameSerial()},
+                {"observed_unix_ms", SampleClock().unix_ns / 1000000},
+                {"draws_per_frame", DebugState.GetDrawCallsAvg()},
+                {"dispatches_per_frame", DebugState.GetDispatchesAvg()},
                 {"renderdoc_ready", VideoCore::IsRenderDocLoaded()},
                 {"cpu_affinity", tuning.cpu_affinity.load()},
                 {"asc_queue", tuning.asc_queue.load()},
@@ -487,7 +518,7 @@ void Poll(Input::GameController& controller) {
                 }
                 SDL_free(windows);
             }
-            std::ofstream{root / "status.json"} << status.dump(2);
+            PublishStatus(status);
         } else if (action == "quit") {
             quit_requested.store(true, std::memory_order_release);
             SDL_Event event{};

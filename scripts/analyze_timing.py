@@ -3,6 +3,7 @@
 import argparse
 from collections import Counter, defaultdict
 import csv
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 import json
@@ -16,7 +17,9 @@ read_copy read_wait_begin read_wait_end read_fallback_begin read_fallback_end re
 flip_request flip_prepare flip_ready flip_consume flip_present_return flip_done copy_record
 copy_publish_begin copy_publish_end gpu_dispatch_result frame_sample tuning_reload host_phase_begin host_phase_end
 read_producer read_producer_range read_producer_time read_producer_domain read_producer_coverage
-read_producer_window submit_queued submit_driver_begin submit_driver_end feedback_fence""".split())
+read_producer_window submit_queued submit_driver_begin submit_driver_end feedback_fence
+read_consumer read_consumer_regs0 read_consumer_regs1 read_consumer_regs2
+read_completion_published read_completion_elided aux_begin aux_packet aux_words aux_end""".split())
 FIELDS = ['thread', 'seq', 'ns', 'guest_frame', 'event', 'id', 'a', 'b', 'c', 'd']
 
 
@@ -67,6 +70,26 @@ def read_path(events):
         raise ValueError('initial command-processor phase disagrees with read mode')
     intervals = []
     result = Counter(total_ns=total)
+    elisions = [e for e in events if e.kind == 'read_completion_elided']
+    publications = [e for e in events if e.kind == 'read_completion_published']
+    if elisions or publications:
+        if len(publications) != 1 or len(elisions) > 1 or end.a != 1 or start.d & 1:
+            raise ValueError('invalid completion handoff evidence')
+        published = publications[0]
+        if (published.a, published.b) != (start.a, start.b):
+            raise ValueError('completion handoff range mismatch')
+        if elisions:
+            elided = elisions[0]
+            if elided.thread != start.thread or (elided.b, elided.c) != (start.a, start.b):
+                raise ValueError('completion elision identity mismatch')
+            ordered(published, elided)
+            completed_waits = [e for e in events if e.kind == 'read_wait_end' and e.a == elided.a]
+            if len(completed_waits) != 1:
+                raise ValueError('completion elision lacks its GPU wait')
+            ordered(completed_waits[0], elided)
+            if any(e.kind == 'read_completion_request' and e.a >= elided.a for e in events):
+                raise ValueError('elided completion still requested the CP')
+            result['completion_elided'] = 1
     for e in sorted(events, key=lambda e: e.ns):
         if not start.ns <= e.ns <= end.ns:
             raise ValueError('read event outside handler lifetime')
@@ -302,6 +325,114 @@ def submission_paths(groups):
     return result, dict(partial)
 
 
+def feedback_submit_opportunities(events, evidence, submissions):
+    """CPU intervals for declared writers sharing a NEW copy's graphics wait.
+
+    A window candidate can be unrelated to the faulting bytes. Matching a tick does
+    not establish actual stores, GPU readiness, or that an earlier flush is safe.
+    """
+    request = one(events, 'read_request')
+    dependencies = [e for e in events if e.kind == 'read_dependencies']
+    if len(dependencies) != 1:
+        return []  # Reused copies/retry snapshots cannot be joined unambiguously here.
+    dependency = dependencies[0]
+    domains = {p['domain'] for p in evidence['candidates'] if p['queue'] == 0 and p['domain']}
+    if len(domains) != 1:
+        return []
+    domain = next(iter(domains))
+    rows = []
+    for wait in (e for e in events if e.kind == 'read_wait_begin' and e.b == 0):
+        if dependency.a != wait.c:
+            continue  # The copy may signal a later tick than the declared writer.
+        finish = one([e for e in events if (e.a, e.b, e.c) == (wait.a, wait.b, wait.c)],
+                     'read_wait_end')
+        duration = ordered(wait, finish)
+        submit = submissions.get((domain, wait.c), {})
+        queued = submit.get('submit_queued')
+        if not duration or not queued:
+            continue
+        for p in evidence['candidates']:
+            if (p['queue'] != 0 or p['domain'] != domain or p['tick'] != wait.c or
+                    p['kind'] not in (3, 4) or not p['command'] or not p['recorded_ns']):
+                continue
+            recorded = p['recorded_ns']
+            row = {'key': (domain, p['tick'], p['sequence'], p['command']),
+                   'site': request.c, 'shader': p['shader'], 'scopes': p['scopes'],
+                   'beyond_submitted_snapshot': p['tick'] > p['submitted_tick_snapshot'],
+                   'cpu_wait_ns': duration, 'recorded_after_enqueue': recorded > queued.ns,
+                   'request_after_enqueue': request.ns > queued.ns}
+            if recorded <= queued.ns:
+                row['recorded_to_enqueue_cpu_ns'] = queued.ns - recorded
+            if request.ns <= queued.ns:
+                row['request_to_enqueue_cpu_ns'] = queued.ns - request.ns
+            label = ('recorded_before_request_cpu_ns' if recorded <= request.ns else
+                     'request_before_recorded_cpu_ns')
+            row[label] = abs(request.ns - recorded)
+            rows.append(row)
+    return rows
+
+
+def summarize_submit_opportunities(rows):
+    groups = defaultdict(list)
+    for row in rows:
+        groups[row['site'], row['shader'], row['scopes'], row['beyond_submitted_snapshot']].append(row)
+    result = []
+    for (site, shader, scopes, current), items in sorted(groups.items(),
+            key=lambda item: (-len(item[1]), item[0])):
+        result.append({'rip': hex(site), 'shader': f'{shader:016x}', 'scopes': scopes,
+            'beyond_submitted_snapshot': current, 'matched_read_candidates': len(items),
+            'distinct_declared_commands': len({row['key'] for row in items}),
+            'recorded_after_enqueue': sum(row['recorded_after_enqueue'] for row in items),
+            'request_after_enqueue': sum(row['request_after_enqueue'] for row in items),
+            'intervals_not_additive': {name: stats([row[name] for row in items if name in row])
+                for name in ('recorded_to_enqueue_cpu_ns', 'request_to_enqueue_cpu_ns',
+                             'recorded_before_request_cpu_ns', 'request_before_recorded_cpu_ns',
+                             'cpu_wait_ns')}})
+    return result
+
+
+def compute_sample_summary(session, log_path=None, *, single_profiler=False):
+    """Exact process-wide GPU brackets, independent of rounded ms/s and CPU windows."""
+    totals, reports, budgets, issues = defaultdict(Counter), Counter(), [], []
+    sample_pattern = re.compile(r'Perf GPU compute samples ([0-9a-f]{16}): count=(\d+) total_ns=(\d+)\s*$')
+    budget_pattern = re.compile(r'GPU compute profile sample budget exhausted: shader=([0-9a-f]{16}) issued=(\d+)\s*$')
+    path = log_path if log_path is not None else session / 'log' / 'shad_log.txt'
+    with path.open(encoding='utf-8-sig', errors='replace') as stream:
+        for line in stream:
+            if 'Perf GPU compute samples ' in line:
+                match = sample_pattern.search(line)
+                if not match or not int(match[2]):
+                    issues.append('Malformed or empty exact GPU compute sample report')
+                    continue
+                shader, count, ns = match[1], int(match[2]), int(match[3])
+                totals[shader].update(count=count, total_ns=ns)
+                reports[shader] += 1
+            if 'GPU compute profile sample budget exhausted:' in line:
+                match = budget_pattern.search(line)
+                if not match or not int(match[2]):
+                    issues.append('Malformed GPU compute budget receipt')
+                    continue
+                budgets.append({'shader': match[1], 'issued': int(match[2])})
+    rows = [{'shader': shader, 'reports': reports[shader], 'count': row['count'],
+             'total_ns': row['total_ns'], 'mean_ms': row['total_ns'] / row['count'] / 1e6}
+            for shader, row in sorted(totals.items())]
+    # Unscoped process log rows cannot prove the absence of another uncapped scheduler.
+    # Require the caller to verify the single-profiler context, even with one receipt.
+    issued = budgets[0]['issued'] if single_profiler and len(budgets) == 1 else None
+    count = sum(row['count'] for row in rows)
+    if issued is not None and count > issued:
+        issues.append('Reported compute samples exceed the resolved lifetime budget')
+    return {'source_log': path.name, 'shaders': rows, 'reported_samples': count, 'budget_receipts': budgets,
+            'single_profiler_verified_by_caller': single_profiler,
+            'resolved_issued_budget': issued,
+            'all_issued_samples_reported': None if issued is None else count == issued and not issues,
+            'issues': issues, 'performance_acceptance': False,
+            'limits': ['Process-wide reports; CPU retirement time is not a GPU execution window.',
+                       'Bottom-of-pipe brackets include related scheduling and instrumentation, not isolated shader ALU.',
+                       'Exact count/total do not provide percentiles or uninstrumented FPS benefit.',
+                       'Without a caller-verified single profiler, or with multiple budget receipts, no total budget is resolved.']}
+
+
 DESCRIPTOR_FIELDS = ('calls hit unknown uncacheable layout shape payload layout_only changed_segments '
                      'comparable_segments changed_infos one few many buffer offset range sampler view '
                      'image_layout texel_view').split()
@@ -377,6 +508,55 @@ def depth_spirv_facts(data):
          'shared_signed_min_atomic', 'shared_signed_max_atomic'))
     return {'arithmetic_capability': arithmetic, 'operations': dict(counts),
             'candidate_pattern_observed': observed}
+
+
+def lighting_cse_summary(session):
+    """R7 reports an IR transform; a SPIR-V file alone cannot prove CSE or execution."""
+    startup, transforms, binaries, issues = [], [], [], []
+    requested = re.compile(r'C1 lighting CSE: requested=(true|false)')
+    transformed = re.compile(
+        r'C1 lighting CSE shader 0xce1675e0: pinned=(true|false) removed=(\d+) '
+        r'cross_block=(\d+) floating=(\d+) budget_reached=(true|false)')
+    try:
+        with (session / 'log' / 'shad_log.txt').open(encoding='utf-8-sig', errors='replace') as stream:
+            for line in stream:
+                match = requested.search(line)
+                if match:
+                    startup.append({'requested': match[1] == 'true'})
+                if 'C1 lighting CSE shader ' not in line:
+                    continue
+                match = transformed.search(line)
+                if not match:
+                    issues.append('Malformed lighting CSE transform record')
+                    continue
+                pinned, removed, cross, floating, budget = match.groups()
+                row = {'pinned': pinned == 'true', 'removed': int(removed),
+                       'cross_block': int(cross), 'floating': int(floating),
+                       'budget_reached': budget == 'true'}
+                if row['cross_block'] > row['removed'] or row['floating'] > row['removed'] or (
+                        not row['pinned'] and row['removed']):
+                    issues.append('Inconsistent lighting CSE transform counters')
+                transforms.append(row)
+    except OSError as exc:
+        issues.append(str(exc))
+    for path in sorted((session / 'user' / 'shader' / 'dumps').glob('cs_0x00000000ce1675e0_*.spv')):
+        try:
+            data = path.read_bytes()
+            # Reuse the validated instruction walker; R7 has no distinctive binary marker.
+            depth_spirv_facts(data)
+            binaries.append({'file': path.name, 'bytes': len(data),
+                             'sha256': hashlib.sha256(data).hexdigest()})
+        except (OSError, ValueError) as exc:
+            issues.append(path.name + ': ' + str(exc))
+    applied = not issues and any(row['pinned'] and row['removed'] for row in transforms)
+    return {'startup': startup, 'transformations': transforms, 'final_binaries': binaries,
+            'mechanism_status': 'invalid-evidence' if issues else 'reported-ir-reuse' if applied else
+                'no-reuse-reported' if transforms else 'not-observed', 'issues': issues,
+            'performance_acceptance': False,
+            'limits': ['Only compile-time IR reuse is reported; no FPS improvement is established.',
+                       'Saved binaries identify outputs, not dispatch or image correctness.',
+                       'Cache hits or external shader patches can omit transform records.',
+                       'R7 does not remove memory accesses or change synchronization.']}
 
 
 def depth_reduction_summary(session):
@@ -477,6 +657,8 @@ def feedback_summary(groups, valid_reads):
     submissions, partial = submission_paths(groups)
     counts, intervals, shaders = Counter(), defaultdict(list), Counter()
     candidate_sites = defaultdict(list)
+    wait_parts = defaultdict(list)
+    submit_opportunities = []
     for row in submissions.values():
         begin, end, queued = (row.get(name) for name in
                              ('submit_driver_begin', 'submit_driver_end', 'submit_queued'))
@@ -493,11 +675,36 @@ def feedback_summary(groups, valid_reads):
             counts['reads_without_producer_evidence'] += 1
             continue
         evidence = producer_path(events)
+        submit_opportunities.extend(feedback_submit_opportunities(events, evidence, submissions))
         counts['covered_reads'] += 1
         counts['history_evicted_reads'] += bool(evidence['overwritten'])
         counts['blind_spot_reads'] += evidence['blind_spot']
         counts['reads_without_retained_overlap'] += not evidence['candidates']
         dependency = next((e for e in events if e.kind == 'read_dependencies'), None)
+        # The wait event uses the readback/graphics selector, not a VkSemaphore handle.
+        # Resolve graphics identity ONLY from this request's declared producer domains.
+        domains = {p['domain'] for p in evidence['candidates'] if p['queue'] == 0 and p['domain']}
+        for wait in (e for e in events if e.kind == 'read_wait_begin'):
+            if wait.b != 0 or len(domains) != 1:
+                counts['waits_without_resolved_graphics_domain'] += 1
+                continue
+            submit = submissions.get((next(iter(domains)), wait.c), {})
+            begin, end = (submit.get(name) for name in ('submit_driver_begin', 'submit_driver_end'))
+            if not begin or not end:
+                counts['waits_without_complete_driver_pair'] += 1
+                continue
+            finish = one([e for e in events if (e.a, e.b, e.c) == (wait.a, wait.b, wait.c)],
+                         'read_wait_end')
+            duration = ordered(wait, finish)
+            before = max(0, min(finish.ns, begin.ns) - wait.ns)
+            during = max(0, min(finish.ns, end.ns) - max(wait.ns, begin.ns))
+            after = max(0, finish.ns - max(wait.ns, end.ns))
+            if before + during + after != duration:
+                raise ValueError('wait partition does not cover the handler wait')
+            for key, value in (('wait_ns', duration), ('before_driver_ns', before),
+                               ('during_driver_ns', during), ('after_driver_ns', after)):
+                wait_parts[key].append(value)
+            counts['partitioned_graphics_waits'] += 1
         for p in evidence['candidates']:
             counts['declared_candidates'] += 1
             if dependency:
@@ -541,6 +748,8 @@ def feedback_summary(groups, valid_reads):
             'submission_ticks': len(submissions), 'partial_submission_chains': partial,
             'feedback_fence_markers': fences,
             'cpu_intervals_not_additive': {key: stats(values) for key, values in intervals.items()},
+            'graphics_wait_partition': {key: stats(values) for key, values in wait_parts.items()},
+            'new_copy_graphics_submit_opportunities': summarize_submit_opportunities(submit_opportunities),
             'interval_units': {'driver_call_cpu_ns': 'per complete driver pair',
                                'enqueue_to_driver_cpu_ns': 'per linked submit',
                                'declared_to_enqueue_cpu_ns': 'per read candidate (may repeat one submit)',
@@ -558,7 +767,12 @@ def feedback_summary(groups, valid_reads):
                        'CPU command recorded/driver return are not GPU completion. Timeline snapshots are lower bounds.',
                        'Beyond a submitted snapshot is not proof that the driver has not received work; publication may lag.',
                        'Same submit may serve multiple reads; candidate intervals overlap and cannot be summed.',
+                       'Wait partition means share the same matched waits and add to their mean; percentiles do not add.',
+                       'After-driver wait includes GPU queueing, work and CPU wakeup, not pure GPU execution.',
                        'Missing submit links may lie outside the selected window; no submission delay is inferred.',
+                       'Recorded-to-enqueue is observed CPU spacing, not removable GPU time or safe earlier-submit proof.',
+                       'Opportunity rows require one new-copy snapshot and exact graphics domain/dependency/wait tick; reused/ambiguous retry copies are excluded.',
+                       'Opportunity counts are read-candidate exposures; distinct commands are reported separately and waits can repeat.',
                        'Feedback fences mark the active scheduler only; they do not prove a complete guest production phase.']}
 
 
@@ -745,19 +959,27 @@ def analyze(session, start=0, duration=None):
     r4 = (launch.get('optimization_v3') == 'all' and
           (launch.get('optimization_revision') == 'v3-r4-evidence' or
            overrides.get('v3_descriptor_evidence') == 1))
-    if r4:
+    if counts['read_producer_coverage']:
         try:
             result['feedback_evidence'] = feedback_summary(groups, valid_reads)
+        except (ValueError, OSError) as exc:
+            result['errors'].append('Feedback evidence invalid: ' + str(exc))
+    if r4:
+        try:
+            if 'feedback_evidence' not in result:
+                raise ValueError('producer coverage absent')
             result['descriptor_evidence'] = descriptor_summary(
                 session, require_updates=overrides.get('v3_descriptor_delta') == 1)
-            counts = result['feedback_evidence']['counts']
-            if (not counts.get('covered_reads') or
+            feedback_counts = result['feedback_evidence']['counts']
+            if (not feedback_counts.get('covered_reads') or
                     not result['feedback_evidence']['cpu_intervals_not_additive'].get('driver_call_cpu_ns')):
                 result['errors'].append('R4 producer/submit evidence absent in selected window')
         except (ValueError, OSError) as exc:
             result['errors'].append('R4 evidence invalid: ' + str(exc))
     if overrides.get('v3_lighting_reduction') == 1:
         result['lighting_optimization'] = depth_reduction_summary(session)
+    if overrides.get('v3_lighting_cse') == 1:
+        result['lighting_cse'] = lighting_cse_summary(session)
     result['format_usable'] = not result['errors']
     return result
 

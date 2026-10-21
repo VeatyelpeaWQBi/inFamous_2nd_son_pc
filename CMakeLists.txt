@@ -48,6 +48,24 @@ endforeach()
 target_link_libraries(ifss_ffmpeg INTERFACE psapi strmiids uuid oleaut32 shlwapi ws2_32 ole32 user32 bcrypt)
 add_compile_definitions(IFSS_PROJECT_LOCAL_USER_DATA=1)
 include(cmake/EngineBuild.cmake)
+# These dependencies intentionally use Clang's supported non-standard-layout offsetof
+# extension (protobuf's generated parse tables and OpenAL's flexible-array allocator).
+# Match their GCC policy for clang-cl, without disabling the diagnostic in our engine.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND MSVC)
+    foreach(dependency IN ITEMS libprotobuf libprotobuf-lite libprotoc OpenAL)
+        if(TARGET ${dependency})
+            target_compile_options(${dependency} PRIVATE -Wno-invalid-offsetof)
+        endif()
+    endforeach()
+    # BIO_callback_ctrl transports an SSL callback through its legacy BIO_info_cb
+    # signature. The cast restores that callback's actual type; keep this exception
+    # confined to the vendor adapter, never to TLS callers or the engine.
+    if(TARGET ssl_obj)
+        set_property(SOURCE "${IFSS_EXTERNALS_ROOT}/libressl/ssl/bio_ssl.c"
+            TARGET_DIRECTORY ssl_obj APPEND PROPERTY COMPILE_OPTIONS
+            -Wno-cast-function-type-mismatch)
+    endif()
+endif()
 if(TARGET shadps4)
     target_sources(shadps4 PRIVATE
         src/core/second_son_controls.cpp src/core/second_son_controls.h
@@ -99,6 +117,14 @@ target_include_directories(ifss_log_sink_test PRIVATE src)
 target_link_libraries(ifss_log_sink_test PRIVATE spdlog::spdlog fmt::fmt)
 
 # Pure state/dependency policy regressions, no Vulkan device or downloaded test framework.
+add_executable(ifss_recording_workers_test EXCLUDE_FROM_ALL tests/test_recording_workers.cpp)
+target_compile_features(ifss_recording_workers_test PRIVATE cxx_std_23)
+target_include_directories(ifss_recording_workers_test PRIVATE src)
+
+add_executable(ifss_copy_completion_test EXCLUDE_FROM_ALL tests/test_copy_completion.cpp)
+target_compile_features(ifss_copy_completion_test PRIVATE cxx_std_23)
+target_include_directories(ifss_copy_completion_test PRIVATE src)
+
 add_executable(ifss_buffer_bind_cache_test EXCLUDE_FROM_ALL tests/test_buffer_bind_cache.cpp)
 target_compile_features(ifss_buffer_bind_cache_test PRIVATE cxx_std_23)
 target_include_directories(ifss_buffer_bind_cache_test PRIVATE src)
@@ -118,10 +144,18 @@ add_executable(ifss_path_trace_queue_test EXCLUDE_FROM_ALL tests/test_path_trace
 target_compile_features(ifss_path_trace_queue_test PRIVATE cxx_std_23)
 target_include_directories(ifss_path_trace_queue_test PRIVATE src)
 
+add_executable(ifss_consumer_evidence_test EXCLUDE_FROM_ALL tests/test_consumer_evidence.cpp)
+target_compile_features(ifss_consumer_evidence_test PRIVATE cxx_std_23)
+target_include_directories(ifss_consumer_evidence_test PRIVATE src)
+
 # V3 range provenance and batch coverage properties; no device/framework/dependency download.
 add_executable(ifss_optimization_v3_test EXCLUDE_FROM_ALL tests/test_optimization_v3.cpp)
 target_compile_features(ifss_optimization_v3_test PRIVATE cxx_std_23)
 target_include_directories(ifss_optimization_v3_test PRIVATE src)
+
+add_executable(ifss_sort_write_bounds_test EXCLUDE_FROM_ALL tests/test_ifss_sort_write_bounds.cpp)
+target_compile_features(ifss_sort_write_bounds_test PRIVATE cxx_std_23)
+target_include_directories(ifss_sort_write_bounds_test PRIVATE src)
 
 # Exact layout identity / conservative fallback, no Vulkan device or loader.
 add_executable(ifss_pipeline_layout_key_test EXCLUDE_FROM_ALL tests/test_pipeline_layout_key.cpp)
@@ -151,6 +185,21 @@ add_executable(ifss_depth_reduction_test EXCLUDE_FROM_ALL
 target_compile_features(ifss_depth_reduction_test PRIVATE cxx_std_23)
 target_include_directories(ifss_depth_reduction_test PRIVATE src
     "${IFSS_EXTERNALS_ROOT}/sirit/externals/SPIRV-Headers/include")
+
+# Execute the actual R7 IR pass without a Vulkan device or game startup.
+add_executable(ifss_lighting_cse_test EXCLUDE_FROM_ALL
+    tests/test_ifss_lighting_cse.cpp
+    tests/test_ifss_lighting_vector.cpp
+    src/shader_recompiler/ir/passes/ifss_lighting_cse.cpp
+    src/shader_recompiler/ir/passes/ifss_lighting_vector.cpp
+    src/shader_recompiler/ir/basic_block.cpp src/shader_recompiler/ir/microinstruction.cpp
+    src/shader_recompiler/ir/value.cpp src/shader_recompiler/ir/type.cpp
+    src/shader_recompiler/ir/opcodes.cpp src/shader_recompiler/ir/attribute.cpp
+    src/shader_recompiler/ir/patch.cpp src/shader_recompiler/ir/dominance.cpp
+    src/shader_recompiler/ir/post_order.cpp)
+target_compile_features(ifss_lighting_cse_test PRIVATE cxx_std_23)
+target_include_directories(ifss_lighting_cse_test PRIVATE src)
+target_link_libraries(ifss_lighting_cse_test PRIVATE Boost::headers fmt::fmt magic_enum::magic_enum)
 
 # Shared Xbox/touchpad policy checks; no device, game or default-build execution.
 add_executable(ifss_second_son_controls_test EXCLUDE_FROM_ALL tests/test_second_son_controls.cpp)

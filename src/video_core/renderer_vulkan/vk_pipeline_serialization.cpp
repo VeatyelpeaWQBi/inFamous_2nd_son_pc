@@ -30,7 +30,9 @@ static u32 shader_optimization_variant{};
 static u32 BinaryVersionFor(const Shader::Info& info) {
     const auto variant = Shader::Optimization::IfssShaderVariant(
         shader_optimization_variant, info.pgm_hash, info.hw_stage == Shader::HwStage::Compute);
-    return ShaderBinaryVersion + variant * 1000u +
+    // R11 revision 1 preserves SMRD origin metadata; discard the initial non-applying prototype.
+    const u32 vector_revision = (variant & Shader::Optimization::IfssLightingVectorBit) ? 1000000u : 0u;
+    return ShaderBinaryVersion + variant * 1000u + vector_revision +
            (info.hw_stage == Shader::HwStage::Compute ? compute_shader_variant * 100u : 0u);
 }
 } // namespace Serialization

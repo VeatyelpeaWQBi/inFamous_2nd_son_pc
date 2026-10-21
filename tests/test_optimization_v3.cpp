@@ -7,6 +7,7 @@
 #include <set>
 #include <utility>
 #include "video_core/buffer_cache/v3_readback_policy.h"
+#include "video_core/buffer_cache/readback_prefetch_policy.h"
 
 static void Require(bool ok, const char* why) {
     if (!ok) { std::fprintf(stderr, "FAIL: %s\n", why); std::exit(1); }
@@ -16,6 +17,23 @@ int main() {
     using VideoCore::DemandRange;
     using VideoCore::PlanDemandBatches;
     constexpr auto P = DemandPageWriters::PageSize;
+    using VideoCore::FitsReadbackPrefetchBudget;
+    Require(FitsReadbackPrefetchBudget(4, 0, 65536), "minimum staging allocation fits exactly");
+    Require(!FitsReadbackPrefetchBudget(4, 0, 65535), "minimum staging allocation is budgeted");
+    Require(!FitsReadbackPrefetchBudget(65537, 0, 131071), "round packed bytes up before budget check");
+    Require(FitsReadbackPrefetchBudget(65537, 65536, 196608), "packed padding and previous allocations count");
+    Require(!FitsReadbackPrefetchBudget(1, 8, 4), "used budget cannot underflow");
+    Require(!FitsReadbackPrefetchBudget(0, 0, 65536) &&
+            !FitsReadbackPrefetchBudget(std::numeric_limits<std::uint64_t>::max(), 0,
+                                       std::numeric_limits<std::uint64_t>::max()),
+            "empty and overflowing packed allocations are rejected");
+    const std::array<DemandRange, 3> windows{{
+        {0, 128 * P, 0, 0}, {64 * P, 192 * P, 0, 1}, {192 * P, 320 * P, 0, 2}}};
+    const auto full_plan = PlanDemandBatches(windows, 256 * P);
+    Require(full_plan.count == 2 && full_plan.batches[0].start == 0 &&
+            full_plan.batches[0].end == 192 * P && full_plan.batches[0].sources == 3 &&
+            full_plan.batches[1].start == 192 * P && full_plan.batches[1].end == 320 * P,
+            "full window merge preserves coverage and source lifetimes within the span cap");
     DemandPageWriters writers;
     writers.Watch(P, {4, 0});
     writers.Watch(2 * P, {3, 0});

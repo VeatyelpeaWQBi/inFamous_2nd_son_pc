@@ -25,7 +25,7 @@ set(FETCHCONTENT_SOURCE_DIR_FMT "${IFSS_EXTERNALS_ROOT}/fmt" CACHE PATH "" FORCE
 set(ENABLE_UPDATER OFF CACHE BOOL "" FORCE)
 set(ENABLE_DISCORD_RPC OFF CACHE BOOL "" FORCE)
 # Reuse already-installed FFmpeg libraries; never run its download CMake path.
-file(GLOB IFSS_FFMPEG_DIRS LIST_DIRECTORIES true "${IFSS_DEPENDENCY_BUILD_ROOT}/externals/ffmpeg-*")
+file(GLOB IFSS_FFMPEG_DIRS LIST_DIRECTORIES true "${IFSS_DEPENDENCY_BUILD_ROOT}/ffmpeg")
 set(IFSS_FFMPEG_ROOT "")
 foreach(candidate IN LISTS IFSS_FFMPEG_DIRS)
     if(EXISTS "${candidate}/lib/avcodec.lib")

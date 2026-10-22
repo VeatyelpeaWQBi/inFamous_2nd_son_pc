@@ -198,7 +198,8 @@ try{
         $taskBuild=Invoke-V3Child ($taskBase+@((Join-Path $PSScriptRoot 'build.ps1'))) 'build' 7200
         $taskState.build=$taskBuild;Save-V3Suite
         if($taskBuild.status -ne 'collected'){throw 'Build failed; no game was started.'}
-        $taskBuildText=[IO.File]::ReadAllText((Join-Path $taskRoot 'Build/RelWithDebInfo/build.log'))
+        $taskBuildText=[IO.File]::ReadAllText((Resolve-ProjectChild $taskRoot $taskBuild.stdout))+
+            [Environment]::NewLine+[IO.File]::ReadAllText((Resolve-ProjectChild $taskRoot $taskBuild.stderr))
         if($taskBuildText -match '(?im)CMake Warning|\b(?:warning|error)\s*(?:[A-Z]+\d+)?:'){throw 'Build contains warnings/errors; no game was started.'}
     }
     foreach($taskCheck in @('scripts/test.ps1','tests/bootstrap/test_v3_matrix_gates.ps1','scripts/test-v3-native.ps1')){

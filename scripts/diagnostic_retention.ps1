@@ -1,5 +1,5 @@
 ﻿# SPDX-License-Identifier: GPL-2.0-or-later
-# Loaded by diagnostic_tools.ps1. Cleanup is invoked only before a debug launch, under run.lock.
+# Loaded by diagnostic_tools.ps1. Cleanup is invoked only before a debug launch.
 # Saves belong to the game fingerprint, not to one particular engine build.
 function Test-ProjectGameSaveHome([string]$Root,[string]$SaveHome,[string]$Title) {
     Assert-ProjectPath $Root $SaveHome

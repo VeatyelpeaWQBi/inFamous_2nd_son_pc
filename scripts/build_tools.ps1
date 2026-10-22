@@ -67,47 +67,32 @@ function Get-ProjectBuildTools([string]$Root) {
         CMAKE_MAKE_PROGRAM=Resolve-ExistingBuildTool 'ninja.exe' $configured['CMAKE_MAKE_PROGRAM'] $ninjaCandidates
     }
 }
-function Invoke-ProjectBuildProcess([string]$Executable,[string[]]$ToolArguments,[string]$Directory,[hashtable]$Environment=@{},[switch]$Capture,[IO.TextWriter]$Log=$null) {
+function Invoke-ProjectBuildProcess([string]$Executable,[string[]]$ToolArguments,[string]$Directory,[hashtable]$Environment=@{},[switch]$Capture) {
     $start=[Diagnostics.ProcessStartInfo]::new()
     $start.FileName=$Executable;$start.WorkingDirectory=$Directory;$start.UseShellExecute=$false
     $start.Arguments=($ToolArguments|ForEach-Object {Quote-WindowsArgument $_}) -join ' '
     foreach($key in $Environment.Keys){$start.EnvironmentVariables[$key]=$Environment[$key]}
-    $start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
-    $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false)
-    $start.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
+    # Ordinary builds inherit the console, so Ninja controls its own progress.
+    $start.CreateNoWindow=[bool]$Capture
+    $start.RedirectStandardOutput=[bool]$Capture;$start.RedirectStandardError=[bool]$Capture
+    if($Capture){
+        $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false)
+        $start.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
+    }
     $process=[Diagnostics.Process]::Start($start)
     try{
         if($Capture){
             $output=$process.StandardOutput.ReadToEndAsync();$errorText=$process.StandardError.ReadToEndAsync()
-        }else{
-            # Drain both pipes concurrently on this thread; event callbacks cannot safely
-            # enter a PowerShell runspace. Retain diagnostics even after a failed build.
-            $readers=@($process.StandardOutput,$process.StandardError)
-            $pending=@($readers[0].ReadLineAsync(),$readers[1].ReadLineAsync())
-            while($null -ne $pending[0] -or $null -ne $pending[1]){
-                $received=$false
-                for($i=0;$i -lt 2;$i++){
-                    if($null -eq $pending[$i] -or -not $pending[$i].IsCompleted){continue}
-                    $line=$pending[$i].GetAwaiter().GetResult()
-                    if($null -eq $line){$pending[$i]=$null;continue}
-                    if($Log){$Log.WriteLine($line)}
-                    Write-Host $line
-                    $pending[$i]=$readers[$i].ReadLineAsync();$received=$true
-                }
-                if(-not $received){[Threading.Thread]::Sleep(25)}
-            }
         }
         $process.WaitForExit()
         if($process.ExitCode -ne 0){
             if($Capture){
-                if($Log){$Log.Write($output.Result);$Log.Write($errorText.Result)}
                 if($output.Result){Write-Host $output.Result}
                 if($errorText.Result){Write-Host $errorText.Result -ForegroundColor Red}
             }
             throw ([IO.Path]::GetFileName($Executable)+' failed, exit code '+$process.ExitCode+'. The runtime selection was not activated by this command.')
         }
         if($Capture){
-            if($Log){$Log.Write($output.Result);$Log.Write($errorText.Result)}
             if($errorText.Result){Write-Host $errorText.Result}
             return $output.Result
         }

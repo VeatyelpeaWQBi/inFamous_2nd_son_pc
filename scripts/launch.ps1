@@ -55,9 +55,8 @@ if($Benchmark){
 if($CheckOnly){Invoke-ProjectNativeTool 'preflight' @('--mode',$Mode); exit $LASTEXITCODE}
 $runtimeState=Resolve-ProjectChild $projectRoot 'state\runtime'
 $null=[IO.Directory]::CreateDirectory($runtimeState)
-$lock=$null;$process=$null;$windowBranding=$null;$collector=$null;$diagnosticWrapper=$null;$diagnosticPlan=$null;$diagnosticExitCode=0;$session=$null
+$process=$null;$windowBranding=$null;$collector=$null;$diagnosticWrapper=$null;$diagnosticPlan=$null;$diagnosticExitCode=0;$session=$null
 try{
-    $lock=[IO.File]::Open((Resolve-ProjectChild $projectRoot 'state/runtime/run.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
     $manifest=Read-JsonUtf8 (Join-Path $projectRoot 'project.json')
     $runtime=Resolve-ProjectChild $projectRoot $manifest.runtime_path
     if($manifest.phase -ne 'project-engine' -or -not $manifest.new_executable_built -or -not(Test-Path -LiteralPath $runtime -PathType Leaf)){
@@ -80,7 +79,7 @@ try{
         throw 'Fixed project save is missing: state/play/home. Restore the gameplay save there; no automatic session selection or new-game fallback is allowed.'
     }
     if(($isDiagnostic -or $WaitForDebugger) -and -not $PrepareOnly -and -not $PreserveDiagnosticSessions){
-        # Keep the previous latest session before creating the new one. run.lock is held.
+        # Keep the previous latest session before creating the new one.
         $null=Invoke-DiagnosticSessionRetention $projectRoot $SaveSession
     }
     if($isDiagnostic){
@@ -459,6 +458,5 @@ try{
         if($diagnosticWrapper){$diagnosticWrapper.Dispose()}
         if($windowBranding){$windowBranding.Dispose()}
         if($process){$process.Dispose()}
-        if($lock){$lock.Dispose()}
     }
 }

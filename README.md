@@ -13,7 +13,7 @@
 | 分支 | 用途 | 启动方式 |
 | --- | --- | --- |
 | `main` | 与开发分支同步的源码基线，包含 V1/V2 和诊断设施；不是未经修改的上游原版 | 构建后运行 `run.bat` |
-| `feature/fps-optimization` | 性能研究、V3 候选和对照测试 | `run.bat`、`diagnostics/` 下的专项入口 |
+| `feature/fps-optimization-import` | V2 核心优化，已移除 V3 实验代码 | `run.bat`、`diagnostics/` 下的诊断入口 |
 | `release/optimization-v2` | 保留已验收的 V1/V2，移除 V3、采样、调试面板及外部采集器联动，供发布游玩 | 直接打开 `inFAMOUS Second Son.exe`，进入启动菜单 |
 
 V1/V2 已成为引擎固定逻辑，无需开关：
@@ -27,17 +27,7 @@ V1/V2 已成为引擎固定逻辑，无需开关：
 
 精确回读、SDR、完整粒子及着色器／管线缓存继续保留。已核验游戏构建还使用分辨率、光照列表容量、4K 曝光缓冲容量和防冻结补丁。宽松回读会影响粒子及亮度，不能用其帧数代替完整画面的性能。
 
-V3 仍为实验：R6 光照深度归约已确认命中，但未证明稳定整帧收益；R7 光照纯表达式复用、R8 完整窗口预取和 R9 排序数组写上界均完成独立普通 A/B/A，未验收新收益，未纳入默认内核；R9 候选表现偏低。R10 完成提交间隔复核及 64 个普通光照 GPU 样本，确认约 4.34ms 的计时括号。R11 已实现受对齐和实际描述符边界保护的光照四字向量读取，确认 31 组命中并通过实际 SPIR-V 验证；普通 B/A/B 为 20.31/26.88/28.25 FPS，波动较大，未验收稳定收益，默认关闭。后续优先补足稳定对照条件和完整反馈消费依赖证据。A1 等候选也不能当作已验收成果。性能测试入口自动静音，普通游玩音量保留。普通 `run.bat` 和 `diagnostics/full.bat` 默认关闭 V3，Release 不包含这些候选。
-
-R12 已补入低频温度、时钟及进程 CPU 观测，并完成静音 A/B/B/A。发现浏览器与游戏存在同 GPU 引擎并发负载；两次候选仍不稳定，未新增已验收收益。原始程序的 26 处消费指令核验通过，完整反馈依赖及 CPU 副作用继续保留。
-
-R13 已加入默认关闭的有界消费现场记录。64个计数读取样本中，32个对象寄存器地址对应53个反馈指针值；地址相等不足以证明逻辑对象或数据代数相同。辅助记录读取仍有观测盲区，完整回读与CPU副作用继续保留，未新增已验收FPS收益。
-
-R14 已核验辅助提交链的19个有界窗口、62处原始指令及两个导入函数：两次记录操作构造GPU DMA，完成序号和命令空间回收使用不同字段，共享记录池还存在直接CPU写入。新增 `scripts/analyze_auxiliary.py` 可复算这些证据；实际任务代数仍未证明。本轮未改引擎、未新增性能测试或已验收收益，当前原生构建身份及零编译诊断状态已复核。
-
-R15 新增默认关闭的2/4路完整提交录制、同命令copy region合并和精确回读完成交接，并补齐19项独立选择、两组组合及双分辨率测试矩阵。构建warning/error为0/0，12个原生回归目标、63项离线分析及29个准备入口核验通过，尚未启动游戏验收。`diagnostics/v3-matrix.bat` 默认只生成计划；性能测试自动静音。GPU内消费、同代成组快照、客体内存直写等仍缺生命周期证明，未宣称完成或获益。详见本地 `doc/50-r15-remaining-candidates-and-test-matrix.md`。
-
-新增用户自行启动的 `test-v3-all.bat`：先构建/回归，再自动识别进入游戏、静音预热，完成双分辨率单项/组合、数值候选重复验证及 full/机制记录，最后写本地完整日志。运行不需要 Codex 或 AI 调用。结果入口为 `state/runtime/v3-suite-last.json`，停止入口为 `stop-v3-tests.bat`；配置见 `diagnostics/v3-suite.json`。本轮仅实现与静态检查，新代码尚未构建或运行测试；结构性研究仍未全部完成。详见本地 `doc/52-unattended-v3-suite-implementation.md`。
+当前分支已移除 V3 候选、相关开关和专用测试／采集入口，性能核心恢复到 V2。
 
 ### 测试平台与运行表现
 
@@ -133,8 +123,7 @@ main／开发分支先执行 `build.bat`，再执行 `run.bat`。默认编译为
 | `run.bat` | 启动菜单与普通游玩；`run.bat pro4k` 可预选 4K |
 | `run.bat --debug` | 等待已有原生调试器附加，使用同次构建的 PDB |
 | `check.bat`／`test.bat` | 配置／补丁预检和离线回归，不启动游戏 |
-| `diagnostics/optimization-v3-control.bat`／`optimization-v3.bat` | V2 基线与当前 C1 候选的人工对照，均保留 V1/V2 |
-| `diagnostics/full.bat`／`full-optimization-v3.bat` | 同一游戏进程、同次运行的自动采集；后者开启当前 C1 候选 |
+| `diagnostics/full.bat` | 同一游戏进程、同次运行的自动采集 |
 
 专项调试复用已安装的 WPR/WPA、VTune、Nsight Graphics 或 RenderDoc 等工具，部分采集需要管理员权限。full 按设置选择 Nsight 或 RenderDoc，不能宣称互斥工具全部同时开启；结果及缺失项保存在本轮 `diagnostics/coverage.json`、`data-quality.json` 等记录中，必须先检查完整性再分析。
 
@@ -152,7 +141,7 @@ main／开发分支先执行 `build.bat`，再执行 `run.bat`。默认编译为
 | `state/runtime/` | 可复用缓存；Release 对不同游戏构建进行缓存隔离 |
 | `state/sessions/` | 开发运行／诊断会话，Release 正常运行不依赖它 |
 
-开发分支普通游玩使用固定存档的会话副本，正常结束并通过文件检查后回存；诊断和 V3 实验不会自动覆盖正式存档。Release 直接使用包内固定存档根。地区之间不自动转换存档。备份或搬迁时保留整个 `state/`；`game/`、`state/`、`Build/`、`out/`、`doc/` 均忽略 Git。
+开发分支普通游玩使用固定存档的会话副本，正常结束并通过文件检查后回存；诊断会话不会自动覆盖正式存档。Release 直接使用包内固定存档根。地区之间不自动转换存档。备份或搬迁时保留整个 `state/`；`game/`、`state/`、`Build/`、`out/`、`doc/` 均忽略 Git。
 
 F1 打开退出确认，Enter／手柄 ×（Xbox A）确认，Esc／○（Xbox B）返回；Alt+F4 退出。F10 切换 FPS，F12 截图。FPS 是最近最多 60 个新游戏帧的平均值，帧时间为平均帧间隔，不是纯 GPU 时间；Release 保留此基础显示，不启动采集器。退出前请在游戏内保存。
 
@@ -185,7 +174,7 @@ You must supply the game files. Neither the repository nor the release packages 
 | Branch | Purpose | Launch |
 | --- | --- | --- |
 | `main` | Source baseline synchronized with development, including V1/V2 and diagnostics; not unmodified upstream | Build, then run `run.bat` |
-| `feature/fps-optimization` | Performance research, V3 candidates and controlled comparisons | `run.bat` and specialized entries under `diagnostics/` |
+| `feature/fps-optimization-import` | V2 performance core with V3 experiments removed | `run.bat` and diagnostic entries under `diagnostics/` |
 | `release/optimization-v2` | Retains accepted V1/V2; removes V3, sampling, debug panels and external collector integration for regular play | Open `inFAMOUS Second Son.exe` directly to enter the launch menu |
 
 V1/V2 are built into the engine and require no switches:
@@ -199,17 +188,7 @@ V1/V2 are built into the engine and require no switches:
 
 Precise readback, SDR, complete particle effects, and shader/pipeline caches are retained. Verified game builds also use resolution, light-list capacity, 4K exposure-buffer capacity and anti-freeze patches. Relaxed readback can affect particles and brightness; its FPS does not represent performance with complete rendering.
 
-V3 remains experimental. R6 lighting depth reduction was confirmed active without established whole-frame gains. R7 exact lighting-expression reuse, R8 full-window prefetch, and R9 sorting-array write bounds each completed an independent ordinary A/B/A comparison without accepted new gains; all remain excluded from the default core, with R9 performing below its controls. R10 reviewed submission spacing and collected 64 ordinary lighting GPU samples, confirming an approximately 4.34ms timing bracket. R11 implemented four-word lighting vector reads guarded by alignment and actual descriptor bounds, confirmed 31 packed groups, and validated the generated SPIR-V. Its ordinary B/A/B measured 20.31/26.88/28.25 FPS with substantial variation; no stable gain is accepted and the candidate remains disabled by default. Further research prioritizes stable comparison conditions and complete feedback-consumer dependency evidence. A1 and other candidates are not accepted performance results either. Performance test sessions are automatically muted; ordinary play keeps its volume. Ordinary `run.bat` and `diagnostics/full.bat` disable V3 by default. Release excludes these candidates.
-
-R12 added low-rate temperature, clock and process CPU observations and completed a muted A/B/B/A. A spot check found browser activity on the same GPU engine as the game. Candidate repetitions remained inconsistent, with no new accepted gain. Twenty-six consumer instruction witnesses matched the original program; complete feedback dependencies and CPU side effects remain preserved.
-
-R13 added bounded consumer fault-context evidence, disabled by default. In 64 count-read samples, 32 object-register addresses were associated with 53 feedback pointer values. Address equality does not establish logical identity or data generation. Auxiliary record consumption remains incompletely observed; complete readback and CPU side effects are preserved, with no new accepted FPS gain.
-
-R14 verified 19 bounded auxiliary-submission windows, 62 original instruction witnesses and two imports. The record operations construct GPU DMA commands; completion sequences and command-space reclamation use separate fields, and the shared record pool also has direct CPU writers. `scripts/analyze_auxiliary.py` reproduces this evidence. Actual task generations remain unproven. The engine was unchanged, no new performance run or gain was claimed, and the current native build identity and zero compiler diagnostics were rechecked.
-
-R15 adds disabled-by-default 2/4-worker complete-session recording, within-command copy-region coalescing and exact readback-completion handoff, with 19 independent selections, two combinations and a matrix for both resolutions. The build has zero compiler warnings/errors; 12 native regression targets, 63 offline analysis tests and 29 prepared entries passed. No game acceptance run has started. `diagnostics/v3-matrix.bat` only creates a plan by default; performance tests are muted. GPU-only consumption, same-generation grouped snapshots and direct guest-memory writes still lack lifecycle proof and are not claimed implemented or beneficial. See local `doc/50-r15-remaining-candidates-and-test-matrix.md`.
-
-The user-started `test-v3-all.bat` builds/checks the project, automatically verifies scene readiness, runs muted comparisons and confirmation groups at both resolutions, collects full/mechanism evidence and saves complete local reports. It uses no Codex or AI calls while running. `state/runtime/v3-suite-last.json` points to the latest reports; use `stop-v3-tests.bat` to request a stop and `diagnostics/v3-suite.json` for configuration. This implementation has only received static source checks; it has not been built or tested. Structural research remains incomplete. See local `doc/52-unattended-v3-suite-implementation.md`.
+This branch removes the V3 candidates, their switches and dedicated test/capture entries, restoring the V2 performance core.
 
 ### Test platform and observed performance
 
@@ -305,8 +284,7 @@ Builds reuse installed CMake 3.30+, Ninja, Visual Studio LLVM/Clang-cl (C++23), 
 | `run.bat` | Launch menu and regular play; `run.bat pro4k` preselects 4K |
 | `run.bat --debug` | Waits for an existing native debugger to attach, using the matching PDB |
 | `check.bat` / `test.bat` | Configuration/patch preflight and offline regression checks; no game launch |
-| `diagnostics/optimization-v3-control.bat` / `optimization-v3.bat` | Manual comparison of the V2 baseline and current C1 candidate; both retain V1/V2 |
-| `diagnostics/full.bat` / `full-optimization-v3.bat` | Automated collection in one game process during one run; the latter enables the current C1 candidate |
+| `diagnostics/full.bat` | Automated collection in one game process during one run |
 
 Specialized diagnostics reuse installed WPR/WPA, VTune, Nsight Graphics or RenderDoc; some collection requires administrator privileges. full selects Nsight or RenderDoc according to settings, not both mutually exclusive tools simultaneously. Results and missing coverage are recorded in the session's `diagnostics/coverage.json`, `data-quality.json` and related files. Check completeness before analysis.
 
@@ -324,7 +302,7 @@ Paths below are relative to the project/package directory. No automatic import f
 | `state/runtime/` | Reusable caches; Release isolates caches for different game builds |
 | `state/sessions/` | Development/diagnostic sessions; normal Release play does not depend on it |
 
-Ordinary development play uses a session copy of the fixed save, copied back after a normal exit and file checks. Diagnostics and V3 experiments do not automatically overwrite persistent saves. Release uses the fixed package-local save root directly. Saves are not automatically converted across regions. Preserve the entire `state/` when backing up or moving the project. `game/`, `state/`, `Build/`, `out/` and `doc/` are ignored by Git.
+Ordinary development play uses a session copy of the fixed save, copied back after a normal exit and file checks. Diagnostic sessions do not automatically overwrite persistent saves. Release uses the fixed package-local save root directly. Saves are not automatically converted across regions. Preserve the entire `state/` when backing up or moving the project. `game/`, `state/`, `Build/`, `out/` and `doc/` are ignored by Git.
 
 F1 opens exit confirmation; Enter / controller × (Xbox A) confirms, and Esc / ○ (Xbox B) returns. Alt+F4 exits. F10 toggles FPS; F12 takes a screenshot. FPS averages the latest up to 60 new game frames, and frame time is the mean frame interval, not pure GPU time. Release retains this basic display without starting collectors. Save in-game before exiting.
 

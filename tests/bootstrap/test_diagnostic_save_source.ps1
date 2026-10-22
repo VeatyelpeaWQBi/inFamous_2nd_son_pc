@@ -17,7 +17,7 @@ function New-SaveFixture([int]$Index,$Overrides=@{},[bool]$WithSave=$true) {
         schema=3;path_base='project';session=$relative;runtime='Build/older.exe';runtime_sha256='older-build'
         game_sha256='same-game';complete=$true;game_launched=$true;exit_code=0
         diagnostic=$null;benchmark=$false;debug=$false;timing_profile=$null
-        optimization_v3='all';pid=2147483647;process_started='2026-01-01T00:00:00Z'
+        pid=2147483647;process_started='2026-01-01T00:00:00Z'
     }
     foreach($key in $Overrides.Keys){$launch[$key]=$Overrides[$key]}
     Write-JsonUtf8 (Join-Path $path 'launch.json') $launch
@@ -30,8 +30,8 @@ function New-SaveFixture([int]$Index,$Overrides=@{},[bool]$WithSave=$true) {
 }
 try{
     if($null -ne (Find-ProjectManualSaveSession $fixture)){throw 'Empty history must not invent a save.'}
-    $v3=New-SaveFixture 1
-    $control=New-SaveFixture 2 @{optimization_v3='control'}
+    $older=New-SaveFixture 1
+    $newer=New-SaveFixture 2
     # More recent diagnostic output, even successful, must not become the manual source.
     $diagnostic=New-SaveFixture 3 @{diagnostic='full'}
     $null=New-SaveFixture 4 @{exit_code=1}
@@ -45,11 +45,11 @@ try{
     [IO.File]::WriteAllText((Join-Path $fixture ($corrupt+'/launch.json')),'{broken')
     $null=New-SaveFixture 13 @{auto_save_source_excluded=$true}
     $selected=Find-ProjectManualSaveSession $fixture
-    if((Get-RelativePath $fixture $selected.Path) -ne $control){throw 'Latest valid manual control save was not selected.'}
+    if((Get-RelativePath $fixture $selected.Path) -ne $newer){throw 'Latest valid manual save was not selected.'}
     if($selected.Launch.runtime_sha256 -ne 'older-build'){throw 'Compatible saves from older engine builds must be accepted.'}
-    $explicit=Read-ProjectSaveSession $fixture $v3
-    if((Get-RelativePath $fixture $explicit.Path) -ne $v3){throw 'Explicit source did not override recency.'}
-    $manual=New-SaveFixture 12 @{optimization_v3='none'}
+    $explicit=Read-ProjectSaveSession $fixture $older
+    if((Get-RelativePath $fixture $explicit.Path) -ne $older){throw 'Explicit source did not override recency.'}
+    $manual=New-SaveFixture 12
     if((Get-RelativePath $fixture (Find-ProjectManualSaveSession $fixture).Path) -ne $manual){throw 'New ordinary manual progress was not selected.'}
     foreach($bad in @($wrongGame,$empty,'state/sessions/../outside')){
         $rejected=$false
@@ -57,7 +57,7 @@ try{
         if(-not $rejected){throw 'Wrong-game, empty or escaped save source was accepted.'}
     }
     # Return to fresh diagnostic output only: do not adopt its initial/new-game save.
-    foreach($relative in @($v3,$control,$manual)){
+    foreach($relative in @($older,$newer,$manual)){
         $launchPath=Join-Path $fixture ($relative+'/launch.json')
         $launch=Read-JsonUtf8 $launchPath;$launch.complete=$false;Write-JsonUtf8 $launchPath $launch
     }

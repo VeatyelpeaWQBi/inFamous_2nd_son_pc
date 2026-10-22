@@ -194,9 +194,6 @@ public:
     const GraphicsPipeline* GetGraphicsPipeline(const DrawIndirectParams params = {});
 
     const ComputePipeline* GetComputePipeline();
-    bool IfssSortCodePinned() const noexcept {
-        return ifss_sort_code_pinned && !shader_replaced.load(std::memory_order_acquire);
-    }
 
     using Result = std::tuple<const Shader::Info*, vk::ShaderModule, u64>;
     Result GetProgram(Shader::HwStage hw_stage, Shader::SwStage sw_stage,
@@ -280,7 +277,6 @@ private:
     Scheduler& scheduler;
     AmdGpu::Liverpool* liverpool;
     DescriptorHeap desc_heap;
-    PipelineLayoutCache layout_cache;
     std::unique_ptr<DriverPipelineCache> driver_cache;
     std::function<void()> drain_pipeline_commands;
     PrewarmBudget prewarm_budget;
@@ -291,7 +287,6 @@ private:
     std::array<const Shader::StageSpecialization*, MaxShaderStages> prewarmed_specs{};
     vk::UniquePipelineLayout pipeline_layout;
     Shader::Profile profile{};
-    u32 address_schedule_mask{}; // Immutable after renderer startup; cache versioned.
     Shader::Pools pools;
     DrawIndirectParams draw_indirect_params{};
     tsl::robin_map<size_t, std::unique_ptr<Program>> program_cache;
@@ -335,8 +330,6 @@ private:
     Shader::Gcn::FetchShaderData* fetch_shader{};
     GraphicsPipelineKey graphics_key{};
     ComputePipelineKey compute_key{};
-    bool ifss_sort_code_pinned{};
-    std::atomic<bool> shader_replaced{false};
     u32 num_new_pipelines{}; // new pipelines added to the cache since the game start
 
     // Only if Config::collectShadersForDebug()

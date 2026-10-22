@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
-#include "video_core/buffer_cache/readback_completion.h"
 
 #include <deque>
-#include <memory>
 #include <optional>
 #include <string>
 #include <boost/container/small_vector.hpp>
@@ -15,7 +13,6 @@
 #include "common/types.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/fault_manager.h"
-#include "video_core/buffer_cache/feedback_write_history.h"
 #include "video_core/buffer_cache/range_set.h"
 #include "video_core/buffer_cache/region_definitions.h"
 #include "video_core/buffer_cache/upload_worker.h"
@@ -56,13 +53,6 @@ struct QueueContext {
 };
 
 class BufferCache {
-    struct TraceProducerContext {
-        u64 id{}, shader{};
-        u32 kind{};
-    };
-    std::unique_ptr<FeedbackWriteHistory<>> trace_writes;
-    TraceProducerContext trace_producer{};
-    void TraceReadProducers(VAddr address, u64 size, VAddr window, u64 span, u64 request);
     static constexpr u64 ADDRESS_SPACE_BITS = 40;
     static constexpr u64 ARENA_PAGE_BITS = 32;
     static constexpr u64 ARENA_PAGE_SIZE = u64{1} << ARENA_PAGE_BITS;
@@ -75,24 +65,6 @@ public:
                          Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool,
                          TextureCache& texture_cache, PageManager& tracker);
     ~BufferCache();
-
-    class ProducerTrace {
-    public:
-        ProducerTrace(BufferCache& cache, u64 shader, u32 kind);
-        ~ProducerTrace();
-        ProducerTrace(const ProducerTrace&) = delete;
-        ProducerTrace& operator=(const ProducerTrace&) = delete;
-        void Commit(); // CPU draw/dispatch recorded, not GPU completion.
-    private:
-        BufferCache& cache;
-        TraceProducerContext previous{};
-        u64 id{}, cursor{};
-        bool committed{};
-    };
-    ProducerTrace BeginProducerTrace(u64 shader, u32 kind) {
-        return ProducerTrace{*this, shader, kind};
-    }
-    void TraceFeedbackFence();
 
     /// Returns a pointer to GDS device local buffer.
     [[nodiscard]] const Buffer* GetGdsBuffer() const noexcept {
@@ -201,8 +173,7 @@ public:
     /// Finds a buffer for the specified region.
     [[nodiscard]] std::pair<const Buffer*, u64> ObtainBuffer(VAddr device_addr, u32 size,
                                                            bool is_written,
-                                                           bool is_texel_buffer = false,
-                                                           std::optional<u32> write_prefix = {});
+                                                           bool is_texel_buffer = false);
 
     /// Attempts to obtain a buffer without modifying the cache contents.
     [[nodiscard]] std::pair<const Buffer*, u64> ObtainBufferForImage(VAddr device_addr, u32 size);
@@ -229,7 +200,7 @@ public:
     void SynchronizeDmaBuffers();
 
     /// Commits pending sparse buffer memory binds. Must be called before every scheduler submit.
-    void SubmitPendingArenaBinds(Vulkan::SubmitInfo& info, bool queue_locked = true);
+    void SubmitPendingArenaBinds(Vulkan::SubmitInfo& info);
 
 private:
     struct ArenaBinds {
@@ -343,26 +314,20 @@ private:
 
     /// Registers the window as pending and collects the copies of its GPU modified ranges into a
     /// download buffer, without recording them. Returns false when there is nothing to download
-    /// or the speculative allocation exceeds budget (the window stays registered).
-    bool CollectReadback(const Buffer* arena, PendingReadback& readback, u64 budget = ~u64{0});
+    /// (the window stays registered).
+    bool CollectReadback(const Buffer* arena, PendingReadback& readback);
 
     /// Collects copies, optionally narrows producer dependencies, then selects the copy queue.
     /// Precise mode always refines known copied-range dependencies; missing evidence keeps
     /// the original whole-window waits and queue selection.
     bool PrepareReadback(const Buffer* arena, PendingReadback& readback, WindowWriters& writers,
-                         bool queue_enabled, bool& on_queue, u64 budget = ~u64{0});
+                         bool queue_enabled, bool& on_queue);
 
     /// Collects the window and records its copies in the graphics command buffer.
     bool RecordReadback(const Buffer* arena, PendingReadback& readback);
 
     /// Remembers conservative windows and actual fault pages as separate prefetch hints.
     void NoteHotWindow(VAddr start, VAddr end, bool demand_pages = false);
-    void DisableFineReadbacks();
-    // Returns true only when at least one copy was recorded.
-    bool PrefetchDemandBatches(bool full_windows = false);
-    void SubmitPrefetchReadbacks(size_t first_queued, bool recorded_on_graphics,
-                                 bool recorded_on_queue, std::array<u64, 2> queue_wait_ticks);
-
 
     struct HotWindow {
         VAddr start;
@@ -383,16 +348,12 @@ private:
     /// tick to wait for on wait_semaphore before calling CompleteReadbacks, or 0 when there is
     /// nothing to wait for.
     u64 BeginReadback(VAddr device_addr, u64 size, bool is_write,
-                      Vulkan::Semaphore*& wait_semaphore, u64 trace_id = 0, u64 fault_rip = 0);
+                      Vulkan::Semaphore*& wait_semaphore, u64 trace_id = 0);
 
     /// Writes the pending readbacks the GPU has finished to guest memory: in any order, except
     /// after an unfinished earlier readback of the same window. With wait, waits for all of them
     /// and writes them in submission order.
     void CompleteReadbacks(bool wait);
-    void PublishReadbackCompletions();
-    // CP-only list, capped at 128; guest code owns only its individual atomic ticket.
-    std::vector<std::shared_ptr<ReadbackCompletion>> completion_watchers;
-    std::atomic<bool> completion_elision_reported{false};
 
     /// Writes the pending readback at this position of pending_readbacks to guest memory.
     void FinishReadback(size_t index);
@@ -459,8 +420,6 @@ private:
     std::deque<PendingReadback> pending_readbacks;
     std::unique_ptr<ReadbackQueue> readback_queue;
     boost::container::static_vector<HotWindow, 64> hot_windows;
-    u64 window_prefetch_frame{~u64{0}};
-    bool window_prefetch_reported{};
 
     std::unique_ptr<FaultManager> fault_manager;
     std::unique_ptr<Buffer> bda_pagetable_buffer;

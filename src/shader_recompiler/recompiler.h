@@ -29,6 +29,6 @@ struct Pools {
 
 [[nodiscard]] IR::Program TranslateProgram(const std::span<const u32>& code, Pools& pools,
                                            Info& info, RuntimeInfo& runtime_info,
-                                           const Profile& profile, u32 address_schedule_mask = 0);
+                                           const Profile& profile);
 
 } // namespace Shader

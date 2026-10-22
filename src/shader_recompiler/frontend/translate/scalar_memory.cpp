@@ -82,11 +82,7 @@ void Translator::S_BUFFER_LOAD_DWORD(int num_dwords, const GcnInst& inst) {
     IR::ScalarReg dst_reg{inst.dst[0].code};
     for (u32 i = 0; i < num_dwords; i++) {
         const IR::U32 index = ir.IAdd(dword_offset, ir.Imm32(i));
-        auto value = ir.ReadConstBuffer(vsharp, index, buffer_info);
-        // The legacy generic constructor accepts only u32 flags. Preserve the full
-        // original-PC metadata explicitly for the pinned, opt-in R11 policy only.
-        if (info.ifss_vector_read_origins) value.Inst()->SetFlags(buffer_info);
-        ir.SetScalarReg(dst_reg + i, value);
+        ir.SetScalarReg(dst_reg + i, ir.ReadConstBuffer(vsharp, index, buffer_info));
     }
 }
 

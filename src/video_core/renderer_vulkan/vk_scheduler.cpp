@@ -18,7 +18,6 @@
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/perf_stats.h"
-#include "common/recording_workers.h"
 #include "common/path_trace.h"
 #include "common/scope_exit.h"
 #include "common/thread.h"
@@ -312,8 +311,6 @@ struct Scheduler::GpuProfile {
     bool open_graphics{};
     std::unordered_map<u64, std::pair<u64, u64>> graphics_ns;
     std::unordered_map<u64, u64> graphics_seen;
-    u64 graphics_samples_issued{}; // Lifetime budget; report/reset does not replenish it.
-    u64 compute_samples_issued{}; // Shared by compute hashes; reload/report never replenishes it.
     std::unordered_map<u64, std::pair<u64, u64>> shader_ns; ///< hash: GPU ns, dispatches.
     u64 report_start_ns{};
     std::vector<u64> results;
@@ -347,13 +344,6 @@ void Scheduler::AllowThreadedRecording() {
         return;
     }
     threading_allowed = true;
-    recording_workers = Common::Perf::GetTuning().v3_recording_workers.load(std::memory_order_relaxed);
-    if (recording_workers != 2 && recording_workers != 4) recording_workers = 0;
-    if (instance.GetProfilerContext()) recording_workers = 0;
-    if (recording_workers) {
-        LOG_INFO(Render_Vulkan, "V3 complete-session recorder configured: workers={} ordering=FIFO",
-                 recording_workers);
-    }
     recorder_thread = std::jthread(std::bind_front(&Scheduler::RecorderThread, this));
 }
 
@@ -378,14 +368,7 @@ CommandStream& Scheduler::Stream() {
     session_used = true;
     // Batches of commands go to the recording thread while the next ones are recorded.
     static constexpr size_t DispatchCommands = 256;
-    // A new Vulkan command buffer starts with invalidated state, so an entire
-    // session is self-contained. Never distribute arbitrary 256-command slices.
-    // Large sessions retain the original single-recorder continuation path.
-    if (recording_workers && stream->NumCommands() >= 65536) {
-        parallel_session_fallback = true;
-    }
-    if ((!recording_workers || parallel_session_fallback) &&
-        stream->NumCommands() >= DispatchCommands && !in_submit_callback) {
+    if (stream->NumCommands() >= DispatchCommands && !in_submit_callback) {
         DispatchStream();
     }
     return *stream;
@@ -421,11 +404,11 @@ void Scheduler::DispatchStream() {
 void Scheduler::WaitForRecorderRoom(std::unique_lock<std::mutex>& lock) {
     // A first-use compile can hold the recorder at a retained bind. Bound the producer's
     // lead to 64 batches (normally 256 commands each), instead of retaining unlimited frames.
-    const size_t MaxQueuedBatches = recording_workers ? 8 : 64;
-    if ((recording_workers || Common::Perf::GetTuning().compute_compile_parallel.load(std::memory_order_relaxed)) &&
+    static constexpr size_t MaxQueuedBatches = 64;
+    if (Common::Perf::GetTuning().compute_compile_parallel.load(std::memory_order_relaxed) &&
         recorder_jobs.size() >= MaxQueuedBatches) {
         const u64 start = Common::Perf::NowNs();
-        recorder_space_cv.wait(lock, [this, MaxQueuedBatches] { return recorder_jobs.size() < MaxQueuedBatches; });
+        recorder_space_cv.wait(lock, [this] { return recorder_jobs.size() < MaxQueuedBatches; });
         Common::Perf::Add(Common::Perf::RecorderQueueWaitNs, Common::Perf::NowNs() - start);
     }
 }
@@ -450,10 +433,6 @@ vk::CommandBuffer Scheduler::RecorderCommandBuffer() {
 }
 
 void Scheduler::RecorderThread(std::stop_token stoken) {
-    if (recording_workers) {
-        ParallelRecorderThread(stoken);
-        return;
-    }
     Common::SetCurrentThreadName("shadPS4:GpuCommandRecorder");
     while (true) {
         // Optionally wait a little for the next commands before sleeping: the command processor
@@ -492,12 +471,7 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
             const vk::CommandBuffer cmdbuf = RecorderCommandBuffer();
             Check(cmdbuf.end());
             recorder_cmdbuf = vk::CommandBuffer{};
-            std::unique_lock lk{submit_mutex, std::defer_lock};
-            {
-                Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::SubmitLock,
-                                                  Common::Perf::V3SubmitLockNs};
-                lk.lock();
-            }
+            std::scoped_lock lk{submit_mutex};
             SubmitToQueue(std::span{&cmdbuf, 1}, job.info);
         }
         Common::Perf::Add(Common::Perf::RecorderBusyNs, Common::Perf::NowNs() - busy_start);
@@ -511,107 +485,6 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
             if (recorder_jobs.empty()) {
                 recorder_idle_cv.notify_all();
             }
-        }
-    }
-}
-
-void Scheduler::ParallelRecorderThread(std::stop_token stoken) {
-    Common::SetCurrentThreadName("shadPS4:RecordPublish");
-    struct Recorded {
-        vk::CommandBuffer buffer;
-        std::unique_ptr<CommandStream> stream;
-    };
-    struct Pending {
-        std::future<Recorded> result;
-        SubmitInfo info;
-    };
-    // Pools are touched exclusively by their respective worker. They outlive
-    // all recording tasks and all GPU uses, including the final queued submit.
-    std::array<std::unique_ptr<CommandPool>, 4> pools;
-    Common::RecordingWorkers<Recorded> workers{recording_workers};
-    std::deque<Pending> pending;
-    SCOPE_EXIT { work_semaphore.Wait(submitted_tick.load(std::memory_order_acquire)); };
-    bool reported_parallel{}, reported_fallback{};
-    const auto publish = [&](vk::CommandBuffer buffer, SubmitInfo& info) {
-        std::unique_lock lock{submit_mutex, std::defer_lock};
-        {
-            Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::SubmitLock,
-                                              Common::Perf::V3SubmitLockNs};
-            lock.lock();
-        }
-        SubmitToQueue(std::span{&buffer, 1}, info);
-    };
-    const auto retire = [&] {
-        auto ready = pending.front().result.get();
-        publish(ready.buffer, pending.front().info);
-        pending.pop_front();
-        std::scoped_lock lock{recorder_mutex};
-        free_streams.push_back(std::move(ready.stream));
-    };
-    for (;;) {
-        RecorderJob job;
-        bool have_job{};
-        {
-            std::unique_lock lock{recorder_mutex};
-            recorder_waiting = pending.empty();
-            recorder_cv.wait(lock, stoken, [&] { return !recorder_jobs.empty() || !pending.empty(); });
-            recorder_waiting = false;
-            if (recorder_jobs.empty() && pending.empty()) return;
-            if (!recorder_jobs.empty() && pending.size() < recording_workers * 2) {
-                job = std::move(recorder_jobs.front());
-                recorder_jobs.pop_front();
-                recorder_queued.fetch_sub(1, std::memory_order_relaxed);
-                have_job = true;
-            }
-            recorder_busy = true;
-        }
-        recorder_space_cv.notify_one();
-        if (have_job && job.submit && job.parallel && !recorder_cmdbuf) {
-            if (!reported_parallel) {
-                reported_parallel = true;
-                LOG_INFO(Render_Vulkan, "V3 complete-session recorder active: workers={} commands={}",
-                         recording_workers, job.stream ? job.stream->NumCommands() : 0);
-            }
-            auto result = workers.Submit([this, &pools, stream = std::move(job.stream)]
-                                         (std::size_t index) mutable {
-                if (!pools[index]) {
-                    Common::SetCurrentThreadName("shadPS4:RecordWorker");
-                    pools[index] = std::make_unique<CommandPool>(instance, &work_semaphore);
-                }
-                const auto buffer = pools[index]->Commit();
-                Check(buffer.begin(vk::CommandBufferBeginInfo{
-                    .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}));
-                if (stream) stream->Execute(buffer);
-                Check(buffer.end());
-                return Recorded{buffer, std::move(stream)};
-            });
-            pending.push_back(Pending{std::move(result), job.info});
-        } else if (have_job) {
-            // A direct-command escape or oversized continuation is a boundary:
-            // drain earlier independent sessions before using the original pool.
-            while (!pending.empty()) retire();
-            if (!reported_fallback) {
-                reported_fallback = true;
-                LOG_INFO(Render_Vulkan, "V3 complete-session recorder fallback: direct/continuation boundary");
-            }
-            if (job.stream) job.stream->Execute(RecorderCommandBuffer());
-            if (job.submit) {
-                const auto buffer = RecorderCommandBuffer();
-                Check(buffer.end());
-                recorder_cmdbuf = vk::CommandBuffer{};
-                publish(buffer, job.info);
-            }
-            if (job.stream) {
-                std::scoped_lock lock{recorder_mutex};
-                free_streams.push_back(std::move(job.stream));
-            }
-        } else {
-            retire(); // FIFO publication even when later recordings finish first.
-        }
-        {
-            std::scoped_lock lock{recorder_mutex};
-            recorder_busy = !pending.empty();
-            if (!recorder_busy && recorder_jobs.empty()) recorder_idle_cv.notify_all();
         }
     }
 }
@@ -756,7 +629,6 @@ void Scheduler::BeginSession() {
     stream_session = threading_allowed &&
                      Common::Perf::GetTuning().threaded_recording.load(std::memory_order_relaxed);
     if (stream_session) {
-        parallel_session_fallback = Common::Perf::FrameDumpActive().load(std::memory_order_relaxed);
         // The recording thread allocates and records the command buffer of the session.
         recorder_used = true;
         direct_cmdbuf = vk::CommandBuffer{};
@@ -863,17 +735,12 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     if (stream_session) {
         // Threaded recording: the recording thread submits the session after recording it.
         const u64 signal_value = work_semaphore.NextTick();
-        if (on_submit) {
-            const bool previous = std::exchange(in_submit_callback, true);
-            SCOPE_EXIT { in_submit_callback = previous; };
-            if (Common::Perf::GetTuning().v3_submit_prepare.load(std::memory_order_relaxed)) {
-                // CPU barrier preparation need not wait for a blocking queuePresentKHR.
-                // The callback acquires submit_mutex itself iff it issues sparse queue work.
-                on_submit(info, false);
-                Common::Perf::Add(Common::Perf::V3SubmitPrepared);
-            } else {
-                std::scoped_lock lk{submit_mutex};
-                on_submit(info, true);
+        {
+            std::scoped_lock lk{submit_mutex};
+            if (on_submit) {
+                const bool previous = std::exchange(in_submit_callback, true);
+                SCOPE_EXIT { in_submit_callback = previous; };
+                on_submit(info);
             }
         }
         EndSession();
@@ -884,14 +751,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
             // CommandBuffer() made the end of the session direct: the recording thread is idle.
             Check(direct_cmdbuf.end());
             recorder_cmdbuf = vk::CommandBuffer{};
-            std::unique_lock lk{submit_mutex, std::defer_lock};
-            {
-                Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::SubmitLock,
-                                                  Common::Perf::V3SubmitLockNs};
-                lk.lock();
-            }
-            Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitQueued,Common::PathTrace::NextId(),
-                reinterpret_cast<u64>(static_cast<VkSemaphore>(work_semaphore.Handle())),signal_value,0,0);
+            std::scoped_lock lk{submit_mutex};
             SubmitToQueue(std::span{&direct_cmdbuf, 1}, info);
         } else {
             std::unique_ptr<CommandStream> next;
@@ -903,16 +763,10 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
                     Common::Perf::Add(Common::Perf::RecorderJobs);
                     Common::Perf::Add(Common::Perf::RecorderCommands, stream->NumCommands());
                 }
-                if(const auto id=Common::PathTrace::NextId()) {
-                    Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitQueued,id,
-                        reinterpret_cast<u64>(static_cast<VkSemaphore>(work_semaphore.Handle())),
-                        signal_value,recorder_jobs.size(),1);
-                }
                 recorder_jobs.push_back(RecorderJob{
                     .stream = std::move(stream),
                     .submit = true,
                     .info = info,
-                    .parallel = recording_workers && !parallel_session_fallback,
                 });
                 recorder_queued.fetch_add(1, std::memory_order_release);
                 if (!free_streams.empty()) {
@@ -933,12 +787,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         return;
     }
 
-    std::unique_lock lk{submit_mutex, std::defer_lock};
-    {
-        Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::SubmitLock,
-                                          Common::Perf::V3SubmitLockNs};
-        lk.lock();
-    }
+    std::scoped_lock lk{submit_mutex};
     const u64 signal_value = work_semaphore.NextTick();
 
 #if TRACY_GPU_ENABLED
@@ -952,7 +801,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     if (on_submit) {
         const bool previous = std::exchange(in_submit_callback, true);
         SCOPE_EXIT { in_submit_callback = previous; };
-        on_submit(info, true);
+        on_submit(info);
     }
 
     EndSession();
@@ -972,8 +821,6 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     const vk::Semaphore timeline = work_semaphore.Handle();
     info.AddSignal(timeline, signal_value);
 
-    Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitQueued,Common::PathTrace::NextId(),
-        reinterpret_cast<u64>(static_cast<VkSemaphore>(work_semaphore.Handle())),signal_value,0,0);
     SubmitToQueue(cmd_buffers, info);
 
     BeginSession();
@@ -1012,23 +859,7 @@ void Scheduler::SubmitToQueue(std::span<const vk::CommandBuffer> cmd_buffers, Su
     if (queue == instance.GetGraphicsQueue()) {
         ImGui::Core::TextureManager::Submit();
     }
-    u64 trace_tick=0;
-    if (Common::PathTrace::Active()) {
-        for (u32 i=0;i<info.num_signal_semas;++i) {
-            if (info.signal_semas[i]==work_semaphore.Handle())trace_tick=info.signal_ticks[i];
-        }
-    }
-    const auto trace_submit=trace_tick ? Common::PathTrace::NextId():0;
-    const auto trace_domain=reinterpret_cast<u64>(static_cast<VkSemaphore>(work_semaphore.Handle()));
-    Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitDriverBegin,trace_submit,
-                            trace_domain,trace_tick,cmd_buffers.size(),0);
-    auto submit_result = [&] {
-        Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::QueueSubmit,
-                                          Common::Perf::V3QueueSubmitNs};
-        return queue.submit(submit_info, info.fence);
-    }();
-    Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitDriverEnd,trace_submit,
-                            trace_domain,trace_tick,cmd_buffers.size(),submit_result==vk::Result::eSuccess);
+    auto submit_result = queue.submit(submit_info, info.fence);
     if (submit_result == vk::Result::eErrorDeviceLost) {
         GpuCrashDiag::ReportDeviceLost(instance, "submit");
     }
@@ -1114,20 +945,13 @@ void Scheduler::ProfileDispatchBegin(u64 shader_hash) {
         Common::Perf::GetTuning().gpu_profile.load(std::memory_order_relaxed) != 2) {
         return;
     }
-    const auto& tuning = Common::Perf::GetTuning();
-    const u64 filter = tuning.gpu_profile_compute_hash.load(std::memory_order_relaxed);
-    const u32 limit = tuning.gpu_profile_compute_limit.load(std::memory_order_relaxed);
+    const u64 filter = Common::Perf::GetTuning().gpu_profile_compute_hash.load(
+        std::memory_order_relaxed);
     if (filter != 0 && shader_hash != filter) return;
     GpuProfile& prof = *profile;
-    if (limit && prof.compute_samples_issued >= limit) return;
     u64 number;
     if (!prof.Allocate(number)) {
         return;
-    }
-    ++prof.compute_samples_issued;
-    if (limit && prof.compute_samples_issued == limit) {
-        LOG_INFO(Render_Vulkan, "GPU compute profile sample budget exhausted: shader={:016x} issued={}",
-                 shader_hash, prof.compute_samples_issued);
     }
     prof.open_dispatch = number;
     prof.open_hash = shader_hash;
@@ -1163,21 +987,10 @@ void Scheduler::ProfileDrawBegin(u64 shader_hash) {
     if (!profile || !profile->current.active ||
         Common::Perf::GetTuning().gpu_profile.load(std::memory_order_relaxed) != 3) return;
     auto& prof = *profile;
-    const auto& tuning = Common::Perf::GetTuning();
-    const u64 filter = tuning.gpu_profile_draw_hash.load(std::memory_order_relaxed);
-    const u32 limit = tuning.gpu_profile_draw_limit.load(std::memory_order_relaxed);
-    if ((filter && filter != shader_hash) || (limit && prof.graphics_samples_issued >= limit)) {
-        return;
-    }
     const u64 seen = prof.graphics_seen[shader_hash]++;
     if ((seen & 31) != 0) return;
     u64 number;
     if (!prof.Allocate(number)) return;
-    ++prof.graphics_samples_issued;
-    if (limit && prof.graphics_samples_issued == limit) {
-        LOG_INFO(Render_Vulkan, "GPU draw profile sample budget exhausted: shader={:016x} issued={}",
-                 shader_hash, prof.graphics_samples_issued);
-    }
     prof.open_dispatch = number;
     prof.open_hash = shader_hash;
     prof.open_graphics = true;
@@ -1311,8 +1124,6 @@ void Scheduler::CollectProfile() {
                  "Perf GPU compute shader {:016x}: {:.2f} ms/s, {:.0f} dispatches/s, {:.1f} us avg",
                  hash, stats.first / 1e6 / seconds, stats.second / seconds,
                  stats.second ? stats.first / 1e3 / static_cast<double>(stats.second) : 0.0);
-        LOG_INFO(Render_Vulkan, "Perf GPU compute samples {:016x}: count={} total_ns={}",
-                 hash, stats.second, stats.first);
     }
 }
 
@@ -1422,65 +1233,98 @@ bool DynamicState::BindCache::SkipPush(vk::PipelineLayout layout, vk::ShaderStag
     return false;
 }
 
-DescriptorUpdate DynamicState::BindCache::PrepareDescriptors(
-    vk::PipelineBindPoint bind_point, vk::PipelineLayout layout, u32 set,
-    std::span<const vk::WriteDescriptorSet> writes) noexcept {
+bool DynamicState::BindCache::SkipDescriptors(vk::PipelineBindPoint bind_point,
+                                              vk::PipelineLayout layout, u32 set,
+                                              std::span<const vk::WriteDescriptorSet> writes) noexcept {
     u32 index;
     if (bind_point == vk::PipelineBindPoint::eGraphics) {
         index = 0;
     } else if (bind_point == vk::PipelineBindPoint::eCompute) {
         index = 1;
     } else {
-        return {};
+        return false;
     }
     Descriptors& cache = descriptors[index];
     Common::Perf::Add(Common::Perf::DescriptorPushes);
-    const bool evidence = Common::Perf::GetTuning().v3_descriptor_evidence.load(std::memory_order_relaxed);
-    if (evidence) {
-        using namespace Common::Perf;
-        const auto e = InspectDescriptors(cache, layout, set, writes);
-        Add(R4DescriptorCalls);
-        switch (e.reason) {
-        case DescriptorEvidence::Reason::Hit: Add(R4DescriptorHits); break;
-        case DescriptorEvidence::Reason::Unknown: Add(R4DescriptorUnknown); break;
-        case DescriptorEvidence::Reason::Uncacheable: Add(R4DescriptorUncacheable); break;
-        case DescriptorEvidence::Reason::Layout: Add(R4DescriptorLayout); break;
-        case DescriptorEvidence::Reason::Shape: Add(R4DescriptorShape); break;
-        case DescriptorEvidence::Reason::Payload: Add(R4DescriptorPayload); break;
+    // The infos of a write as compared and kept: what the descriptor points to.
+    const auto info_at = [](const vk::WriteDescriptorSet& write, u32 i) -> Descriptors::Info {
+        switch (write.descriptorType) {
+        case vk::DescriptorType::eSampler:
+        case vk::DescriptorType::eCombinedImageSampler:
+        case vk::DescriptorType::eSampledImage:
+        case vk::DescriptorType::eStorageImage:
+        case vk::DescriptorType::eInputAttachment: {
+            const auto& info = write.pImageInfo[i];
+            return {reinterpret_cast<u64>(static_cast<VkSampler>(info.sampler)),
+                    reinterpret_cast<u64>(static_cast<VkImageView>(info.imageView)),
+                    static_cast<u64>(info.imageLayout)};
         }
-        if (e.layout_only) Add(R4DescriptorLayoutOnly);
-        if (e.shape_same && e.changed_infos) {
-            Add(R4DescriptorChangedInfos,e.changed_infos);
-            Add(R4DescriptorChangedSegments,e.changed_segments);
-            Add(R4DescriptorComparableSegments,e.segments);
-            Add(e.changed_segments==1 ? R4DescriptorOneSegment :
-                e.changed_segments<=4 ? R4DescriptorFewSegments : R4DescriptorManySegments);
+        case vk::DescriptorType::eUniformTexelBuffer:
+        case vk::DescriptorType::eStorageTexelBuffer:
+            return {reinterpret_cast<u64>(static_cast<VkBufferView>(write.pTexelBufferView[i])), 0,
+                    0};
+        default: {
+            const auto& info = write.pBufferInfo[i];
+            return {reinterpret_cast<u64>(static_cast<VkBuffer>(info.buffer)), info.offset,
+                    info.range};
         }
-        Add(R4DescriptorBuffer,e.buffers); Add(R4DescriptorOffset,e.offsets);
-        Add(R4DescriptorRange,e.ranges); Add(R4DescriptorSampler,e.samplers);
-        Add(R4DescriptorView,e.views); Add(R4DescriptorImageLayout,e.image_layouts);
-        Add(R4DescriptorTexelView,e.texel_views);
+        }
+    };
+    // Only plain writes of set 0 are kept (no extension structures, bounded sizes).
+    bool cacheable = set == 0 && writes.size() <= Descriptors::MaxWrites;
+    u32 total_infos = 0;
+    for (const auto& write : writes) {
+        if (write.pNext != nullptr) {
+            cacheable = false;
+            break;
+        }
+        total_infos += write.descriptorCount;
     }
-    const auto update = UpdateDescriptorState(cache, layout, set, writes, SkipRedundantBinds(),
-        Common::Perf::GetTuning().v3_descriptor_delta.load(std::memory_order_relaxed));
-    if (update.mode == DescriptorUpdate::Mode::Skip) {
-        Common::Perf::Add(Common::Perf::DescriptorPushesSkipped);
+    if (!cacheable || total_infos > Descriptors::MaxInfos) {
+        // Another set pushed with an incompatible layout can disturb set 0 too.
+        cache.num_writes = ~0U;
+        return false;
     }
-    if (evidence) {
-        using namespace Common::Perf;
-        const auto input = static_cast<u32>(writes.size());
-        const auto emitted = update.EmittedWrites(input);
-        Add(A1DescriptorCalls);
-        Add(update.mode == DescriptorUpdate::Mode::Partial ? A1DescriptorPartial :
-            update.mode == DescriptorUpdate::Mode::Skip ? A1DescriptorSkipped : A1DescriptorFull);
-        Add(A1DescriptorInputWrites, input);
-        Add(A1DescriptorEmittedWrites, emitted);
-        Add(A1DescriptorOmittedWrites, input - emitted);
-        if (update.mode == DescriptorUpdate::Mode::Partial) {
-            Add(A1DescriptorDeltaOmittedWrites, input - emitted);
+    bool same = cache.num_writes == writes.size() && cache.layout == layout &&
+                cache.num_infos == total_infos;
+    if (same) {
+        u32 info_index = 0;
+        for (u32 w = 0; w < writes.size() && same; ++w) {
+            const auto& write = writes[w];
+            const auto& kept = cache.writes[w];
+            if (kept.binding != write.dstBinding || kept.array_element != write.dstArrayElement ||
+                kept.count != write.descriptorCount || kept.type != write.descriptorType) {
+                same = false;
+                break;
+            }
+            for (u32 i = 0; i < write.descriptorCount; ++i) {
+                if (!(cache.infos[info_index++] == info_at(write, i))) {
+                    same = false;
+                    break;
+                }
+            }
         }
     }
-    return update;
+    if (same) {
+        if (SkipRedundantBinds()) {
+            Common::Perf::Add(Common::Perf::DescriptorPushesSkipped);
+            return true;
+        }
+        return false;
+    }
+    cache.layout = layout;
+    cache.num_writes = static_cast<u32>(writes.size());
+    cache.num_infos = total_infos;
+    u32 info_index = 0;
+    for (u32 w = 0; w < writes.size(); ++w) {
+        const auto& write = writes[w];
+        cache.writes[w] = {write.dstBinding, write.dstArrayElement, write.descriptorCount,
+                           write.descriptorType};
+        for (u32 i = 0; i < write.descriptorCount; ++i) {
+            cache.infos[info_index++] = info_at(write, i);
+        }
+    }
+    return false;
 }
 
 bool DynamicState::BindCache::SkipVertexInput(

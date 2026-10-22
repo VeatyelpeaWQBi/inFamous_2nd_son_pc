@@ -29,12 +29,7 @@ void ApplyGameProfile(std::string_view serial);
 /**
  * Applies perf_tuning.ini from the user folder when it changes (checked at most once per second),
  * for diagnostics and the remaining runtime settings. Validated V1/V2 core policies are
- * unconditional and are not controlled by this file. V3 candidates are separate, default off:
- * v3_descriptor_evidence (diagnostic comparison only), v3_layout_sharing (renderer startup only),
- * v3_demand_readback, v3_prefetch_batches, v3_submit_prepare, v3_lighting_schedule,
- * v3_particle_schedule, v3_particle_async, v3_lighting_reduction, v3_lighting_cse.
- * Shader scheduling is captured at renderer startup;
- * changing those keys during play does not change compiled code. Lines are "key = value":
+ * unconditional and are not controlled by this file. Lines are "key = value":
  *   readback_window_kb = 512      window downloaded around a precise readback (power of two)
  *   readback_write_discard = 0    see GPUSettings::readbacks_write_discard
  *   readback_write_merge = 0      with write discard, the bytes the GPU wrote in a page whose

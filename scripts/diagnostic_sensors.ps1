@@ -1,15 +1,8 @@
 ﻿# SPDX-License-Identifier: GPL-2.0-or-later
 # One completed nvidia-smi query per sample. Never terminate a CSV writer mid-row.
-function New-DiagnosticSensors([string]$Executable,[string]$Directory,[string[]]$QueryFields=@()) {
-    if($QueryFields.Count -and ($QueryFields.Count -ne 10 -or @($QueryFields|Where-Object {$_ -notmatch '^[a-zA-Z0-9_.]+$'}).Count)){
-        throw 'A sensor query requires ten valid NVIDIA field names.'
-    }
-    $arguments=if($QueryFields.Count){@(
-        ('--query-gpu='+($QueryFields -join ','))
-        '--format=csv,nounits'
-    )}else{@(Get-DiagnosticSensorArguments $Directory)}
+function New-DiagnosticSensors([string]$Executable,[string]$Directory) {
     return [pscustomobject]@{
-        executable=$Executable;directory=$Directory;arguments=$arguments;process=$null;output=$null;error_output=$null
+        executable=$Executable;directory=$Directory;process=$null;output=$null;error_output=$null
         writer=[IO.StreamWriter]::new((Join-Path $Directory 'nvidia.csv'),$false,[Text.UTF8Encoding]::new($false))
         clock=[Diagnostics.Stopwatch]::StartNew();last_started=-2.0;started_qpc=0L
         header=$null;rows=0;errors=[Collections.Generic.List[string]]::new()
@@ -42,7 +35,7 @@ function Update-DiagnosticSensors($Sensor,[switch]$Stopping) {
     if(-not $Stopping -and -not $Sensor.process -and ($Sensor.clock.Elapsed.TotalSeconds-$Sensor.last_started) -ge 1){
         $start=[Diagnostics.ProcessStartInfo]::new()
         $start.FileName=$Sensor.executable
-        $start.Arguments=($Sensor.arguments|ForEach-Object {Quote-WindowsArgument $_}) -join ' '
+        $start.Arguments=((Get-DiagnosticSensorArguments $Sensor.directory)|ForEach-Object {Quote-WindowsArgument $_}) -join ' '
         $start.UseShellExecute=$false;$start.CreateNoWindow=$true
         $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
         $Sensor.started_qpc=[Diagnostics.Stopwatch]::GetTimestamp()

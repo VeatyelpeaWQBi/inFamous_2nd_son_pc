@@ -7,9 +7,6 @@
 #include "shader_recompiler/frontend/structured_control_flow.h"
 #include "shader_recompiler/frontend/translate/translate.h"
 #include "shader_recompiler/ir/passes/ir_passes.h"
-#include "shader_recompiler/ir/passes/ifss_lighting_cse.h"
-#include "shader_recompiler/ir/passes/ifss_lighting_vector.h"
-#include "shader_recompiler/ifss_depth_reduction.h"
 #include "shader_recompiler/ir/post_order.h"
 #include "shader_recompiler/ir/program.h"
 #include "shader_recompiler/profile.h"
@@ -64,7 +61,7 @@ void EmitControlFlowGraph(IR::Program& program, Pools& pools, Gcn::CFG& cfg,
 }
 
 IR::Program TranslateProgram(const std::span<const u32>& code, Pools& pools, Info& info,
-                             RuntimeInfo& runtime_info, const Profile& profile, u32 address_schedule_mask) {
+                             RuntimeInfo& runtime_info, const Profile& profile) {
     // Ensure first instruction is expected.
     constexpr u32 token_mov_vcchi = 0xBEEB03FF;
     if (code[0] != token_mov_vcchi) {
@@ -76,10 +73,6 @@ IR::Program TranslateProgram(const std::span<const u32>& code, Pools& pools, Inf
 
     // Decode and save instructions
     IR::Program program{info};
-    info.ifss_vector_read_origins =
-        (address_schedule_mask & Optimization::IfssLightingVectorBit) &&
-        info.hw_stage == HwStage::Compute && info.pgm_hash == Optimization::IfssLightingHash &&
-        Optimization::IsIfssDepthShader(code);
     program.ins_list.reserve(code.size());
     while (!slice.atEnd()) {
         program.ins_list.emplace_back(decoder.decodeInstruction(slice));
@@ -148,24 +141,6 @@ IR::Program TranslateProgram(const std::span<const u32>& code, Pools& pools, Inf
     Shader::Optimization::LowerHardwareIntrinsics(program);
     Shader::Optimization::ConstantPropagationPass(program.post_order_blocks);
     Shader::Optimization::DeadCodeEliminationPass(program);
-    Shader::Optimization::IfssAddressSchedulePass(program, address_schedule_mask);
-    if ((address_schedule_mask & Optimization::IfssLightingCseBit) &&
-        info.hw_stage == HwStage::Compute && info.pgm_hash == Optimization::IfssLightingHash) {
-        const bool pinned = Optimization::IsIfssDepthShader(code);
-        const auto result = pinned ? Optimization::EliminateIfssLightingExpressions(program) :
-                                     Optimization::LightingCseResult{};
-        LOG_INFO(Render_Recompiler,
-                 "C1 lighting CSE shader {:#x}: pinned={} removed={} cross_block={} floating={} budget_reached={}",
-                 info.pgm_hash, pinned, result.removed, result.cross_block, result.floating,
-                 result.budget_reached);
-    }
-    if ((address_schedule_mask & Optimization::IfssLightingVectorBit) &&
-        info.hw_stage == HwStage::Compute && info.pgm_hash == Optimization::IfssLightingHash) {
-        const bool pinned = Optimization::IsIfssDepthShader(code);
-        const auto groups = pinned ? Optimization::PackIfssLightingReads(program) : 0;
-        LOG_INFO(Render_Recompiler, "R11 lighting vector reads: pinned={} groups={}", pinned, groups);
-        if (groups) Shader::Optimization::DeadCodeEliminationPass(program);
-    }
     Shader::Optimization::CollectShaderInfoPass(program, profile);
     Shader::IR::DumpProgram(program, info);
 

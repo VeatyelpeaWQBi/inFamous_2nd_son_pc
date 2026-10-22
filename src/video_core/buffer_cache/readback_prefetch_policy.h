@@ -2,23 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include <algorithm>
-#include <bit>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <utility>
 
 namespace VideoCore {
-
-// Check the ACTUAL packed byte count (including region padding), not the source span.
-inline bool FitsReadbackPrefetchBudget(std::uint64_t packed, std::uint64_t used,
-                                      std::uint64_t budget) {
-    if (packed == 0 || packed > (std::uint64_t{1} << 63) || used > budget)
-        return false;
-    const auto allocation = std::max<std::uint64_t>(std::bit_ceil(packed), 65536);
-    return allocation <= budget - used;
-}
 
 /// Scheduling hint only, never evidence that data is clean. Covers every page of an observed
 /// small CPU read. Unknown bounds retain demand readback. Does not change its download window.

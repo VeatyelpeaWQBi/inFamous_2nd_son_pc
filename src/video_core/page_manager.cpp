@@ -11,7 +11,6 @@
 #include "common/multi_level_page_table.h"
 #include "common/perf_stats.h"
 #include "common/signal_context.h"
-#include "common/consumer_evidence.h"
 #include "common/thread.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
@@ -584,7 +583,6 @@ struct SignalImpl : public PageManager::Impl {
             return handled;
         } else {
             const u64 rip = reinterpret_cast<u64>(Common::GetRip(context));
-            Common::ConsumerEvidence::FaultScope evidence{context, rip, addr, size, is_gpu_thread};
             const bool handled = rasterizer->ReadMemory(addr, size, is_gpu_thread, rip);
             if (handled) {
                 Common::Perf::Add(Common::Perf::FaultReads);

@@ -229,7 +229,7 @@ private:
     Task ProcessCeUpdate(std::span<const u32> ccb);
     /// submit_ns: when the guest submitted the work (top level submissions only, for statistics).
     template <bool is_indirect = false>
-    Task ProcessCompute(std::span<const u32> acb, u32 vqid, u64 submit_ns = 0, u64 aux_parent = 0);
+    Task ProcessCompute(std::span<const u32> acb, u32 vqid, u64 submit_ns = 0);
 
     void ProcessCommands();
     void Process(std::stop_token stoken);

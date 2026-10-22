@@ -472,6 +472,3 @@ OPCODE(GroupAny,                                            U1,             U1, 
 
 // Time operations
 OPCODE(Memtime,                                             U64,                                                                                            )
-
-// R11: retained four words of one pinned guest SMRD instruction, inserted after resource passes.
-OPCODE(IfssReadConstBufferU32x4,                             U32x4,          Opaque,         U32                                                             )

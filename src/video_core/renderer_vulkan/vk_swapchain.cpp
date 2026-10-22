@@ -8,8 +8,6 @@
 #include "core/emulator_settings.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
-#include "common/path_trace.h"
-#include "common/perf_stats.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 
@@ -82,8 +80,6 @@ void Swapchain::Create(u32 width_, u32 height_) {
 }
 
 void Swapchain::Recreate(u32 width_, u32 height_) {
-    Common::PathTrace::HostScope phase{Common::PathTrace::HostPhase::Recreate,
-                                      Common::Perf::V3RecreateNs};
     LOG_DEBUG(Render_Vulkan, "Recreate the swapchain: width={} height={} HDR={}", width_, height_,
               needs_hdr);
     Create(width_, height_);

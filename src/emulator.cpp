@@ -28,8 +28,6 @@
 #include "common/ntapi.h"
 #include "common/path_util.h"
 #include "common/path_trace.h"
-#include "common/consumer_evidence.h"
-#include "common/auxiliary_evidence.h"
 #include "common/perf_stats.h"
 #include "common/polyfill_thread.h"
 #include "common/scm_rev.h"
@@ -701,15 +699,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     if (linker->LoadModule(guest_eboot_path) == -1) {
         LOG_CRITICAL(Loader, "Failed to load game's eboot.bin: {}", guest_eboot_path);
         std::quick_exit(0);
-    }
-    if (auto* main_module = linker->GetModule(0)) {
-        Common::AuxiliaryEvidence::Configure(id, app_version, controls_sha256,
-            Common::Perf::GetTuning().auxiliary_evidence_limit.load(std::memory_order_relaxed),
-            Common::Perf::GetTuning().auxiliary_evidence_delay_seconds.load(std::memory_order_relaxed));
-        Common::ConsumerEvidence::Configure(id, app_version, controls_sha256,
-            main_module->GetBaseAddress(), main_module->aligned_base_size,
-            Common::Perf::GetTuning().consumer_evidence_limit.load(std::memory_order_relaxed),
-            Common::Perf::GetTuning().consumer_evidence_delay_seconds.load(std::memory_order_relaxed));
     }
 
 #ifdef ENABLE_DISCORD_RPC

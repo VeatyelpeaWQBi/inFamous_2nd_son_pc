@@ -12,19 +12,15 @@
 #include <thread>
 #include <queue>
 #include <span>
-#include <boost/container/static_vector.hpp>
 
 #include "common/interval_set.h"
-#include "common/perf_stats.h"
 #include "common/unique_function.h"
 #include "video_core/amdgpu/regs_color.h"
 #include "video_core/amdgpu/regs_primitive.h"
 #include "video_core/renderer_vulkan/vk_buffer_bind_cache.h"
-#include "video_core/renderer_vulkan/vk_descriptor_evidence.h"
 #include "video_core/renderer_vulkan/vk_command_stream.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
-#include "video_core/buffer_cache/copy_coalesce.h"
 #include "vulkan/vulkan.hpp"
 
 namespace tracy {
@@ -203,7 +199,27 @@ struct DynamicState {
         };
 
         /// Descriptors pushed for set 0 of a bind point, the contents of their writes copied.
-        using Descriptors = DescriptorSnapshot;
+        struct Descriptors {
+            static constexpr u32 MaxWrites = 64;
+            static constexpr u32 MaxInfos = 128;
+            struct Write {
+                u32 binding;
+                u32 array_element;
+                u32 count;
+                vk::DescriptorType type;
+            };
+            struct Info {
+                u64 a; ///< sampler, buffer or texel buffer view
+                u64 b; ///< image view or offset
+                u64 c; ///< image layout or range
+                bool operator==(const Info&) const = default;
+            };
+            vk::PipelineLayout layout{};
+            u32 num_writes{~0U}; ///< ~0U: unknown
+            u32 num_infos{};
+            std::array<Write, MaxWrites> writes;
+            std::array<Info, MaxInfos> infos;
+        };
 
         std::array<vk::Pipeline, 2> pipelines{}; ///< graphics, compute
         std::array<Push, 2> pushes{};             ///< graphics stages, compute stage
@@ -243,10 +259,10 @@ struct DynamicState {
         bool SkipPush(vk::PipelineLayout layout, vk::ShaderStageFlags stages, u32 offset, u32 size,
                       const void* values) noexcept;
 
-        /// Tracks complete pushed state; may skip the call or select whole changed writes.
-        /// Unknown/changed layout or write shape always retains the full update.
-        DescriptorUpdate PrepareDescriptors(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout,
-                                            u32 set, std::span<const vk::WriteDescriptorSet> writes) noexcept;
+        /// Notes descriptors pushed; true when they can be left out (set 0 of the bind point was
+        /// pushed last with the same layout and the same writes, skipping on).
+        bool SkipDescriptors(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout, u32 set,
+                             std::span<const vk::WriteDescriptorSet> writes) noexcept;
 
         /// Notes a vertex input set; true when it can be left out (same as the last one, with the
         /// same graphics pipeline bound since, skipping on).
@@ -437,8 +453,7 @@ struct DynamicState {
 };
 
 using SessionFunc = Common::UniqueFunction<void>;
-// queue_locked: callback may submit sparse bindings only under the queue lock.
-using SubmitFunc = Common::UniqueFunction<void, SubmitInfo&, bool>;
+using SubmitFunc = Common::UniqueFunction<void, SubmitInfo&>;
 
 /// Notified when rendering scopes begin and end, for work that cannot span them (Vulkan
 /// occlusion queries begun inside a rendering scope must end in it).
@@ -554,12 +569,6 @@ public:
     /// Records the commands of the session: directly in the command buffer, or through the
     /// recording thread (threaded recording). Use this rather than CommandBuffer().
     [[nodiscard]] CommandRecorder Recorder() noexcept;
-    void NoteCopyCoalesced(std::size_t before, std::size_t after) {
-        if (!copy_coalesce_reported) {
-            copy_coalesce_reported = true;
-            LOG_INFO(Render_Vulkan, "V3 copy regions coalesced: {} -> {} within one command", before, after);
-        }
-    }
 
     /// Returns the current command buffer, to record in it directly. With threaded recording,
     /// waits for the recording thread to record what it was given, and the rest of the session
@@ -666,7 +675,6 @@ private:
     /// Threaded recording: the recording thread records the command streams it is given in the
     /// command buffer of their session, and submits the sessions.
     void RecorderThread(std::stop_token stoken);
-    void ParallelRecorderThread(std::stop_token stoken);
     /// Hands the commands recorded so far to the recording thread.
     void DispatchStream();
     /// Waits until the recording thread has recorded and submitted all it was given.
@@ -680,7 +688,6 @@ private:
         std::unique_ptr<CommandStream> stream;
         bool submit{};
         SubmitInfo info{};
-        bool parallel{};
     };
 
 private:
@@ -730,9 +737,6 @@ private:
     bool threading_allowed{};
     bool stream_session{};     ///< This session started recorded by the recording thread.
     bool recorder_used{};      ///< The recording thread may still use the command pool.
-    u32 recording_workers{};   ///< Immutable after AllowThreadedRecording.
-    bool parallel_session_fallback{};
-    bool copy_coalesce_reported{};
     std::unique_ptr<CommandStream> stream; ///< Commands not handed to the recording thread yet.
     std::mutex recorder_mutex;
     std::condition_variable_any recorder_cv;
@@ -876,23 +880,23 @@ public:
     void pushDescriptorSetKHR(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout,
                               u32 set,
                               vk::ArrayProxy<const vk::WriteDescriptorSet> const& writes) const {
-        DescriptorUpdate update;
-        if (scheduler) {
-            update = scheduler->GetDynamicState().binds.PrepareDescriptors(
-                bind_point, layout, set, {writes.data(), writes.size()});
+        if (scheduler && scheduler->GetDynamicState().binds.SkipDescriptors(
+                             bind_point, layout, set, {writes.data(), writes.size()})) {
+            return;
         }
-        if (update.mode == DescriptorUpdate::Mode::Skip) return;
-        if (update.mode == DescriptorUpdate::Mode::Partial) {
-            // Only construct selected entries; no heap allocation or initialization of 64 writes.
-            boost::container::static_vector<vk::WriteDescriptorSet, DescriptorSnapshot::MaxWrites> changed;
-            for (u32 n = 0; n < writes.size(); ++n) {
-                if (update.changed_writes & (u64{1} << n)) changed.push_back(writes.data()[n]);
-            }
-            RecordDescriptorWrites(bind_point, layout, set,
-                                   {changed.data(), static_cast<u32>(changed.size())});
-        } else {
-            RecordDescriptorWrites(bind_point, layout, set, {writes.data(), writes.size()});
+        if (const vk::CommandBuffer c = Direct()) {
+            c.pushDescriptorSetKHR(bind_point, layout, set, writes);
+            return;
         }
+        CommandStream& s = scheduler->Stream();
+        const u32 count = writes.size();
+        vk::WriteDescriptorSet* const copies = s.Copy(writes.data(), count);
+        for (u32 i = 0; i < count; ++i) {
+            CopyDescriptorWrite(s, copies[i]);
+        }
+        s.Record([=](vk::CommandBuffer c) {
+            c.pushDescriptorSetKHR(bind_point, layout, set, count, copies);
+        });
     }
 
     void bindDescriptorSets(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout,
@@ -998,29 +1002,6 @@ public:
 
     void copyBuffer(vk::Buffer src, vk::Buffer dst,
                     vk::ArrayProxy<const vk::BufferCopy> const& regions) const {
-        if (regions.size() > 1 &&
-            Common::Perf::GetTuning().v3_copy_coalesce.load(std::memory_order_relaxed)) {
-            // Bound extra work; long lists retain their original recording path.
-            constexpr std::size_t Limit = 128;
-            if (regions.size() <= Limit) {
-                std::array<vk::BufferCopy, Limit> merged;
-                const auto count = VideoCore::CoalesceCopyRegions<vk::BufferCopy>(
-                    {regions.data(), regions.size()}, merged);
-                if (count < regions.size()) {
-                    if (const vk::CommandBuffer c = Direct()) {
-                        c.copyBuffer(src, dst, static_cast<u32>(count), merged.data());
-                    } else {
-                        CommandStream& s = scheduler->Stream();
-                        const auto* owned = s.Copy(merged.data(), count);
-                        s.Record([=](vk::CommandBuffer c) {
-                            c.copyBuffer(src, dst, static_cast<u32>(count), owned);
-                        });
-                    }
-                    if (scheduler) scheduler->NoteCopyCoalesced(regions.size(), count);
-                    return;
-                }
-            }
-        }
         if (const vk::CommandBuffer c = Direct()) {
             c.copyBuffer(src, dst, regions);
             return;
@@ -1272,23 +1253,6 @@ private:
     /// The command buffer to record in now, or null to record into the stream.
     [[nodiscard]] vk::CommandBuffer Direct() const noexcept {
         return scheduler ? scheduler->DirectCommandBuffer() : fixed;
-    }
-
-    void RecordDescriptorWrites(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout, u32 set,
-                                std::span<const vk::WriteDescriptorSet> writes) const {
-        if (const vk::CommandBuffer c = Direct()) {
-            c.pushDescriptorSetKHR(bind_point, layout, set, static_cast<u32>(writes.size()), writes.data());
-            return;
-        }
-        CommandStream& s = scheduler->Stream();
-        const u32 count = static_cast<u32>(writes.size());
-        vk::WriteDescriptorSet* const copies = s.Copy(writes.data(), count);
-        for (u32 i = 0; i < count; ++i) {
-            CopyDescriptorWrite(s, copies[i]);
-        }
-        s.Record([=](vk::CommandBuffer c) {
-            c.pushDescriptorSetKHR(bind_point, layout, set, count, copies);
-        });
     }
 
     static void CopyDescriptorWrite(CommandStream& s, vk::WriteDescriptorSet& write) {

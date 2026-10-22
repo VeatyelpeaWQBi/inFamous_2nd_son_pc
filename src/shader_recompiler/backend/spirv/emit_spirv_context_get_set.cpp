@@ -75,44 +75,6 @@ Id EmitReadConstBuffer(EmitContext& ctx, u32 handle, Id index) {
     return result;
 }
 
-Id EmitIfssReadConstBufferU32x4(EmitContext& ctx, u32 handle, Id index) {
-    const auto& buffer = ctx.buffers[handle];
-    if (const Id offset = buffer.Offset(PointerSize::B32); Sirit::ValidId(offset)) {
-        index = ctx.OpIAdd(ctx.U32[1], index, offset);
-    }
-    const auto [scalar_id, scalar_ptr] = buffer.Alias(PointerType::U32);
-    const auto [vector_id, vector_ptr] = buffer.Alias(PointerType::U32x4);
-    const auto zero = ctx.ConstU32(0u), three = ctx.ConstU32(3u), four = ctx.ConstU32(4u);
-    const Id length = ctx.OpIAdd(ctx.U32[1], zero, zero);
-    ctx.ifss_array_lengths.push_back({length.value, ctx.U32[1].value, zero.value, scalar_id.value});
-    const Id aligned = ctx.OpIEqual(ctx.U1[1], ctx.OpBitwiseAnd(ctx.U32[1], index, three), zero);
-    // Subtraction may wrap for a short/null descriptor; the independent length>=4
-    // condition rejects it. Aligned, in-range groups cannot wrap their final +3.
-    const Id enough = ctx.OpUGreaterThanEqual(ctx.U1[1], length, four);
-    const Id fits = ctx.OpULessThanEqual(ctx.U1[1], index,
-                                       ctx.OpISub(ctx.U32[1], length, four));
-    const Id fast = ctx.OpLogicalAnd(ctx.U1[1], aligned,
-                                    ctx.OpLogicalAnd(ctx.U1[1], enough, fits));
-    const Id vector_label = ctx.OpLabel(), scalar_label = ctx.OpLabel(), merge = ctx.OpLabel();
-    ctx.OpSelectionMerge(merge, spv::SelectionControlMask::MaskNone);
-    ctx.OpBranchConditional(fast, vector_label, scalar_label);
-    ctx.AddLabel(vector_label);
-    const Id vector_index = ctx.OpShiftRightLogical(ctx.U32[1], index, ctx.ConstU32(2u));
-    const Id vector_value = ctx.OpLoad(ctx.U32[4],
-        ctx.OpAccessChain(vector_ptr, vector_id, zero, vector_index));
-    ctx.OpBranch(merge);
-    ctx.AddLabel(scalar_label);
-    std::array<Id, 4> values;
-    for (u32 i = 0; i < 4; ++i) {
-        const Id word = i == 0 ? index : ctx.OpIAdd(ctx.U32[1], index, ctx.ConstU32(i));
-        values[i] = ctx.OpLoad(ctx.U32[1], ctx.OpAccessChain(scalar_ptr, scalar_id, zero, word));
-    }
-    const Id scalar_value = ctx.OpCompositeConstruct(ctx.U32[4], values);
-    ctx.OpBranch(merge);
-    ctx.AddLabel(merge);
-    return ctx.OpPhi(ctx.U32[4], vector_value, vector_label, scalar_value, scalar_label);
-}
-
 Id EmitGetAttribute(EmitContext& ctx, IR::Attribute attr, u32 comp, u32 index) {
     if (IR::IsParam(attr)) {
         const u32 param_index{u32(attr) - u32(IR::Attribute::Param0)};

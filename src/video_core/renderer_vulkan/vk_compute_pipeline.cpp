@@ -14,17 +14,17 @@ namespace Vulkan {
 
 ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
                                  DescriptorHeap& desc_heap, const Shader::Profile& profile,
-                                 PipelineLayoutCache& layout_cache,
                                  vk::PipelineCache pipeline_cache, ComputePipelineKey compute_key_,
                                  const Shader::Info& info_, vk::ShaderModule module_,
                                  SerializationSupport& sdata, bool preloading /*=false*/,
                                  bool defer_compile /*=false*/,
                                  std::span<const u32> cached_image_bindings /*={}*/)
-    : Pipeline{instance, scheduler, desc_heap, profile, layout_cache, pipeline_cache, true},
+    : Pipeline{instance, scheduler, desc_heap, profile, pipeline_cache, true},
       restored{preloading}, compute_key{compute_key_}, module{module_},
       vk_pipeline_cache{pipeline_cache} {
     auto& info = stages[int(Shader::SwStage::Compute)];
     info = &info_;
+    const auto debug_str = GetDebugString();
 
     u32 binding{};
     boost::container::small_vector<vk::DescriptorSetLayoutBinding, 32> bindings;
@@ -81,7 +81,26 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         .bindingCount = static_cast<u32>(bindings.size()),
         .pBindings = bindings.data(),
     };
-    BuildLayouts(desc_layout_ci, std::span{&push_constants, 1});
+    const auto device = instance.GetDevice();
+    auto [descriptor_set_result, descriptor_set] =
+        device.createDescriptorSetLayoutUnique(desc_layout_ci);
+    ASSERT_MSG(descriptor_set_result == vk::Result::eSuccess,
+               "Failed to create compute descriptor set layout: {}",
+               vk::to_string(descriptor_set_result));
+    desc_layout = std::move(descriptor_set);
+
+    const vk::DescriptorSetLayout set_layout = *desc_layout;
+    const vk::PipelineLayoutCreateInfo layout_info = {
+        .setLayoutCount = 1U,
+        .pSetLayouts = &set_layout,
+        .pushConstantRangeCount = 1U,
+        .pPushConstantRanges = &push_constants,
+    };
+    auto [layout_result, layout] = instance.GetDevice().createPipelineLayoutUnique(layout_info);
+    ASSERT_MSG(layout_result == vk::Result::eSuccess,
+               "Failed to create compute pipeline layout: {}", vk::to_string(layout_result));
+    pipeline_layout = std::move(layout);
+    SetObjectName(device, *pipeline_layout, "Compute PipelineLayout {}", debug_str);
 
     // Everything that reads the guest state is done above, on the command processor thread.
     // Creating the pipeline object only needs the module and the layout, so it can be deferred
@@ -114,7 +133,7 @@ void ComputePipeline::Compile() {
     };
     const vk::ComputePipelineCreateInfo compute_pipeline_ci = {
         .stage = shader_ci,
-        .layout = pipeline_layout,
+        .layout = *pipeline_layout,
     };
     const auto device = instance.GetDevice();
     auto access =

@@ -3,16 +3,6 @@
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../../scripts/tools.ps1')
 . (Join-Path $PSScriptRoot '../../scripts/diagnostic_tools.ps1')
-$taskAdminProbe=(Get-Item Function:Test-DiagnosticAdministrator).ScriptBlock
-try{
-    function Test-DiagnosticAdministrator {return $false}
-    $taskProbeSpec=[pscustomobject]@{Wpr='IFSSConcurrent';VtuneAnalysis='';Nsight=$false;Validation=$false;Crash=$false;ExternalCrash=$false;RenderDoc=$false}
-    $taskProbeTools=[pscustomobject]@{wpr='existing-tool'}
-    $taskRejected=$false
-    try{Assert-DiagnosticTools $taskProbeSpec $taskProbeTools}catch{$taskRejected=$true}
-    if(-not $taskRejected){throw 'A real full launch must retain its administrator requirement.'}
-    Assert-DiagnosticTools $taskProbeSpec $taskProbeTools -RequireAdministrator $false
-}finally{Set-Item Function:Test-DiagnosticAdministrator $taskAdminProbe}
 $bounds=Get-DiagnosticCpuTimeRange ([DateTime]::Parse('2026-01-01T00:00:00Z').ToUniversalTime()) '2026-01-01T00:00:05.0898715Z' '2026-01-01T00:01:05.7286819Z'
 if([Math]::Abs($bounds.begin-6.0898715) -gt 0.000001 -or $bounds.filter -ne '6.089872:64.728682'){
     throw 'CPU report time filters must preserve fractional seconds on Windows PowerShell.'

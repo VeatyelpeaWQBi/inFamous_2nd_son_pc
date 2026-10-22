@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+﻿# SPDX-License-Identifier: GPL-2.0-or-later
 # Importing this file does not execute tools or modify the environment.
 function Get-ProjectDependencyPaths([string]$Root,$Manifest) {
     $local=@{}
@@ -13,7 +13,12 @@ function Get-ProjectDependencyPaths([string]$Root,$Manifest) {
     $ffmpeg=Resolve-ProjectChild $Root ($Manifest.dependency_build_root+'/ffmpeg')
     return [pscustomobject]@{sources=$local.dependencies_root;prebuilt=$local.dependency_build_root;ffmpeg=$ffmpeg}
 }
-function Assert-ProjectDependencies([string]$Root,$Manifest) {
+function Write-ProjectBuildStatus([string]$Message,[IO.TextWriter]$Log=$null) {
+    Write-Host $Message
+    if($Log){$Log.WriteLine($Message)}
+}
+function Assert-ProjectDependencies([string]$Root,$Manifest,[IO.TextWriter]$Log=$null) {
+    Write-ProjectBuildStatus '[Dependencies] Reading the project-local archive inventory...' $Log
     $local=Get-ProjectDependencyPaths $Root $Manifest
     $archive=Read-JsonUtf8 (Resolve-ProjectChild $Root 'dependencies.lock.json')
     if($archive.status -ne 'complete'){
@@ -24,11 +29,19 @@ function Assert-ProjectDependencies([string]$Root,$Manifest) {
         throw 'Project dependency inventory changed. The archive must be reviewed before building.'
     }
     $count=0L;$bytes=0L;$first=$true
+    $elapsed=[Diagnostics.Stopwatch]::StartNew()
+    $lastReport=0.0
+    Write-ProjectBuildStatus ('[Dependencies] Verifying '+$archive.inventory.files+' files; progress is reported every 2 seconds.') $Log
     foreach($line in [IO.File]::ReadLines($inventoryPath)){
         if($first){$first=$false;if($line -cne "sha256`tbytes`tpath"){throw 'Unsupported dependency inventory format.'};continue}
         $fields=$line.Split([char[]]@([char]9),3)
         if($fields.Count -ne 3 -or $fields[0] -notmatch '^[0-9a-f]{64}$' -or $fields[1] -notmatch '^[0-9]+$'){
             throw 'Malformed project dependency inventory.'
+        }
+        if($elapsed.Elapsed.TotalSeconds - $lastReport -ge 2){
+            Write-ProjectBuildStatus ('[Dependencies] Verified '+$count+'/'+$archive.inventory.files+
+                ' files; elapsed '+$elapsed.Elapsed.ToString('hh\:mm\:ss')+'. Checking '+$fields[2]) $Log
+            $lastReport=$elapsed.Elapsed.TotalSeconds
         }
         $file=Resolve-ProjectChild $Root $fields[2]
         Assert-ProjectPath $local.sources $file
@@ -46,6 +59,8 @@ function Assert-ProjectDependencies([string]$Root,$Manifest) {
     foreach($file in $required){$null=Resolve-ProjectChild $Root (Get-RelativePath $Root $file)}
     $missing=@($required|Where-Object{-not(Test-Path -LiteralPath $_ -PathType Leaf)})
     if($missing.Count){throw ('Project-local dependency files are missing: '+($missing -join ', ')+'. Restore the existing dependency archive inside this project. No sibling-project fallback or download is used.')}
+    Write-ProjectBuildStatus ('[Dependencies] Verified '+$count+'/'+$archive.inventory.files+
+        ' files in '+$elapsed.Elapsed.ToString('hh\:mm\:ss')+'.') $Log
     return $local
 }
 function Convert-CMakeToolPaths([string[]]$Lines) {
@@ -191,7 +206,7 @@ function Invoke-ProjectBuildProcess(
                     $quiet.Restart();$received=$true
                     $pending[$i]=$readers[$i].ReadLineAsync()
                 }
-                if($quiet.Elapsed.TotalSeconds -ge 15){
+                if($quiet.Elapsed.TotalSeconds -ge 10){
                     if($progressWidth){[Console]::WriteLine();$progressWidth=0}
                     Write-ProjectBuildOutput ('['+$Activity+'] Still running; elapsed '+[int]$elapsed.Elapsed.TotalSeconds+' s, waiting for tool output.') $Log
                     $quiet.Restart()

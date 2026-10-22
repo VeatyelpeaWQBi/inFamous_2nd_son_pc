@@ -2,27 +2,30 @@
 [CmdletBinding()]
 param([ValidateSet('lite','portable')][string]$Variant='lite')
 $ErrorActionPreference='Stop'
+Write-Host '[Prepare] Starting project build...'
 . (Join-Path $PSScriptRoot 'tools.ps1')
 . (Join-Path $PSScriptRoot 'build_tools.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $lock=$null;$log=$null;$phase='Tool discovery'
 try{
     $project=Read-JsonUtf8 (Join-Path $root 'project.json')
-    $dependencies=Assert-ProjectDependencies $root $project
-    Write-Host ('Release build ('+$Variant+'): locating installed tools...')
-    $tools=Get-ProjectBuildTools $root
     $build=Resolve-ProjectChild $root 'Build/Release'
     $state=Resolve-ProjectChild $root 'state/runtime'
     $null=[IO.Directory]::CreateDirectory($state)
     $lock=[IO.File]::Open((Join-Path $state 'run.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
     $null=[IO.Directory]::CreateDirectory($build)
     $receipt=Join-Path $build 'build-receipt.json'
-    if(Test-Path -LiteralPath $receipt){Remove-Item -LiteralPath $receipt}
     $logPath=Resolve-ProjectChild $root 'Build/Release/build.log'
     $log=[IO.StreamWriter]::new($logPath,$false,[Text.UTF8Encoding]::new($false))
     $log.AutoFlush=$true
     Write-ProjectBuildOutput ('Release build ('+$Variant+'), started '+[DateTime]::Now.ToString('s')) $log
     Write-ProjectBuildOutput 'Full output: Build/Release/build.log (replaced on each build).' $log
+    $phase='Dependency verification'
+    Write-ProjectBuildStatus '[Prepare] Checking project-local dependencies...' $log
+    $dependencies=Assert-ProjectDependencies $root $project -Log $log
+    Write-ProjectBuildStatus '[Prepare] Locating installed build tools...' $log
+    $tools=Get-ProjectBuildTools $root
+    if(Test-Path -LiteralPath $receipt){Remove-Item -LiteralPath $receipt}
     $phase='Source fingerprint'
     Write-ProjectBuildOutput '[Prepare] Reading source fingerprints...' $log
     $before=Get-SourceFingerprint $root

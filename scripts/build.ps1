@@ -8,6 +8,7 @@ $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $lock=$null;$log=$null
 try{
     $project=Read-JsonUtf8 (Join-Path $root 'project.json')
+    $dependencies=Assert-ProjectDependencies $root $project
     $tools=Get-ProjectBuildTools $root
     $build=Resolve-ProjectChild $root ('Build/'+$Configuration)
     $state=Resolve-ProjectChild $root 'state/runtime'
@@ -23,9 +24,9 @@ try{
     Write-Host ('Full compiler output: Build/'+$Configuration+'/build.log (replaced on each build).')
     Write-Host ('Build current project sources: '+$Configuration)
     Write-Host ('Output: Build/'+$Configuration+' (first build roughly 1-3 GiB, including symbols and intermediate files).')
-    Write-Host ('Existing dependency sources: '+$project.dependencies_root)
-    Write-Host ('Existing dependency libraries: '+$project.dependency_build_root)
-    Write-Host 'Dependency paths may point outside this project. Existing sources and FFmpeg libraries are reused; no dependency download or installation is requested.'
+    Write-Host ('Project-local dependency sources: '+$project.dependencies_root)
+    Write-Host ('Project-local dependency libraries: '+$project.dependency_build_root)
+    Write-Host 'Dependencies are read inside this project; installed system tools are reused. No download or installation is requested.'
     foreach($key in @('CMAKE_COMMAND','CMAKE_CXX_COMPILER','CMAKE_MAKE_PROGRAM')){Write-Host ($key+': '+$tools.$key)}
     $environment=Get-ProjectBuildEnvironment $tools.CMAKE_CXX_COMPILER $root
     # CMake invokes lld-link directly, so make the installed Clang builtins available.

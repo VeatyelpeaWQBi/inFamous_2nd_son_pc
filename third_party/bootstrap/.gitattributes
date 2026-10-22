@@ -1,0 +1,2 @@
+# Preserve the exact upstream bytes bound by dependencies.lock.json.
+** -text -whitespace

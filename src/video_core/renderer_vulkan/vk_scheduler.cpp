@@ -311,6 +311,8 @@ struct Scheduler::GpuProfile {
     bool open_graphics{};
     std::unordered_map<u64, std::pair<u64, u64>> graphics_ns;
     std::unordered_map<u64, u64> graphics_seen;
+    u64 graphics_samples_issued{}; // Lifetime budget; report/reset does not replenish it.
+    u64 compute_samples_issued{}; // Shared by compute hashes; reload/report never replenishes it.
     std::unordered_map<u64, std::pair<u64, u64>> shader_ns; ///< hash: GPU ns, dispatches.
     u64 report_start_ns{};
     std::vector<u64> results;
@@ -945,13 +947,20 @@ void Scheduler::ProfileDispatchBegin(u64 shader_hash) {
         Common::Perf::GetTuning().gpu_profile.load(std::memory_order_relaxed) != 2) {
         return;
     }
-    const u64 filter = Common::Perf::GetTuning().gpu_profile_compute_hash.load(
-        std::memory_order_relaxed);
+    const auto& tuning = Common::Perf::GetTuning();
+    const u64 filter = tuning.gpu_profile_compute_hash.load(std::memory_order_relaxed);
+    const u32 limit = tuning.gpu_profile_compute_limit.load(std::memory_order_relaxed);
     if (filter != 0 && shader_hash != filter) return;
     GpuProfile& prof = *profile;
+    if (limit && prof.compute_samples_issued >= limit) return;
     u64 number;
     if (!prof.Allocate(number)) {
         return;
+    }
+    ++prof.compute_samples_issued;
+    if (limit && prof.compute_samples_issued == limit) {
+        LOG_INFO(Render_Vulkan, "GPU compute profile sample budget exhausted: shader={:016x} issued={}",
+                 shader_hash, prof.compute_samples_issued);
     }
     prof.open_dispatch = number;
     prof.open_hash = shader_hash;
@@ -987,10 +996,21 @@ void Scheduler::ProfileDrawBegin(u64 shader_hash) {
     if (!profile || !profile->current.active ||
         Common::Perf::GetTuning().gpu_profile.load(std::memory_order_relaxed) != 3) return;
     auto& prof = *profile;
+    const auto& tuning = Common::Perf::GetTuning();
+    const u64 filter = tuning.gpu_profile_draw_hash.load(std::memory_order_relaxed);
+    const u32 limit = tuning.gpu_profile_draw_limit.load(std::memory_order_relaxed);
+    if ((filter && filter != shader_hash) || (limit && prof.graphics_samples_issued >= limit)) {
+        return;
+    }
     const u64 seen = prof.graphics_seen[shader_hash]++;
     if ((seen & 31) != 0) return;
     u64 number;
     if (!prof.Allocate(number)) return;
+    ++prof.graphics_samples_issued;
+    if (limit && prof.graphics_samples_issued == limit) {
+        LOG_INFO(Render_Vulkan, "GPU draw profile sample budget exhausted: shader={:016x} issued={}",
+                 shader_hash, prof.graphics_samples_issued);
+    }
     prof.open_dispatch = number;
     prof.open_hash = shader_hash;
     prof.open_graphics = true;
@@ -1124,6 +1144,8 @@ void Scheduler::CollectProfile() {
                  "Perf GPU compute shader {:016x}: {:.2f} ms/s, {:.0f} dispatches/s, {:.1f} us avg",
                  hash, stats.first / 1e6 / seconds, stats.second / seconds,
                  stats.second ? stats.first / 1e3 / static_cast<double>(stats.second) : 0.0);
+        LOG_INFO(Render_Vulkan, "Perf GPU compute samples {:016x}: count={} total_ns={}",
+                 hash, stats.second, stats.first);
     }
 }
 

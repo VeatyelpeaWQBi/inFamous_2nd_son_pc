@@ -218,6 +218,17 @@ void PollTuning() {
         } else if (key == "gpu_profile_compute_hash") {
             tuning.gpu_profile_compute_hash.store(std::strtoull(value.c_str(), nullptr, 16),
                                                   std::memory_order_relaxed);
+        } else if (key == "gpu_profile_compute_limit") {
+            tuning.gpu_profile_compute_limit.store(
+                static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 4096)),
+                std::memory_order_relaxed);
+        } else if (key == "gpu_profile_draw_hash") {
+            tuning.gpu_profile_draw_hash.store(std::strtoull(value.c_str(), nullptr, 16),
+                                               std::memory_order_relaxed);
+        } else if (key == "gpu_profile_draw_limit") {
+            tuning.gpu_profile_draw_limit.store(
+                static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 4096)),
+                std::memory_order_relaxed);
         } else if (key == "path_trace") {
             tuning.path_trace.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gpu_threads_priority") {
@@ -506,6 +517,10 @@ void PollTuning() {
              tuning.asc_queue.load(std::memory_order_relaxed),
              tuning.runtime_lookup_memo.load(std::memory_order_relaxed),
              tuning.compute_compile_parallel.load(std::memory_order_relaxed));
+    LOG_INFO(Debug, "GPU draw profiling: filter={:016x} sample_limit={} (per profiler lifetime)",
+             tuning.gpu_profile_draw_hash.load(), tuning.gpu_profile_draw_limit.load());
+    LOG_INFO(Debug, "GPU compute profiling: filter={:016x} sample_limit={} (per profiler lifetime)",
+             tuning.gpu_profile_compute_hash.load(), tuning.gpu_profile_compute_limit.load());
 }
 
 namespace {

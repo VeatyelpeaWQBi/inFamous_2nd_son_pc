@@ -2,10 +2,19 @@
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../../scripts/tools.ps1')
 . (Join-Path $PSScriptRoot '../../scripts/diagnostic_sensors.ps1')
+function Get-DiagnosticSensorArguments([string]$Directory) {return @('--query-gpu=timestamp,index,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,clocks.sm,clocks.mem','--format=csv,nounits')}
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $path=Resolve-ProjectChild $root ('state/offline-tests/sensors-'+[Guid]::NewGuid().ToString('N'))
 $null=[IO.Directory]::CreateDirectory($path)
 try{
+    $custom=@('timestamp','index','name','utilization.gpu','temperature.gpu','power.draw','clocks.sm','clocks.mem','pstate','clocks_event_reasons.active')
+    $configured=New-DiagnosticSensors 'never-started.exe' $path $custom
+    try{
+        if($configured.arguments.Count -ne 2 -or $configured.arguments[0] -ne ('--query-gpu='+($custom -join ','))){throw 'Custom thermal query fields were not preserved.'}
+    }finally{Stop-DiagnosticSensors $configured}
+    $rejected=$false
+    try{$null=New-DiagnosticSensors 'never-started.exe' $path @('timestamp')}catch{$rejected=$true}
+    if(-not $rejected){throw 'A malformed custom query was accepted.'}
     foreach($truncated in @($false,$true)){
         $sensor=New-DiagnosticSensors 'never-started.exe' $path
         $process=[pscustomobject]@{HasExited=$true;ExitCode=0;ExitTime=[DateTime]::Parse('2026-01-01T00:00:01Z').ToLocalTime()}

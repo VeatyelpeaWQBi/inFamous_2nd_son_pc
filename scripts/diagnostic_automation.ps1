@@ -195,6 +195,20 @@ function Update-DiagnosticInputAcknowledgements([string]$Root,[string]$Session,$
         @($Auto.inputs|Where-Object {-not $_.acknowledged}).Count -eq 0)
 }
 function Get-DiagnosticSceneTelemetry([string]$SessionPath) {
+    $taskStatusPath=Join-Path $SessionPath 'status.json'
+    if(Test-Path -LiteralPath $taskStatusPath){
+        try{
+            $taskRenderStatus=Read-JsonUtf8 $taskStatusPath
+            $taskComplete=$null -ne $taskRenderStatus -and $taskRenderStatus -is [pscustomobject]
+            foreach($taskKey in @('schema','observed_unix_ms','draws_per_frame','dispatches_per_frame')){
+                if(-not $taskComplete -or -not $taskRenderStatus.PSObject.Properties[$taskKey] -or $null -eq $taskRenderStatus.$taskKey){$taskComplete=$false;break}
+            }
+            if($taskComplete -and $taskRenderStatus.schema -ge 2 -and
+               [Math]::Abs([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-[long]$taskRenderStatus.observed_unix_ms) -le 5000){
+                return ($taskRenderStatus.draws_per_frame -ge 500 -and $taskRenderStatus.dispatches_per_frame -ge 50)
+            }
+        }catch [IO.IOException]{}catch [IO.InvalidDataException]{}
+    }
     foreach($name in @('shad_log.txt','CUSA00309.log','shadps4.log')){
         $path=Join-Path $SessionPath ('log/'+$name)
         if(-not(Test-Path -LiteralPath $path)){continue}

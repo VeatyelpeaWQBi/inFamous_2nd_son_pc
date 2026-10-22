@@ -22,7 +22,7 @@ if($isDiagnostic){
     if($Mode -eq 'auto'){$Mode='pro4k'}
     if($Mode -notin @('1080p','pro4k')){throw 'Diagnostics currently support 1080p and pro4k.'}
     if($WaitForDebugger){$DiagnosticDelaySeconds=-1}
-    Assert-DiagnosticTools (Get-DiagnosticSpec $Diagnostic) (Get-DiagnosticTools)
+    Assert-DiagnosticTools (Get-DiagnosticSpec $Diagnostic) (Get-DiagnosticTools) -RequireAdministrator (-not $PrepareOnly)
 
 }
 if($Benchmark){
@@ -137,7 +137,7 @@ try{
         Write-JsonUtf8 (Join-Path $session 'custom_configs\CUSA00309.json') $config
     }
     if($isDiagnostic){
-        $diagnosticPlan=Initialize-DiagnosticSession $projectRoot $session $Diagnostic $DiagnosticDelaySeconds $DiagnosticSeconds
+        $diagnosticPlan=Initialize-DiagnosticSession $projectRoot $session $Diagnostic $DiagnosticDelaySeconds $DiagnosticSeconds -PrepareOnly:$PrepareOnly
     }
     $timingOverrides=[ordered]@{}
     $timingConfigOverrides=[ordered]@{}
@@ -155,6 +155,7 @@ try{
         }
         Set-DiagnosticTuning $projectRoot $session $timingOverrides
         $timingConfigOverrides=[ordered]@{
+            General=@{volume_slider=0}
             Debug=@{debug_dump=$false;shader_collect=$false}
             GPU=@{dump_shaders=$false}
             Vulkan=@{
@@ -192,7 +193,7 @@ try{
         save_source_policy=$saveSourcePolicy;save_source_runtime_sha256=if($saveRecord){$saveRecord.Launch.runtime_sha256}else{$null}
         source_game_written=$false;prepared_at=(Get-Date).ToString('o')
         source_config_preserved=$true;acceptance_verified=$false
-        audio_muted=[bool]($Benchmark -or $isDiagnostic)
+        audio_muted=[bool]($Benchmark -or $isDiagnostic -or $isTiming)
         counter_kind='guest_flip';native_benchmark_cli=$verified.runtime_capabilities.benchmark_dir
         shared_cache=if($isDiagnostic){$null}else{Get-RelativePath $projectRoot $runtimeState};launcher_settings=$verified.launcher_settings;quit_menu_key='F1'
         diagnostic=if($isDiagnostic){$Diagnostic}else{$null};progress_published=$false

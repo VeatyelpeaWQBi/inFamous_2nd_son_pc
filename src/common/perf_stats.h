@@ -587,6 +587,11 @@ struct Tuning {
     std::atomic<u32> gpu_profile{0};
     /// Measuring-only compute filter; zero preserves full diagnostic coverage. Hex shader hash.
     std::atomic<u64> gpu_profile_compute_hash{0};
+    /// Optional lifetime limit across compute hashes; zero retains full diagnostic coverage.
+    std::atomic<u32> gpu_profile_compute_limit{0};
+    /// Optional draw filter and per-profiler-lifetime sample budget. Both zero in full/baseline.
+    std::atomic<u64> gpu_profile_draw_hash{0};
+    std::atomic<u32> gpu_profile_draw_limit{0};
     /// Startup-only bounded asynchronous CPU path trace, enabled explicitly by the launcher.
     std::atomic<bool> path_trace{false};
     /// readback_relaxed_sites: code of the game (offsets of 256 byte blocks of its executable, as

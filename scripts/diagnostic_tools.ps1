@@ -96,9 +96,9 @@ function Get-DiagnosticTools {
         nvidia_smi=Find-DiagnosticExecutable 'nvidia-smi.exe' @((Join-Path $env:WINDIR 'System32\nvidia-smi.exe'))
     }
 }
-function Assert-DiagnosticTools($Spec,$Tools) {
+function Assert-DiagnosticTools($Spec,$Tools,[bool]$RequireAdministrator=$true) {
     if($Spec.Wpr -and -not $Tools.wpr){throw 'WPR is missing. No tools are installed automatically.'}
-    if(($Spec.Wpr -or $Spec.VtuneAnalysis -or $Spec.Nsight) -and -not (Test-DiagnosticAdministrator)){
+    if($RequireAdministrator -and ($Spec.Wpr -or $Spec.VtuneAnalysis -or $Spec.Nsight) -and -not (Test-DiagnosticAdministrator)){
         throw 'Double-click the matching BAT in diagnostics and accept the Windows administrator prompt.'
     }
     if(($Spec.Validation -or $Spec.Crash) -and -not $Tools.sdk){throw 'Cannot locate the installed Vulkan SDK layers.'}
@@ -149,9 +149,9 @@ function Set-DiagnosticTuning([string]$Root,[string]$Session,$Values) {
         Write-DiagnosticText $Root $path ($text+[Environment]::NewLine)
     }
 }
-function Initialize-DiagnosticSession([string]$Root,[string]$Session,[string]$Profile,[int]$DelaySeconds,[int]$Seconds) {
+function Initialize-DiagnosticSession([string]$Root,[string]$Session,[string]$Profile,[int]$DelaySeconds,[int]$Seconds,[switch]$PrepareOnly) {
     $spec=Get-DiagnosticSpec $Profile;$tools=Get-DiagnosticTools
-    Assert-DiagnosticTools $spec $tools
+    Assert-DiagnosticTools $spec $tools -RequireAdministrator (-not $PrepareOnly)
     if($spec.Wpr){$null=Test-DiagnosticWprDefinition $tools.wpr $spec.Wpr}
     $relative=Get-RelativePath $Root $Session
     $directory=Resolve-ProjectChild $Root ($relative+'/diagnostics')
@@ -180,7 +180,8 @@ function Initialize-DiagnosticSession([string]$Root,[string]$Session,[string]$Pr
     }
     Copy-ProjectTree $Root (Join-Path $Session 'user/custom_configs/CUSA00309.json') (Join-Path $Session 'custom_configs/CUSA00309.json')
     Set-DiagnosticTuning $Root $Session ([ordered]@{
-        perf_log=1;profile_stacks=1;gpu_profile=$spec.GpuProfile;gpu_profile_compute_hash=0;path_trace=0;gpu_checkpoints=[int]$spec.Crash;dump_frames=0
+        perf_log=1;profile_stacks=1;gpu_profile=$spec.GpuProfile;gpu_profile_compute_hash=0;gpu_profile_compute_limit=0
+        gpu_profile_draw_hash='0';gpu_profile_draw_limit=0;path_trace=0;gpu_checkpoints=[int]$spec.Crash;dump_frames=0
         trace_shader='';trace_reads='';trace_draw=0;dump_images='';dump_after=''
     })
     if($spec.RenderDoc){

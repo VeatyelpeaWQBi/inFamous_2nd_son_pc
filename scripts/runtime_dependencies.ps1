@@ -12,16 +12,19 @@ function Get-ReleaseRuntimeFiles {
         $redist+=@(Get-Item -Path $pattern -ErrorAction SilentlyContinue|Sort-Object FullName -Descending|ForEach-Object FullName)
     }
     $directories+=$redist
-    $local=Get-ProjectDependencyPaths $Root $project
-    foreach($external in @($local.prebuilt,$local.sources)){
+    foreach($name in @('dependency_build_root','dependencies_root')){
+        $external=[IO.Path]::GetFullPath((Join-Path $Root $project.$name))
         if(Test-Path -LiteralPath $external){
             $directories+=@(Get-ChildItem -LiteralPath $external -Filter *.dll -File -Recurse|
                 Where-Object { -not($_.Attributes -band [IO.FileAttributes]::ReparsePoint) }|
                 ForEach-Object DirectoryName|Sort-Object -Unique)
         }
     }
-    # Project DLLs come only from project outputs/archive. The installed Visual
-    # Studio redist above and Windows system components remain prerequisites.
+    $directories+=@($env:PATH -split ';'|Where-Object {$_})
+    foreach($scope in @('User','Machine')){
+        $directories+=@([Environment]::GetEnvironmentVariable('Path',$scope) -split ';'|
+            Where-Object {$_}|ForEach-Object {[Environment]::ExpandEnvironmentVariables($_.Trim().Trim('"'))})
+    }
     $directories=@($directories|Select-Object -Unique)
     $system=Join-Path $env:WINDIR 'System32'
     $queue=[Collections.Generic.Queue[string]]::new()

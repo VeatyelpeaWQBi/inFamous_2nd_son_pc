@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-2.0-or-later
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -7,7 +7,7 @@ using System.Text;
 
 namespace Ifss.Native {
     public static class ProjectBuild {
-        static readonly string[] Inputs={"CMakeLists.txt","inFAMOUS Second Son.ico","build.bat",
+        static readonly string[] Inputs={"CMakeLists.txt","inFAMOUS Second Son.ico","build.bat","dependencies.lock.json",
             "scripts/build.ps1","scripts/build_tools.ps1","scripts/tools.ps1",
             "scripts/native/ProjectBuild.cs","scripts/native/NativeCommand.cs","scripts/native_tools.ps1"};
         static bool Configuration(string value) {return value=="RelWithDebInfo" || value=="Release" || value=="Debug";}
@@ -17,9 +17,17 @@ namespace Ifss.Native {
             foreach(string child in Directory.EnumerateDirectories(directory)) Collect(paths,paths.Relative(child),files);
         }
         static void Feed(HashAlgorithm hash,byte[] data) {hash.TransformBlock(data,0,data.Length,data,0);}
+        static void CheckDependencyPath(ProjectPaths paths,Dictionary<string,object> manifest,string key) {
+            string value=Json.Text(manifest,key,"");
+            if(String.IsNullOrWhiteSpace(value) || Path.IsPathRooted(value) || value.IndexOf(':')>=0 ||
+               Array.IndexOf(value.Replace('\\','/').Split('/'),"..")>=0)
+                throw new InvalidDataException("Project dependency paths must stay inside this project: "+key);
+            paths.Child(value);
+        }
         public static Dictionary<string,object> Snapshot(ProjectPaths paths) {
             var files=new List<string>(Inputs);Collect(paths,"src",files);Collect(paths,"cmake",files);files.Sort(StringComparer.Ordinal);
             var manifest=Json.Read(paths.Child("project.json"));
+            foreach(string key in new[]{"dependencies_root","dependency_build_root"}) CheckDependencyPath(paths,manifest,key);
             using(var hash=SHA256.Create()) {
                 foreach(string file in files) {
                     Feed(hash,Encoding.UTF8.GetBytes(file+"\0"));

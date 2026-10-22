@@ -126,7 +126,9 @@ portable 附带 `MSVCP140.dll`、`MSVCP140_ATOMIC_WAIT.dll`、`VCRUNTIME140.dll`
 
 main／开发分支先执行 `build.bat`，再执行 `run.bat`。默认编译为带优化和调试符号的 `Build/RelWithDebInfo/inFAMOUS Second Son.exe` 与 PDB。`build.bat --check` 只检查环境。**C++ 源码修改后必须重新构建，启动脚本不实时编译，也不调用其他项目的旧 EXE。**
 
-构建复用系统现有 CMake 3.30+、Ninja、Visual Studio LLVM/Clang-cl（C++23）、Windows SDK 和 Windows .NET 编译工具；第三方源码及 FFmpeg 库位置由 `project.json` 的 `dependencies_root`、`dependency_build_root` 指定，目前保留外部共享依赖。克隆仓库不等于依赖齐备，需配置已有环境；脚本不自动安装依赖。上游构建生成步骤及开发分析／测试仍可能使用 Python，这与发布包玩家无需 Python 是两回事。首次引擎构建的中间文件通常占 1–3 GiB。
+构建复用系统现有 CMake 3.30+、Ninja、Visual Studio LLVM/Clang-cl（C++23）、Windows SDK 和 Windows .NET 编译工具。**项目所需依赖已归档在本项目内，不再读取旧工程目录**：源码／头文件在 `externals/`，六个 FFmpeg 5.1.2 静态库在 `externals/prebuilt/ffmpeg/lib/`。`dependencies.lock.json` 固定 54 个源码组件（含嵌套依赖）、10 个基础文件及库的版本／哈希；`externals/dependency-inventory.tsv` 记录 41,489 个文件的校验信息。源码和库约 879 MiB，含保留的下载归档及元数据共约 1.15 GiB，未使用指向项目外的链接。构建逐文件核对本地归档，缺失或变更即停止，不回退兄弟工程或自动下载。本次迁移已完成文件及配置审计，尚未执行构建／游戏验收。
+
+完整复制或备份项目时须包含被 Git 忽略的 `externals/`。仅克隆 Git 时，可在明确允许下载后用系统 PowerShell 执行 `scripts/restore_dependencies.ps1`；它只使用本项目的锁定清单及 `third_party/bootstrap/`，不需要旧工程。日常构建使用 `build.bat`，不会调用恢复脚本。来源及许可见 `third_party/README.md`。上游构建生成步骤及开发分析／测试仍可能使用 Python，这与发布包玩家无需 Python 是两回事。每份引擎构建的中间文件通常占 1–3 GiB。
 
 | 开发入口 | 用途 |
 | --- | --- |
@@ -298,7 +300,9 @@ Packages contain clean configuration, compatibility profiles/patches, licenses a
 
 On main/development, run `build.bat`, then `run.bat`. The default optimized build with debug symbols produces `Build/RelWithDebInfo/inFAMOUS Second Son.exe` and its PDB. `build.bat --check` only checks the environment. **C++ source changes require rebuilding; launch scripts do not compile live or invoke an old EXE from another project.**
 
-Builds reuse installed CMake 3.30+, Ninja, Visual Studio LLVM/Clang-cl (C++23), the Windows SDK and Windows .NET compilation tools. Shared external sources and FFmpeg libraries are located through `dependencies_root` and `dependency_build_root` in `project.json`. Cloning this repository does not supply all dependencies; configure an existing environment. Scripts do not install dependencies automatically. Upstream generation steps and developer analysis/tests may still use Python; this is separate from players needing no Python for release packages. Initial engine build intermediates typically occupy 1–3 GiB.
+Builds reuse installed CMake 3.30+, Ninja, Visual Studio LLVM/Clang-cl (C++23), the Windows SDK and Windows .NET compilation tools. **All project dependency inputs are archived here; the old project directory is no longer read.** Sources/headers live under `externals/` and six FFmpeg 5.1.2 static libraries under `externals/prebuilt/ffmpeg/lib/`. `dependencies.lock.json` pins 54 source components including nested dependencies, ten bootstrap files and the binary hashes. `externals/dependency-inventory.tsv` inventories 41,489 files. Sources/libraries occupy about 879 MiB, or 1.15 GiB including retained download archives and metadata, with no filesystem links outside the project. Build preflight checks local files and stops on missing/changed data without external fallback or automatic downloads. File/configuration migration has been audited; a real build/game acceptance run has not been performed.
+
+Whole-project copies and backups must include the ignored `externals/` folder. A Git-only clone can explicitly restore dependencies with the system PowerShell and `scripts/restore_dependencies.ps1` after download consent. Restoration uses this project's lock and `third_party/bootstrap/`, requiring no old checkout. The ordinary `build.bat` never invokes restoration. See `third_party/README.md` for provenance and licensing. Upstream generation steps and developer analysis/tests may still use Python; this is separate from players needing no Python for release packages. Each engine output's build intermediates typically occupy 1–3 GiB.
 
 | Development entry | Purpose |
 | --- | --- |

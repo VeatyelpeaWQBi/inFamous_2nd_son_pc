@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Build/compiler fixes for the existing shared dependency checkout.
+# Build/compiler fixes for the derived project-local source copy.
 # Library versions, algorithms, data layout and constant bytes are preserved.
 # No dependencies are downloaded or copied. Reviewed ABI diagnostics are scoped
 # separately in DependencyDiagnostics.cmake, never disabled globally.
@@ -9,6 +9,9 @@
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
 function(ifss_patch_dependency relative before after)
+    if(NOT IFSS_EXTERNALS_ROOT STREQUAL IFSS_DEPENDENCY_OVERLAY)
+        message(FATAL_ERROR "Dependency compatibility patches require the build-local source copy.")
+    endif()
     set(path "${IFSS_EXTERNALS_ROOT}/${relative}")
     file(READ "${path}" source)
     string(FIND "${source}" "${before}" old_position)

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+﻿# SPDX-License-Identifier: GPL-2.0-or-later
 [CmdletBinding()]
 param([ValidateSet('lite','portable')][string]$Variant='lite')
 $ErrorActionPreference='Stop'
@@ -7,6 +7,8 @@ $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $lock=$null;$log=$null;$phase='Tool discovery'
 try{
+    $project=Read-JsonUtf8 (Join-Path $root 'project.json')
+    $dependencies=Assert-ProjectDependencies $root $project
     Write-Host ('Release build ('+$Variant+'): locating installed tools...')
     $tools=Get-ProjectBuildTools $root
     $build=Resolve-ProjectChild $root 'Build/Release'

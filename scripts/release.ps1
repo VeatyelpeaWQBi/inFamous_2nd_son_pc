@@ -99,7 +99,7 @@ try{
     $phase='Third-party licenses'
     Write-Host '[5/7] Collecting third-party license notices...'
     # Static dependencies also retain their notices. Never copy source trees or .git directories.
-    $external=[IO.Path]::GetFullPath((Join-Path $root $project.dependencies_root))
+    $external=(Get-ProjectDependencyPaths $root $project).sources
     $licenses=Join-Path $destination 'third-party-licenses'
     foreach($file in Get-ChildItem -LiteralPath $external -File -Recurse|
         Where-Object {($_.Name -match '^(LICENSE|COPYING|NOTICE)([._-].*)?$' -or $_.FullName -match '[\\/]LICENSES?[\\/]') -and $_.FullName -notmatch '[\\/]\.git[\\/]'}){

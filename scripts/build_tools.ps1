@@ -90,12 +90,17 @@ function Invoke-ProjectBuildProcess(
     [IO.TextWriter]$Log=$null,[string]$Activity='Build tool',[switch]$SingleLineProgress
 ) {
     $start=[Diagnostics.ProcessStartInfo]::new()
-    $start.FileName=$Executable;$start.WorkingDirectory=$Directory;$start.UseShellExecute=$false;$start.CreateNoWindow=$true
+    $start.FileName=$Executable;$start.WorkingDirectory=$Directory;$start.UseShellExecute=$false
     $start.Arguments=($ToolArguments|ForEach-Object {Quote-WindowsArgument $_}) -join ' '
     foreach($key in $Environment.Keys){$start.EnvironmentVariables[$key]=$Environment[$key]}
-    $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
-    $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false)
-    $start.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
+    # Normal builds inherit the console; explicit data capture remains available.
+    $redirectOutput=[bool]$Capture -or ($null -ne $Log)
+    $start.CreateNoWindow=$redirectOutput
+    $start.RedirectStandardOutput=$redirectOutput;$start.RedirectStandardError=$redirectOutput
+    if($redirectOutput){
+        $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false)
+        $start.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
+    }
     $progressWidth=0;$interactiveProgress=$false
     if($SingleLineProgress -and -not $Capture){
         try{$interactiveProgress=$Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected -and [Console]::BufferWidth -gt 1}
@@ -114,7 +119,7 @@ function Invoke-ProjectBuildProcess(
             if($capturedError){Write-ProjectBuildOutput $capturedError $Log}
             if($process.ExitCode -eq 0){return $capturedOutput}
             if($capturedOutput){Write-ProjectBuildOutput $capturedOutput $Log}
-        }else{
+        }elseif($redirectOutput){
             # Read both pipes on the PowerShell thread. Process event callbacks
             # cannot safely invoke PowerShell without an associated runspace.
             $readers=@($process.StandardOutput,$process.StandardError)
@@ -150,6 +155,8 @@ function Invoke-ProjectBuildProcess(
                 }
                 if(-not $received){[Threading.Thread]::Sleep(50)}
             }
+            $process.WaitForExit()
+        }else{
             $process.WaitForExit()
         }
         if($process.ExitCode -ne 0){

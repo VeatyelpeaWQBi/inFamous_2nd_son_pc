@@ -17,6 +17,7 @@ if($isTiming){
     if($Mode -notin @('1080p','pro4k')){throw 'Timing comparisons support 1080p and pro4k.'}
 }
 if($isDiagnostic -or $WaitForDebugger -or $isTiming -or $SaveSession){. (Join-Path $PSScriptRoot 'diagnostic_tools.ps1')}
+if($V3Test){. (Join-Path $PSScriptRoot 'diagnostic_retention.ps1')}
 if($isDiagnostic){
     if($Benchmark -or $V3Test){throw 'Diagnostic captures cannot be combined with isolated benchmark modes.'}
     if($Mode -eq 'auto'){$Mode='pro4k'}

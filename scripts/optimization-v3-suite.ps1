@@ -57,6 +57,7 @@ function Get-FrameMetrics([string]$FramesPath,[DateTime]$StartUtc,[int]$Duration
 }
 
 function Stop-V3Game([string]$Session,[Diagnostics.Process]$Launcher) {
+    try{& (Join-Path $PSScriptRoot 'control.ps1') -Action axis -Axis 1 -Value 128 -Session $Session | Out-Null}catch{}
     try{& (Join-Path $PSScriptRoot 'control.ps1') -Action axis -Axis 2 -Value 128 -Session $Session | Out-Null}catch{}
     try{& (Join-Path $PSScriptRoot 'control.ps1') -Action quit -Session $Session | Out-Null}catch{}
     if($Launcher -and -not $Launcher.HasExited -and -not $Launcher.WaitForExit(45000)){
@@ -87,7 +88,8 @@ function Save-LogExtract([string]$SessionPath,[string]$Destination) {
 Write-JsonUtf8 (Join-Path $suite 'plan.json') ([ordered]@{
     schema=1;mode=$Mode;seconds=$Seconds;warmup_seconds=$WarmupSeconds;runs=$Runs
     profiles=$Profiles;created_utc=[DateTime]::UtcNow.ToString('o')
-    policy='one isolated game process per profile; baseline save; profile-compatible cache reuse; identical OCR navigation, warmup and input schedule'
+    expected_save_source=$expectedSaveSource
+    policy='one isolated game process per profile; fixed high-pressure save copy; profile-compatible cache reuse; identical OCR navigation, warmup and input schedule'
 })
 
 try{
@@ -129,10 +131,10 @@ try{
                 $automationDir=Join-Path $record.Path 'diagnostics'
                 $null=[IO.Directory]::CreateDirectory($automationDir)
                 $plan=[ordered]@{
-                    profile='memory';seconds=$Seconds;delay_seconds=0;wpr_profile=''
+                    profile='v3-performance';seconds=$Seconds;delay_seconds=0;wpr_profile=''
                     gpu_capture_backend='engine';validation_features=@{gpu_assisted=$false}
                     capture_schedule=@{guest_trace_seconds=2147483647;renderdoc_seconds=2147483647}
-                    automation=@{enabled=$true;boot_timeout_seconds=240;warmup_seconds=$WarmupSeconds;session_timeout_seconds=(420+$WarmupSeconds+$Seconds);language='en-US'}
+                    automation=@{enabled=$true;boot_timeout_seconds=240;warmup_seconds=$WarmupSeconds;session_timeout_seconds=(420+$WarmupSeconds+$Seconds);language='en-US';pause_probe=$false}
                 }
                 $auto=New-DiagnosticAutomation $plan
                 $clock=[Diagnostics.Stopwatch]::StartNew()
@@ -213,5 +215,10 @@ Write-JsonUtf8 (Join-Path $suite 'summary.json') ([ordered]@{
     schema=1;completed_utc=[DateTime]::UtcNow.ToString('o');baseline_profile='baseline';results=$summary
     interpretation='Positive fps_gain_percent and p95_improvement_percent are improvements. Automated results are screening evidence; image and gameplay correctness still require human review.'
 })
+$failedCount=@($results|Where-Object status -eq 'failed').Count
+if($failedCount){
+    Write-Host ('V3 suite failed: '+$failedCount+' of '+$results.Count+' runs failed. Results: '+$suite) -ForegroundColor Red
+    exit 1
+}
 Write-Host ('V3 suite complete: '+$suite)
-exit $(if(@($results|Where-Object status -eq 'failed').Count){1}else{0})
+exit 0

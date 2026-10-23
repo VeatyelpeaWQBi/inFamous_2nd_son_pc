@@ -89,11 +89,13 @@ struct StageSpecialization {
     SmallVector<FMaskSpecialization, 8> fmasks;
     SmallVector<SamplerSpecialization, 16> samplers;
     Backend::Bindings start{};
+    u64 uniform_buffer_mask{};
 
     StageSpecialization() = default;
     StageSpecialization(const Info& info_, RuntimeInfo runtime_info_, const Profile& profile_,
                         Backend::Bindings start_)
         : info{&info_}, runtime_info{runtime_info_}, start{start_} {
+        uniform_buffer_mask = info_.UniformBufferMask(profile_, start_.uniform_buffers);
         if (info_.sw_stage == SwStage::Vertex && Gcn::ParseFetchShader(info_, fetch_shader_data)) {
             // Specialize shader on VS input number types to follow spec.
             ForEachSharp(vs_attribs, fetch_shader_data.attributes,
@@ -198,7 +200,8 @@ struct StageSpecialization {
             return false;
         }
 
-        if (runtime_info != other.runtime_info) {
+        if (runtime_info != other.runtime_info ||
+            uniform_buffer_mask != other.uniform_buffer_mask) {
             return false;
         }
 

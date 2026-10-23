@@ -49,6 +49,7 @@ struct QueueContext {
     Vulkan::Scheduler* scheduler;
     Vulkan::Runtime* runtime;
     StreamBuffer* stream_buffer;
+    Buffer* transient_device_buffer;
     u32 index; ///< 0 graphics, 1 compute (RegionManager::CrossQueueAccess).
 };
 
@@ -141,7 +142,9 @@ public:
     void TickFrame();
 
     /// Invalidates any buffer in the logical page range.
-    void InvalidateMemory(VAddr device_addr, u64 size, bool assume_locks = false);
+    std::pair<VAddr, u64> InvalidateMemory(VAddr device_addr, u64 size,
+                                           bool assume_locks = false,
+                                           bool allow_write_run = false);
 
     /// Flushes any GPU modified buffer in the logical page range back to CPU memory.
     /// guest_rip: the faulting instruction of a guest read (readback_relaxed_sites), 0 if none.
@@ -414,6 +417,8 @@ private:
     std::unique_ptr<MemoryTracker> memory_tracker;
 
     StreamBuffer stream_buffer;
+    /// Optional device-local mirror of stream_buffer used by V3 transient uploads.
+    std::unique_ptr<Buffer> transient_device_buffer;
     Buffer gds_buffer;
     RangeSet gpu_modified_ranges;
     RangeSet pending_download_ranges; ///< readback_keep_ranges: downloads in flight.
@@ -431,6 +436,7 @@ private:
     /// memory written by the emulator since. Command processor thread only.
     struct StreamCopy {
         VAddr address{};
+        const Buffer* buffer{};
         u64 tick{};
         u64 epoch{};
         u64 host_write_gen{};

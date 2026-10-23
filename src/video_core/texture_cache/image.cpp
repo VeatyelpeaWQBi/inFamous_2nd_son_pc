@@ -247,10 +247,11 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
         const bool is_write = static_cast<bool>(state.access_mask & write_flags);
         return state.layout != dst_layout || state.access_mask != dst_mask || is_write;
     };
+    const size_t first_transition_barrier = barriers.size();
+    const bool merge_barriers =
+        Common::Perf::GetTuning().v3_barrier_merge.load(std::memory_order_relaxed);
     const auto transition = [&](State& state, u32 mip, u32 layer) {
-        // NOTE: this may produce a lot of small barriers.
-        // If this becomes a problem, we can optimize it by merging adjacent barriers.
-        barriers.emplace_back(vk::ImageMemoryBarrier2{
+        const vk::ImageMemoryBarrier2 barrier{
             .srcStageMask = state.pl_stage,
             .srcAccessMask = state.access_mask,
             .dstStageMask = dst_stage,
@@ -267,7 +268,21 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
                 .baseArrayLayer = layer,
                 .layerCount = 1,
             },
-        });
+        };
+        bool merged = false;
+        if (merge_barriers && barriers.size() > first_transition_barrier) {
+            auto comparable = barriers.back();
+            comparable.subresourceRange = barrier.subresourceRange;
+            auto& previous_range = barriers.back().subresourceRange;
+            if (comparable == barrier && previous_range.baseMipLevel == mip &&
+                previous_range.baseArrayLayer + previous_range.layerCount == layer) {
+                ++previous_range.layerCount;
+                merged = true;
+            }
+        }
+        if (!merged) {
+            barriers.push_back(barrier);
+        }
         state.layout = dst_layout;
         state.access_mask = dst_mask;
         state.pl_stage = dst_stage;

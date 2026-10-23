@@ -39,6 +39,7 @@ public:
         no_hot.Fill(0ULL);
         hash_valid.Fill(0ULL);
         gpu_owned.Fill(0ULL);
+        written.Fill(0ULL);
         fault_frame.fill(0);
         fault_streak.fill(0);
     }
@@ -132,6 +133,7 @@ public:
         });
         if constexpr (cpu_op == StateOp::Clear) {
             CpuWordsCleared(bounds.start_word, bounds.end_word);
+            IterateWords(bounds, [&](u64 index, u64 mask) { written[index] &= ~mask; });
         }
         const auto write_op = GetPageOp<Type::CPU>(cpu_op);
         const auto read_op = GetPageOp<Type::GPU>(gpu_op);
@@ -186,6 +188,7 @@ public:
         });
         if constexpr (cpu_op == StateOp::Clear) {
             CpuWordsCleared(bounds.start_word, bounds.end_word);
+            IterateWords(bounds, [&](u64 index, u64 mask) { written[index] &= ~mask; });
         }
         if (end_page) {
             func(cpu_addr + start_page * BYTES_PER_PAGE, (end_page - start_page) * BYTES_PER_PAGE);
@@ -240,6 +243,53 @@ public:
             }
             return state[end_word] & end_mask;
         }
+    }
+
+    /// Records a write fault and opens a bounded range ahead only after three adjacent pages
+    /// have faulted. GPU-modified pages terminate the range, preserving their unread data.
+    std::pair<VAddr, u64> OpenWriteRun(VAddr fault_addr, size_t max_pages) {
+        if (fault_addr < cpu_addr || fault_addr >= cpu_addr + HIGHER_PAGE_SIZE) {
+            return {};
+        }
+        const u64 page = (fault_addr - cpu_addr) / BYTES_PER_PAGE;
+        const u64 lock_begin = page * BYTES_PER_PAGE;
+        const u64 lock_size =
+            (std::min<u64>(page + 1 + max_pages, NUM_REGION_PAGES) - page) * BYTES_PER_PAGE;
+        const Bounds lock_bounds = GetBounds(lock_begin, lock_size);
+        const bool late = Lock(lock_bounds);
+        if (!cpu.GetPage(page)) {
+            Unlock(lock_bounds, late);
+            return {};
+        }
+        written[page / PAGES_PER_WORD] |= u64{1} << (page % PAGES_PER_WORD);
+        size_t behind = 0;
+        while (behind < max_pages && behind < page && written.GetPage(page - 1 - behind)) {
+            ++behind;
+        }
+        if (behind < 2) {
+            Unlock(lock_bounds, late);
+            return {};
+        }
+        const u64 begin = page + 1;
+        u64 end = std::min<u64>(begin + behind, NUM_REGION_PAGES);
+        for (u64 next = begin; next < end; ++next) {
+            if (gpu.GetPage(next)) {
+                end = next;
+                break;
+            }
+        }
+        if (end <= begin) {
+            Unlock(lock_bounds, late);
+            return {};
+        }
+        const u64 offset = begin * BYTES_PER_PAGE;
+        const u64 size = (end - begin) * BYTES_PER_PAGE;
+        ChangeRegionState<StateOp::Set, StateOp::None, false>(offset, size);
+        const Bounds opened_bounds = GetBounds(offset, size);
+        IterateWords(opened_bounds,
+                     [&](u64 index, u64 mask) { written[index] |= mask; });
+        Unlock(lock_bounds, late);
+        return {cpu_addr + offset, size};
     }
 
     /// Returns true if every page of the range is GPU modified (lock free, like IsRegionModified).
@@ -805,6 +855,7 @@ private:
     RegionBits no_hot; ///< Pages written by the command processor, never hot.
     RegionBits hash_valid; ///< Hot pages whose page_hash is the content of their GPU copy.
     RegionBits gpu_owned;  ///< Write merge: pages with GPU written bytes guest memory lacks.
+    RegionBits written;    ///< Pages faulted on or opened ahead since their last upload.
     std::atomic<u32> num_hot{};
     std::atomic<u64> hot_epoch{};
     /// Grows whenever pages of the region become CPU modified (lock free read).

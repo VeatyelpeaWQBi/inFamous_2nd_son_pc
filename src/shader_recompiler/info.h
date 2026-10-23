@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <bit>
 #include <span>
 #include <vector>
 #include <boost/container/static_vector.hpp>
@@ -16,6 +17,7 @@
 #include "shader_recompiler/ir/reg.h"
 #include "shader_recompiler/ir/type.h"
 #include "shader_recompiler/params.h"
+#include "shader_recompiler/profile.h"
 #include "shader_recompiler/resource.h"
 #include "shader_recompiler/runtime_info.h"
 
@@ -159,9 +161,47 @@ struct Info : InfoPersistent {
         return data;
     }
 
-    void AddBindings(Backend::Bindings& bnd) const {
+    void AddBindings(Backend::Bindings& bnd, u64 uniform_mask = 0) const {
         bnd.buffer += buffers.size();
         bnd.unified += buffers.size() + images.size() + samplers.size();
+        bnd.uniform_buffers += std::popcount(uniform_mask);
+    }
+
+    /// Selects only read-only guest buffers that fit every UBO limit. The mask is part of the
+    /// shader specialization, so a descriptor change can never reuse a module with another type.
+    u64 UniformBufferMask(const Profile& profile, u32 used_uniform_buffers = 0) const {
+        if (!profile.force_uniform_buffers || profile.uniform_buffer_alignment == 0 ||
+            profile.robust_uniform_buffer_alignment == 0) {
+            return 0;
+        }
+        // The guarded host replacement for this exact program keeps its captured SSBO layout.
+        if (profile.infamous_particle_sort && pgm_hash == 0xa16fa93a) {
+            return 0;
+        }
+        u64 mask{};
+        u32 count{};
+        for (u32 i = 0; i < buffers.size() && i < 64; ++i) {
+            const auto& desc = buffers[i];
+            const auto sharp = desc.GetSharp(*this);
+            const u64 size = sharp.GetSize();
+            const u64 offset = sharp.base_address & (profile.uniform_buffer_alignment - 1);
+            // Guest reads past the declared range must still return zero. Robustness guarantees
+            // that only when the bound range ends on its implementation-defined granularity.
+            const bool robust_range =
+                (size + offset) % profile.robust_uniform_buffer_alignment == 0;
+            if (desc.IsSpecial() || !sharp || desc.is_written || desc.is_divergent_read ||
+                !robust_range || sharp.mtype == 3 || size == 0 ||
+                size + offset > profile.max_uniform_buffer_size ||
+                (True(desc.used_types & IR::Type::U8) && !profile.supports_uniform_buffer_int8) ||
+                (True(desc.used_types & IR::Type::U16) && !profile.supports_uniform_buffer_int16) ||
+                count >= profile.max_stage_uniform_buffers ||
+                used_uniform_buffers + count >= profile.max_uniform_buffers) {
+                continue;
+            }
+            mask |= u64{1} << i;
+            ++count;
+        }
+        return mask;
     }
 
     void RefreshFlatBuf() {

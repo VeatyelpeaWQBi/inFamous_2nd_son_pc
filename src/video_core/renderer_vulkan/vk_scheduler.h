@@ -932,6 +932,72 @@ public:
         });
     }
 
+    /// Records the final pipeline bind and direct draw as one immutable command-stream entry.
+    /// This is only used when no diagnostic command must be inserted between them.
+    void drawPacket(vk::Pipeline pipeline, u32 vertex_count, u32 instance_count, u32 first_vertex,
+                    u32 first_instance) const {
+        bool bind = true;
+        if (scheduler) {
+            bind = !scheduler->GetDynamicState().binds.SkipPipeline(
+                vk::PipelineBindPoint::eGraphics, pipeline);
+            if (bind) {
+                scheduler->GetDynamicState().binds.buffers.ForgetStrides();
+            }
+        }
+        Record([=](vk::CommandBuffer c) {
+            if (bind) {
+                c.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
+            }
+            c.draw(vertex_count, instance_count, first_vertex, first_instance);
+        });
+    }
+
+    void drawIndexedPacket(vk::Pipeline pipeline, u32 index_count, u32 instance_count,
+                           u32 first_index, s32 vertex_offset, u32 first_instance) const {
+        bool bind = true;
+        if (scheduler) {
+            bind = !scheduler->GetDynamicState().binds.SkipPipeline(
+                vk::PipelineBindPoint::eGraphics, pipeline);
+            if (bind) {
+                scheduler->GetDynamicState().binds.buffers.ForgetStrides();
+            }
+        }
+        Record([=](vk::CommandBuffer c) {
+            if (bind) {
+                c.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
+            }
+            c.drawIndexed(index_count, instance_count, first_index, vertex_offset, first_instance);
+        });
+    }
+
+    /// Records a direct draw through the command stream's fixed native record type.
+    void drawNative(vk::Pipeline pipeline, bool indexed, u32 count, u32 instance_count,
+                    u32 first, s32 vertex_offset, u32 first_instance) const {
+        bool bind = true;
+        if (scheduler) {
+            bind = !scheduler->GetDynamicState().binds.SkipPipeline(
+                vk::PipelineBindPoint::eGraphics, pipeline);
+            if (bind) {
+                scheduler->GetDynamicState().binds.buffers.ForgetStrides();
+            }
+        }
+        const CommandStream::NativeDraw draw{
+            .pipeline = pipeline,
+            .count = count,
+            .instance_count = instance_count,
+            .first = first,
+            .vertex_offset = vertex_offset,
+            .first_instance = first_instance,
+            .indexed = indexed,
+            .bind_pipeline = bind,
+        };
+        if (const vk::CommandBuffer cmdbuf = Direct()) {
+            draw.Execute(cmdbuf);
+        } else {
+            scheduler->Stream().RecordNativeDraw(draw);
+        }
+    }
+
     void drawIndirect(vk::Buffer buffer, vk::DeviceSize offset, u32 draw_count,
                       u32 stride) const {
         Record([=](vk::CommandBuffer c) { c.drawIndirect(buffer, offset, draw_count, stride); });

@@ -138,6 +138,10 @@ public:
         return maintenance_8;
     }
 
+    bool IsRawAccessChainsSupported() const {
+        return raw_access_chains;
+    }
+
     /// Returns true if VK_EXT_attachment_feedback_loop_layout is supported
     bool IsAttachmentFeedbackLoopLayoutSupported() const {
         return attachment_feedback_loop;
@@ -350,6 +354,40 @@ public:
         return properties.limits.minUniformBufferOffsetAlignment;
     }
 
+    bool SupportsSelectiveUniformBuffers() const {
+        const auto& limits = properties.limits;
+        return driver_id == vk::DriverId::eNvidiaProprietary &&
+               vk12_features.uniformBufferStandardLayout &&
+               limits.minUniformBufferOffsetAlignment <= 256 &&
+               limits.maxUniformBufferRange > limits.minUniformBufferOffsetAlignment &&
+               limits.maxPerStageDescriptorUniformBuffers > 1 &&
+               limits.maxDescriptorSetUniformBuffers > 1 && robust_uniform_buffer_alignment != 0;
+    }
+
+    u32 RobustUniformBufferAlignment() const {
+        return robust_uniform_buffer_alignment;
+    }
+
+    u32 MaxUniformBufferRange() const {
+        return properties.limits.maxUniformBufferRange;
+    }
+
+    u32 MaxPerStageUniformBuffers() const {
+        return properties.limits.maxPerStageDescriptorUniformBuffers;
+    }
+
+    u32 MaxDescriptorSetUniformBuffers() const {
+        return properties.limits.maxDescriptorSetUniformBuffers;
+    }
+
+    bool SupportsUniformBufferInt8() const {
+        return vk12_features.uniformAndStorageBuffer8BitAccess;
+    }
+
+    bool SupportsUniformBufferInt16() const {
+        return vk11_features.uniformAndStorageBuffer16BitAccess;
+    }
+
     /// Returns the minimum required alignment for storage buffers
     vk::DeviceSize StorageMinAlignment() const {
         return properties.limits.minStorageBufferOffsetAlignment;
@@ -532,6 +570,7 @@ private:
     vk::PhysicalDeviceVulkan13Properties vk13_props;
     vk::PhysicalDevicePushDescriptorPropertiesKHR push_descriptor_props;
     vk::PhysicalDeviceFeatures features;
+    vk::PhysicalDeviceVulkan11Features vk11_features;
     vk::PhysicalDeviceVulkan12Features vk12_features;
     vk::PhysicalDeviceVulkan13Features vk13_features;
     vk::PhysicalDeviceExtendedDynamicState3FeaturesEXT dynamic_state_3_features;
@@ -581,11 +620,13 @@ private:
     bool image_2d_view_of_3d{};
     bool image_view_min_lod{};
     bool shader_clock{};
+    bool raw_access_chains{};
     bool diagnostic_checkpoints{};
     bool device_fault{};
     bool external_memory_host{};
     bool supports_memory_budget{};
     bool supports_block_texel_view{};
+    u32 robust_uniform_buffer_alignment{};
     u64 total_memory_budget{};
     std::vector<size_t> valid_heaps;
 };

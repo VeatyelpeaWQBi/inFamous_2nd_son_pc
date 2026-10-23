@@ -35,7 +35,9 @@ try{
     $snapshotText=Invoke-ProjectNativeTool 'build-identity' @('snapshot')
     if($LASTEXITCODE -ne 0){throw 'Native source snapshot failed.'}
     $snapshot=$snapshotText|ConvertFrom-Json
-    $arguments=@('-S',$root,'-B',$build,'-G','Ninja',
+    # Vendored dependency projects target older CMake policy levels; keep their maintenance
+    # notices out of the project build while preserving normal configure and compiler warnings.
+    $arguments=@('-Wno-author','-Wno-deprecated','-S',$root,'-B',$build,'-G','Ninja',
         ('-DCMAKE_BUILD_TYPE='+$Configuration),'-DIFSS_BUILD_ENGINE=ON','-DENABLE_TESTS=OFF',
         (New-CMakePathArgument 'CMAKE_C_COMPILER' $tools.CMAKE_CXX_COMPILER),
         (New-CMakePathArgument 'CMAKE_CXX_COMPILER' $tools.CMAKE_CXX_COMPILER),

@@ -608,6 +608,19 @@ struct Tuning {
     /// stay on the graphics queue). Dependencies between the queues are tracked per 256 KB of
     /// guest memory and waited for with semaphores.
     std::atomic<bool> asc_queue{false};
+    /// V3 experiments. Each switch is independent and defaults to the established V2 path.
+    std::atomic<bool> v3_pipeline_reuse{false};
+    std::atomic<bool> v3_draw_packets{false};
+    std::atomic<bool> v3_raw_access_chains{false};
+    std::atomic<bool> v3_selective_ubo{false};
+    std::atomic<bool> v3_barrier_merge{false};
+    std::atomic<bool> v3_dirty_log{false};
+    std::atomic<bool> v3_write_runs{false};
+    std::atomic<bool> v3_async_present{false};
+    std::atomic<bool> v3_transient_device_local{false};
+    std::atomic<bool> v3_incremental_shader_index{false};
+    std::atomic<bool> v3_native_draw_records{false};
+    std::atomic<bool> v3_particle_sort{false};
     /// Performance reports in the log: the per second counters line, slow frames, the CPU usage
     /// of the emulator threads and their profiles (perf_tuning.ini perf_log = 1). Off by default.
     std::atomic<bool> perf_log{false};

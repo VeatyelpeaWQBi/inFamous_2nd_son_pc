@@ -702,11 +702,6 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     };
 
     draw_scheduler.EndRendering();
-    const auto cmdbuf = draw_scheduler.CommandBuffer();
-    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &pre_barrier,
-    });
 
     VideoCore::ImageViewInfo view_info{};
     view_info.format = GetFrameViewFormat(attribute.attrib.pixel_format);
@@ -751,14 +746,39 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
                     vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderRead);
     runtime.FlushBarriers();
 
-    image_view = fsr_pass.Render(cmdbuf, image_view, image_size, {frame->width, frame->height},
-                                 fsr_settings, frame->is_hdr);
-
     // Vulkan has no sRGB variant of the 10-bit format, so an A2R10G10B10Srgb buffer reaches
     // the post process pass still sRGB encoded and has to be decoded there instead.
     pp_settings.srgb_input =
         attribute.attrib.pixel_format == Libraries::VideoOut::PixelFormat::A2R10G10B10Srgb;
-    pp_pass.Render(cmdbuf, image_view, image_size, *frame, pp_settings);
+    const bool async_present =
+        capture_game_only_count == 0 &&
+        Common::Perf::GetTuning().v3_async_present.load(std::memory_order_relaxed);
+    if (async_present) {
+        Frame frame_copy = *frame;
+        const auto fsr = fsr_settings;
+        const auto pp = pp_settings;
+        draw_scheduler.Recorder().Record(
+            [this, pre_barrier, image_view, image_size, frame_copy, fsr,
+             pp](vk::CommandBuffer cmdbuf) mutable {
+                cmdbuf.pipelineBarrier2(vk::DependencyInfo{
+                    .imageMemoryBarrierCount = 1,
+                    .pImageMemoryBarriers = &pre_barrier,
+                });
+                const auto scaled = fsr_pass.Render(cmdbuf, image_view, image_size,
+                                                    {frame_copy.width, frame_copy.height}, fsr,
+                                                    frame_copy.is_hdr);
+                pp_pass.Render(cmdbuf, scaled, image_size, frame_copy, pp);
+            });
+    } else {
+        const auto cmdbuf = draw_scheduler.CommandBuffer();
+        cmdbuf.pipelineBarrier2(vk::DependencyInfo{
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers = &pre_barrier,
+        });
+        image_view = fsr_pass.Render(cmdbuf, image_view, image_size,
+                                     {frame->width, frame->height}, fsr_settings, frame->is_hdr);
+        pp_pass.Render(cmdbuf, image_view, image_size, *frame, pp_settings);
+    }
 
     DebugState.game_resolution = {image_size.width, image_size.height};
     DebugState.output_resolution = {frame->width, frame->height};

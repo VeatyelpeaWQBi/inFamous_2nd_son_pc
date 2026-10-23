@@ -92,7 +92,8 @@ public:
                      std::span<const Shader::RuntimeInfo, MaxShaderStages> runtime_infos,
                      const Shader::Gcn::FetchShaderData* fetch_shader,
                      std::span<const vk::ShaderModule> modules, SerializationSupport& sdata,
-                     bool preloading, bool defer_compile = false);
+                     std::span<const u64, MaxShaderStages> uniform_masks, bool preloading,
+                     bool defer_compile = false);
     ~GraphicsPipeline() override;
 
     void Compile() override;

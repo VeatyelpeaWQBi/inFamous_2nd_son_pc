@@ -269,6 +269,12 @@ void SetupCapabilities(const Info& info, const Profile& profile, const RuntimeIn
     ctx.AddCapability(spv::Capability::Int64);
     ctx.AddCapability(spv::Capability::StorageBuffer8BitAccess);
     ctx.AddCapability(spv::Capability::StorageBuffer16BitAccess);
+    if (profile.force_uniform_buffers && profile.supports_uniform_buffer_int8) {
+        ctx.AddCapability(spv::Capability::UniformAndStorageBuffer8BitAccess);
+    }
+    if (profile.force_uniform_buffers && profile.supports_uniform_buffer_int16) {
+        ctx.AddCapability(spv::Capability::UniformAndStorageBuffer16BitAccess);
+    }
     if (info.uses_fp16) {
         ctx.AddCapability(spv::Capability::Float16);
     }

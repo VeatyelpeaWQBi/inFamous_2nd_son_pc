@@ -503,10 +503,20 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     ASSERT(set_size <= sizeof(ComputeProgram));
                     auto* addr = reinterpret_cast<u32*>(&mapped_queues[GfxQueueId].cs_state) +
                                  (set_data->reg_offset - 0x200);
+                    if (Common::Perf::GetTuning().v3_pipeline_reuse.load(
+                            std::memory_order_relaxed) &&
+                        std::memcmp(addr, header + 2, set_size) != 0) {
+                        ++shader_reg_changes;
+                    }
                     std::memcpy(addr, header + 2, set_size);
                 } else {
-                    std::memcpy(&regs.reg_array[Regs::ShRegWordOffset + set_data->reg_offset],
-                                header + 2, set_size);
+                    auto* addr = &regs.reg_array[Regs::ShRegWordOffset + set_data->reg_offset];
+                    if (Common::Perf::GetTuning().v3_pipeline_reuse.load(
+                            std::memory_order_relaxed) &&
+                        std::memcmp(addr, header + 2, set_size) != 0) {
+                        ++shader_reg_changes;
+                    }
+                    std::memcpy(addr, header + 2, set_size);
                 }
                 break;
             }
@@ -1205,10 +1215,20 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u6
                 ASSERT(set_size <= sizeof(ComputeProgram));
                 auto* addr = reinterpret_cast<u32*>(&mapped_queues[vqid + 1].cs_state) +
                              (set_data->reg_offset - 0x200);
+                if (Common::Perf::GetTuning().v3_pipeline_reuse.load(
+                        std::memory_order_relaxed) &&
+                    std::memcmp(addr, header + 2, set_size) != 0) {
+                    ++shader_reg_changes;
+                }
                 std::memcpy(addr, header + 2, set_size);
             } else {
-                std::memcpy(&regs.reg_array[Regs::ShRegWordOffset + set_data->reg_offset],
-                            header + 2, set_size);
+                auto* addr = &regs.reg_array[Regs::ShRegWordOffset + set_data->reg_offset];
+                if (Common::Perf::GetTuning().v3_pipeline_reuse.load(
+                        std::memory_order_relaxed) &&
+                    std::memcmp(addr, header + 2, set_size) != 0) {
+                    ++shader_reg_changes;
+                }
+                std::memcpy(addr, header + 2, set_size);
             }
             break;
         }

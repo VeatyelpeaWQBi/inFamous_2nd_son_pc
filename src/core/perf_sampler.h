@@ -167,6 +167,18 @@ void ApplyGameProfile(std::string_view serial);
  *   asc_queue = 0                 1: the compute work of the guest's asynchronous compute queues
  *                                 runs on a GPU queue of its own alongside the graphics work
  *                                 (as on the PS4), except the dispatches using images
+ *   v3_pipeline_reuse = 0         V3-01: reuse a fully validated unchanged graphics pipeline
+ *   v3_draw_packets = 0           V3-02: record eligible draw tails as one immutable packet
+ *   v3_raw_access_chains = 0      V3-03: use NV raw access chains when the device supports them
+ *   v3_selective_ubo = 0          V3-04: promote safe read-only buffer bindings to UBOs
+ *   v3_barrier_merge = 0          V3-05: merge adjacent compatible image barriers
+ *   v3_dirty_log = 0              V3-06: reuse verified-clean memory tracking results
+ *   v3_write_runs = 0             V3-07: coalesce exact adjacent write protection ranges
+ *   v3_async_present = 0          V3-08: prepare presentation through ordered recording
+ *   v3_transient_device_local = 0 V3-09: stage transient streams into device-local memory
+ *   v3_incremental_shader_index=0 V3-10: incrementally reuse the shader precompile index
+ *   v3_native_draw_records = 0    V3-11: reuse immutable validated native draw records
+ *   v3_particle_sort = 0          V3-12: use the guarded Infamous particle sort replacement
  */
 void PollTuning();
 

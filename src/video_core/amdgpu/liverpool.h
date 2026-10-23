@@ -128,6 +128,11 @@ public:
         return context_reg_changes;
     }
 
+    /// Shader register writes that changed a value so far (command processor thread).
+    u64 ShaderRegChanges() const noexcept {
+        return shader_reg_changes;
+    }
+
     template <bool wait_done = false>
     void SendCommand(auto&& func) {
         if constexpr (wait_done) {
@@ -323,6 +328,9 @@ private:
     /// the command processor: draws with the count of the draw before have the same render
     /// state. Only accessed by that thread.
     u64 context_reg_changes{};
+    /// Shader register writes that changed a value. Used with the context generation to prove
+    /// that an already selected graphics pipeline still has exactly the same inputs.
+    u64 shader_reg_changes{};
     /// Time the command processor thread slept inside packets (flip label waits).
     u64 blocked_ns{};
     struct CpLabel {

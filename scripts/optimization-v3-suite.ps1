@@ -131,7 +131,7 @@ try{
                 $automationDir=Join-Path $record.Path 'diagnostics'
                 $null=[IO.Directory]::CreateDirectory($automationDir)
                 $plan=[ordered]@{
-                    profile='v3-performance';seconds=$Seconds;delay_seconds=0;wpr_profile=''
+                    profile='memory';workload_profile='v3-performance';seconds=$Seconds;delay_seconds=0;wpr_profile=''
                     gpu_capture_backend='engine';validation_features=@{gpu_assisted=$false}
                     capture_schedule=@{guest_trace_seconds=2147483647;renderdoc_seconds=2147483647}
                     automation=@{enabled=$true;boot_timeout_seconds=240;warmup_seconds=$WarmupSeconds;session_timeout_seconds=(420+$WarmupSeconds+$Seconds);language='en-US';pause_probe=$false}
@@ -148,6 +148,9 @@ try{
                         if($auto.ready -and $null -eq $auto.capture_at -and ($elapsed-$auto.ready_at) -ge $WarmupSeconds){
                             $auto.capture_at=$elapsed;$auto.phase='recording'
                             $captureStart=[DateTime]::UtcNow
+                            # Dispatch the time-zero workload command in the same loop that starts
+                            # the measurement window, instead of waiting for the next 750 ms poll.
+                            Update-DiagnosticAutomation $root $session $plan $auto $elapsed
                         }
                         if($null -ne $auto.capture_at -and ($elapsed-$auto.capture_at) -ge $Seconds){
                             Stop-V3Game $session $launcher
@@ -159,7 +162,17 @@ try{
                 }
                 if($launcher -and -not $launcher.HasExited){$null=$launcher.WaitForExit(60000)}
                 if($launcher -and -not $launcher.HasExited){throw 'Launcher did not finish after the game exited.'}
-                if($launcher.ExitCode -ne 0){throw ('Launcher returned '+$launcher.ExitCode)}
+                $launcher.WaitForExit();$launcher.Refresh()
+                $launcherExitCode=$launcher.ExitCode
+                if($null -eq $launcherExitCode){
+                    $record=Read-ProjectSession $root $session
+                    $recordedExitCode=$record.Launch.PSObject.Properties['exit_code']
+                    if($record.Launch.complete -and $null -ne $recordedExitCode){
+                        $launcherExitCode=[int]$recordedExitCode.Value
+                    }
+                }
+                if($null -eq $launcherExitCode){throw 'Launcher exit code was unavailable.'}
+                if($launcherExitCode -ne 0){throw ('Launcher returned '+$launcherExitCode)}
                 if(-not $captureStart){throw 'No stable gameplay measurement window was reached.'}
 
                 $record=Read-ProjectSession $root $session

@@ -141,13 +141,13 @@ function Read-DiagnosticScreen([string]$Path) {
 function Get-DiagnosticWorkload([string]$Profile,[int]$Seconds) {
     $events=@()
     if($Profile -eq 'v3-performance'){
-        # One deterministic high-pressure pass: rotate the camera, walk forward briefly, then
-        # press the east face button (Circle on DualShock, B on Xbox) for the ability jump.
-        $events+=@{at=0;action='axis';axis=2;value=152}
-        $events+=@{at=2;action='axis';axis=2;value=128}
-        $events+=@{at=3;action='axis';axis=1;value=96}
-        $events+=@{at=5;action='axis';axis=1;value=128}
-        $events+=@{at=7;action='button';button='circle';duration_ms=200}
+        # One deterministic high-pressure pass. The fixed camera input is tuned for roughly two
+        # full rotations while full forward movement makes the character run around the scene.
+        # Circle on DualShock is the east face button (B on Xbox) used for the ability jump.
+        $events+=@{at=0;action='axis';axis=2;value=192}
+        $events+=@{at=1;action='axis';axis=1;value=32}
+        $events+=@{at=6;action='button';button='circle';duration_ms=200}
+        $events+=@{at=8;action='axis';axis=1;value=128}
         $events+=@{at=9;action='axis';axis=2;value=128}
     }elseif($Profile -in @('cpu','vtune')){
         for($i=10;$i -lt $Seconds-4;$i+=15){
@@ -167,16 +167,22 @@ function Get-DiagnosticWorkload([string]$Profile,[int]$Seconds) {
     return $events
 }
 function New-DiagnosticAutomation($Plan) {
+    $workloadProfile=[string]$Plan.profile
+    if($Plan -is [Collections.IDictionary]){
+        if($Plan.Contains('workload_profile')){$workloadProfile=[string]$Plan.workload_profile}
+    }elseif($Plan.PSObject.Properties['workload_profile']){
+        $workloadProfile=[string]$Plan.workload_profile
+    }
     return [ordered]@{
         enabled=$true;phase='boot';scene_status='pending';scene_confirmed=$false
         next_screen=10.0;pending_screen=$null;screen_requested_utc=$null;screen_count=0
         continue_sent=$false;last_menu_input=-20.0;candidate_count=0;scene_evidence=$null
         pause_probe_pending=$false;pause_return_sent=$false;pause_verified=$false;pause_probe_attempts=0
         ready=$false;ready_at=$null;capture_at=$null;capture_triggered=$false;capture_trigger_attempted=$false
-        event_index=0;events=@(Get-DiagnosticWorkload $Plan.profile $Plan.seconds);xray_triggered=$false
+        event_index=0;events=@(Get-DiagnosticWorkload $workloadProfile $Plan.seconds);xray_triggered=$false
         capture_sequence=$null;capture_completed=$false;workload_completed=$false
         inputs=@();screens=@();warnings=@();input_suspended=$false
-        workload=if($Plan.profile -eq 'v3-performance'){'camera-walk-and-ability-jump'}elseif($Plan.profile -in @('cpu','vtune')){'idle-and-camera'}elseif($Plan.profile -in @('memory','vtune-memory')){'repeated-camera-and-effects'}else{'camera-and-effects'}
+        workload=if($workloadProfile -eq 'v3-performance'){'camera-720-run-circle-and-ability-jump'}elseif($workloadProfile -in @('cpu','vtune')){'idle-and-camera'}elseif($workloadProfile -in @('memory','vtune-memory')){'repeated-camera-and-effects'}else{'camera-and-effects'}
     }
 }
 function Send-DiagnosticAutoInput([string]$Root,[string]$Session,$Auto,$Event,[double]$Elapsed) {
@@ -251,6 +257,16 @@ function Update-DiagnosticAutomation([string]$Root,[string]$Session,$Plan,$Auto,
         $pauseProbeEnabled=[bool]$Plan.automation.pause_probe
     }
     if(-not $Auto.ready -and $Elapsed -ge $Plan.automation.boot_timeout_seconds){throw 'Automatic load did not produce gameplay evidence before the timeout.'}
+    if(-not $pauseProbeEnabled -and -not $Auto.ready){
+        if(Get-DiagnosticSceneTelemetry $sessionPath){
+            $Auto.candidate_count++
+            if($Auto.candidate_count -ge 2){
+                $Auto.ready=$true;$Auto.ready_at=$Elapsed;$Auto.phase='warmup'
+                $Auto.scene_status='gameplay-candidate'
+                $Auto.scene_evidence='consecutive-render-counters'
+            }
+        }else{$Auto.candidate_count=0}
+    }
     if($null -ne $Auto.pending_screen){
         $screensPath=Join-Path $sessionPath 'screenshots';Assert-ProjectPath $Root $screensPath
         $latest=@(Get-ChildItem -LiteralPath $screensPath -File -Filter '*.png' -ErrorAction SilentlyContinue|Where-Object {$_.LastWriteTimeUtc -ge $Auto.screen_requested_utc}|Sort-Object LastWriteTimeUtc -Descending|Select-Object -First 1)
@@ -308,7 +324,7 @@ function Update-DiagnosticAutomation([string]$Root,[string]$Session,$Plan,$Auto,
         }elseif($Auto.ready -and $Elapsed-$Auto.pending_screen -gt 25){throw 'The engine did not produce the requested scene screenshot.'}
     }
     # Readiness screenshots finish before capture. OCR must not stall scheduled input.
-    if($null -eq $Auto.capture_at -and $null -eq $Auto.pending_screen -and $Elapsed -ge $Auto.next_screen -and $Auto.screen_count -lt 24){
+    if($pauseProbeEnabled -and $null -eq $Auto.capture_at -and $null -eq $Auto.pending_screen -and $Elapsed -ge $Auto.next_screen -and $Auto.screen_count -lt 24){
         & (Join-Path $PSScriptRoot 'control.ps1') -Action screenshot -Session $Session | Out-Null
         $Auto.screen_requested_utc=[DateTime]::UtcNow.AddSeconds(-1)
         $Auto.pending_screen=$Elapsed;$Auto.screen_count++;$Auto.next_screen=$Elapsed+12;$nativeCommandSent=$true

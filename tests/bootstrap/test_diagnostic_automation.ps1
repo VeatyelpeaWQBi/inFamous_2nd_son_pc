@@ -58,6 +58,6 @@ $v3Events=@(Get-DiagnosticWorkload 'v3-performance' 60)
 if(@($v3Events|Where-Object {$_.action -eq 'button' -and $_.button -eq 'circle'}).Count -ne 1 -or
    @($v3Events|Where-Object {$_.action -eq 'button' -and $_.button -eq 'square'}).Count -ne 0 -or
    @($v3Events|Where-Object {$_.action -eq 'axis' -and $_.axis -eq 1}).Count -ne 2){
-    throw 'V3 workload must rotate, walk once and perform one ability jump.'
+    throw 'V3 workload must rotate twice while running and perform one ability jump.'
 }
 Write-Host 'Diagnostic menu safety and workload scheduling checks passed.'

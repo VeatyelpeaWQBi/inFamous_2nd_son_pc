@@ -23,6 +23,7 @@
 #include "core/emulator_settings.h"
 #include "core/runtime_policy.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
+#include "shader_recompiler/backend/spirv/raw_access_chains.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
 #include "shader_recompiler/info.h"
 #include "shader_recompiler/recompiler.h"
@@ -724,11 +725,12 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
+        .use_raw_access_chains = instance.IsRawAccessChainsSupported(),
     };
-    // Each recompiler option changing compute shaders has its own bit: cached shaders compiled
-    // with other options are compiled again once.
+    // Recompile cached shaders when a device changes the emitted SPIR-V variant.
     const bool lds_multi_wave = profile.needs_lds_barriers && profile.lds_barriers_multi_wave;
-    SetComputeShaderVariant((lds_multi_wave ? 1u : 0u) | (profile.wave_memory_barriers ? 2u : 0u));
+    SetShaderVariants(profile.use_raw_access_chains,
+                      (lds_multi_wave ? 1u : 0u) | (profile.wave_memory_barriers ? 2u : 0u));
     prewarm_budget =
         PrewarmBudget::FromAvailable(AvailableHostMemory(), AvailableDeviceMemory(instance));
     const auto cache_path = EmulatorSettings.IsPipelineCacheEnabled()
@@ -1259,6 +1261,9 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
 
     const auto ir_program = Shader::TranslateProgram(code, pools, info, runtime_info, profile);
     auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir_program, binding);
+    if (profile.use_raw_access_chains) {
+        Shader::Backend::SPIRV::ConvertRawAccessChains(spv);
+    }
 
     auto module = CompileSPV(spv, instance.GetDevice());
 

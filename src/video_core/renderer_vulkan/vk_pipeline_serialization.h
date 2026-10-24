@@ -18,7 +18,7 @@ void RegisterShaderMeta(const Shader::Info& info,
                         const Shader::StageSpecialization& spec, size_t perm_hash, size_t perm_idx);
 void RegisterShaderBinary(std::vector<u32>&& spv, u64 pgm_hash, size_t perm_idx);
 
-/// Recompiler variant of compute shaders (0: default), part of their cache version.
-void SetComputeShaderVariant(u32 variant);
+/// Recompiler variants which affect the shader binary cache version.
+void SetShaderVariants(bool raw_access_chains, u32 compute_variant);
 
 } // namespace Vulkan

@@ -127,7 +127,9 @@ class BufferCache {
     void TickFrame();
 
     /// Invalidates any buffer in the logical page range.
-    void InvalidateMemory(VAddr device_addr, u64 size, bool assume_locks = false);
+    std::pair<VAddr, u64> InvalidateMemory(VAddr device_addr, u64 size,
+                                           bool assume_locks = false,
+                                           bool allow_write_run = false);
 
     /// Flushes any GPU modified buffer in the logical page range back to CPU memory.
     /// guest_rip: the faulting instruction of a guest read (readback_relaxed_sites), 0 if none.

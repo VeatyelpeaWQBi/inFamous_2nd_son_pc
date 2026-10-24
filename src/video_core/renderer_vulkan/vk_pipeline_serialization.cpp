@@ -16,25 +16,31 @@
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
 static constexpr u32 ShaderBinaryVersion =
-    8u; // 7: legacy multiply-add (v_mac_legacy_f32),
+    9u; // 7: legacy multiply-add (v_mac_legacy_f32),
         // 8: upstream ADDC/ALIGNBIT/CVT_PK_U8/thread id fixes
+        // 9: optional NV raw access chains
 static constexpr u32 ShaderMetaVersion = 6u;
 static constexpr u32 PipelineKeyVersion = 4u; // Includes auxiliary discard-fragment SPIR-V.
 
-/// Compute shaders compiled with a different recompiler variant (see SetComputeShaderVariant)
-/// are stored with another binary version, so changing the variant recompiles them once.
+/// Shaders compiled with a different recompiler variant use another binary version so cached
+/// SPIR-V cannot cross an incompatible device capability or compute profile.
+static u32 common_shader_variant{};
 static u32 compute_shader_variant{};
 
 static u32 BinaryVersionFor(const Shader::Info& info) {
-    return info.hw_stage == Shader::HwStage::Compute
-               ? ShaderBinaryVersion + compute_shader_variant * 100u
-               : ShaderBinaryVersion;
+    const u32 variant = common_shader_variant |
+                        (info.hw_stage == Shader::HwStage::Compute ? compute_shader_variant << 1
+                                                                  : 0u);
+    return ShaderBinaryVersion + variant * 100u;
 }
 } // namespace Serialization
 
 namespace Vulkan {
 
-void SetComputeShaderVariant(u32 variant) { Serialization::compute_shader_variant = variant; }
+void SetShaderVariants(bool raw_access_chains, u32 compute_variant) {
+    Serialization::common_shader_variant = raw_access_chains ? 1u : 0u;
+    Serialization::compute_shader_variant = compute_variant;
+}
 
 void RegisterPipelineData(const ComputePipelineKey& key,
                           ComputePipeline::SerializationSupport& sdata) {

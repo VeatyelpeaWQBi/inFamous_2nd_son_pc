@@ -206,7 +206,8 @@ bool Instance::CreateDevice() {
         vk::PhysicalDevicePrimitiveTopologyListRestartFeaturesEXT,
         vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT,
         vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR,
-        vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT, vk::PhysicalDeviceShaderClockFeaturesKHR>();
+        vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT, vk::PhysicalDeviceShaderClockFeaturesKHR,
+        vk::PhysicalDeviceRawAccessChainsFeaturesNV>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -323,6 +324,10 @@ bool Instance::CreateDevice() {
     if (shader_clock) {
         shader_clock_features = feature_chain.get<vk::PhysicalDeviceShaderClockFeaturesKHR>();
     }
+    const auto raw_access_features =
+        feature_chain.get<vk::PhysicalDeviceRawAccessChainsFeaturesNV>();
+    raw_access_chains = raw_access_features.shaderRawAccessChains &&
+                        add_extension(VK_NV_RAW_ACCESS_CHAINS_EXTENSION_NAME);
     // Only probed (BufferCache::ProbeHostImport): can the GPU use guest memory in place?
     external_memory_host = add_extension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
 
@@ -504,6 +509,9 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceShaderClockFeaturesKHR{
             .shaderSubgroupClock = shader_clock_features.shaderSubgroupClock,
         },
+        vk::PhysicalDeviceRawAccessChainsFeaturesNV{
+            .shaderRawAccessChains = true,
+        },
     };
 
     if (!custom_border_color) {
@@ -554,6 +562,9 @@ bool Instance::CreateDevice() {
     }
     if (!shader_clock) {
         device_chain.unlink<vk::PhysicalDeviceShaderClockFeaturesKHR>();
+    }
+    if (!raw_access_chains) {
+        device_chain.unlink<vk::PhysicalDeviceRawAccessChainsFeaturesNV>();
     }
 
     ;

@@ -967,6 +967,8 @@ set(SHADER_RECOMPILER src/shader_recompiler/profile.h
                       src/shader_recompiler/backend/spirv/emit_spirv_logical.cpp
                       src/shader_recompiler/backend/spirv/emit_spirv_quad_rect.cpp
                       src/shader_recompiler/backend/spirv/emit_spirv_quad_rect.h
+                      src/shader_recompiler/backend/spirv/raw_access_chains.cpp
+                      src/shader_recompiler/backend/spirv/raw_access_chains.h
                       src/shader_recompiler/backend/spirv/emit_spirv_select.cpp
                       src/shader_recompiler/backend/spirv/emit_spirv_shared_memory.cpp
                       src/shader_recompiler/backend/spirv/emit_spirv_special.cpp

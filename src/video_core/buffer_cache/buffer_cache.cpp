@@ -505,7 +505,8 @@ void BufferCache::OnGpuThreadWrite(VAddr device_addr, u64 size) {
     memory_tracker->OnGpuThreadWrite(device_addr, size);
 }
 
-void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_locks) {
+std::pair<VAddr, u64> BufferCache::InvalidateMemory(VAddr device_addr, u64 size,
+                                                    bool assume_locks, bool allow_write_run) {
     // Guest write faults invalidate at most 8 bytes, unmaps and other invalidations whole
     // ranges. Faults of the command processor thread come with assume_locks.
     const bool is_fault = size <= 8;
@@ -513,6 +514,11 @@ void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_lock
         device_addr, size, is_fault, assume_locks, [this, device_addr, size, assume_locks] {
             ReadMemory(device_addr, size, true, assume_locks);
         });
+    // Pages opened here are already writable and CPU modified. The caller also invalidates
+    // texture-cache entries for the returned range.
+    return allow_write_run && is_fault && !assume_locks
+               ? memory_tracker->OpenWriteRun(device_addr, 64)
+               : std::pair<VAddr, u64>{};
 }
 
 std::pair<VAddr, VAddr> BufferCache::GetReadbackWindow(const Buffer* arena, VAddr device_addr,

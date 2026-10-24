@@ -2157,8 +2157,12 @@ bool Rasterizer::InvalidateMemory(VAddr addr, u64 size, bool assume_locks) {
         // Not GPU mapped memory, can skip invalidation logic entirely.
         return false;
     }
-    buffer_cache.InvalidateMemory(addr, size, assume_locks);
+    const auto [opened_addr, opened_size] =
+        buffer_cache.InvalidateMemory(addr, size, assume_locks, true);
     texture_cache.InvalidateMemory(addr, size);
+    if (opened_size != 0) {
+        texture_cache.InvalidateMemory(opened_addr, opened_size);
+    }
     return true;
 }
 

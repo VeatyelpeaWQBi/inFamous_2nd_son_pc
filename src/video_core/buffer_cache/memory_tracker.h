@@ -144,6 +144,14 @@ class MemoryTracker {
         });
     }
 
+    std::pair<VAddr, u64> OpenWriteRun(VAddr fault_addr, size_t max_pages) {
+        if (fault_addr >= MAX_CPU_ADDRESS) {
+            return {};
+        }
+        RegionManager* manager = top_tier[fault_addr >> HIGHER_PAGE_BITS];
+        return manager ? manager->OpenWriteRun(fault_addr, max_pages) : std::pair<VAddr, u64>{};
+    }
+
     /**
      * Sync memo (BufferCache): the CPU modification versions of the regions of the range (at
      * most two, 16 MB regions), to know later whether guest writes may have touched the range

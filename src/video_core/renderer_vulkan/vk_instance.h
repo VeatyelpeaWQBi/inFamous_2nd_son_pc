@@ -209,6 +209,8 @@ class Instance {
         return shader_clock && shader_clock_features.shaderSubgroupClock;
     }
 
+    bool IsRawAccessChainsSupported() const { return raw_access_chains; }
+
     /// Returns the vendor ID of the physical device
     u32 GetVendorID() const { return properties.vendorID; }
 
@@ -429,6 +431,7 @@ class Instance {
     bool image_2d_view_of_3d{};
     bool image_view_min_lod{};
     bool shader_clock{};
+    bool raw_access_chains{};
     bool external_memory_host{};
     bool supports_memory_budget{};
     bool supports_block_texel_view{};

@@ -170,30 +170,6 @@ void PollTuning() {
             tuning.scout_fast.store(value != "0", std::memory_order_relaxed);
         } else if (key == "pipeline_key_memo") {
             tuning.pipeline_key_memo.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_pipeline_reuse") {
-            tuning.v3_pipeline_reuse.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_draw_packets") {
-            tuning.v3_draw_packets.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_raw_access_chains") {
-            tuning.v3_raw_access_chains.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_selective_ubo") {
-            tuning.v3_selective_ubo.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_barrier_merge") {
-            tuning.v3_barrier_merge.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_dirty_log") {
-            tuning.v3_dirty_log.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_write_runs") {
-            tuning.v3_write_runs.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_async_present") {
-            tuning.v3_async_present.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_transient_device_local") {
-            tuning.v3_transient_device_local.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_incremental_shader_index") {
-            tuning.v3_incremental_shader_index.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_native_draw_records") {
-            tuning.v3_native_draw_records.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "v3_particle_sort") {
-            tuning.v3_particle_sort.store(value != "0", std::memory_order_relaxed);
         } else if (key == "bind_prefetch") {
             tuning.bind_prefetch.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gpu_threads_affinity") {
@@ -545,23 +521,6 @@ void PollTuning() {
              tuning.gpu_profile_draw_hash.load(), tuning.gpu_profile_draw_limit.load());
     LOG_INFO(Debug, "GPU compute profiling: filter={:016x} sample_limit={} (per profiler lifetime)",
              tuning.gpu_profile_compute_hash.load(), tuning.gpu_profile_compute_limit.load());
-    LOG_INFO(Debug,
-             "V3 switches: 01_pipeline_reuse={} 02_draw_packets={} 03_raw_access_chains={} "
-             "04_selective_ubo={} 05_barrier_merge={} 06_dirty_log={} 07_write_runs={} "
-             "08_async_present={} 09_transient_device_local={} "
-             "10_incremental_shader_index={} 11_native_draw_records={} 12_particle_sort={}",
-             tuning.v3_pipeline_reuse.load(std::memory_order_relaxed),
-             tuning.v3_draw_packets.load(std::memory_order_relaxed),
-             tuning.v3_raw_access_chains.load(std::memory_order_relaxed),
-             tuning.v3_selective_ubo.load(std::memory_order_relaxed),
-             tuning.v3_barrier_merge.load(std::memory_order_relaxed),
-             tuning.v3_dirty_log.load(std::memory_order_relaxed),
-             tuning.v3_write_runs.load(std::memory_order_relaxed),
-             tuning.v3_async_present.load(std::memory_order_relaxed),
-             tuning.v3_transient_device_local.load(std::memory_order_relaxed),
-             tuning.v3_incremental_shader_index.load(std::memory_order_relaxed),
-             tuning.v3_native_draw_records.load(std::memory_order_relaxed),
-             tuning.v3_particle_sort.load(std::memory_order_relaxed));
 }
 
 namespace {

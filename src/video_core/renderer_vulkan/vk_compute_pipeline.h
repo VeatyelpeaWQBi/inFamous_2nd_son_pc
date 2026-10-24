@@ -49,8 +49,7 @@ public:
     ComputePipeline(const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,
                     const Shader::Profile& profile, vk::PipelineCache pipeline_cache,
                     ComputePipelineKey compute_key, const Shader::Info& info,
-                    vk::ShaderModule module, SerializationSupport& sdata, u64 uniform_mask,
-                    bool preloading,
+                    vk::ShaderModule module, SerializationSupport& sdata, bool preloading,
                     bool defer_compile = false, std::span<const u32> cached_image_bindings = {});
     ~ComputePipeline() override;
 
@@ -63,8 +62,6 @@ private:
     bool first_use_recorded{};
     ComputePipelineKey compute_key;
     vk::ShaderModule module;
-    /// Module owned only when the guarded V3 particle replacement is active.
-    vk::ShaderModule replacement_module{};
     vk::PipelineCache vk_pipeline_cache;
 };
 

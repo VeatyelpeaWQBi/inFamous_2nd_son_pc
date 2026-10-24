@@ -83,37 +83,9 @@ public:
 
     /// Returns true if a region has been modified from the CPU
     bool IsRegionCpuModified(VAddr cpu_addr, u64 size) noexcept {
-        const bool dirty_log =
-            Common::Perf::GetTuning().v3_dirty_log.load(std::memory_order_relaxed);
-        struct CleanEntry {
-            u64 owner{};
-            VAddr address{};
-            u64 size{};
-            std::array<u64, 2> versions{};
-        };
-        static thread_local std::array<CleanEntry, 256> clean_entries{};
-        std::array<u64, 2> versions_before{};
-        CleanEntry* entry = nullptr;
-        if (dirty_log && GetCpuVersions(cpu_addr, size, versions_before)) {
-            const u64 key = (cpu_addr / BYTES_PER_PAGE) ^ (size * 0x9E3779B97F4A7C15ULL);
-            entry = &clean_entries[(key >> 17) & (clean_entries.size() - 1)];
-            if (entry->owner == identity && entry->address == cpu_addr && entry->size == size &&
-                entry->versions == versions_before) {
-                return false;
-            }
-        }
-        const bool modified = IteratePages(cpu_addr, size, [](RegionManager* manager, u64 offset,
-                                                              u64 size) {
+        return IteratePages(cpu_addr, size, [](RegionManager* manager, u64 offset, u64 size) {
             return manager->template IsRegionModified<Type::CPU>(offset, size);
         });
-        if (!modified && entry != nullptr) {
-            std::array<u64, 2> versions_after{};
-            if (GetCpuVersions(cpu_addr, size, versions_after) &&
-                versions_before == versions_after) {
-                *entry = CleanEntry{identity, cpu_addr, size, versions_after};
-            }
-        }
-        return modified;
     }
 
     /// Returns true if the GPU copy of the region is up to date with guest memory: all its pages
@@ -180,8 +152,7 @@ public:
     }
 
     std::pair<VAddr, u64> OpenWriteRun(VAddr fault_addr, size_t max_pages) {
-        if (!Common::Perf::GetTuning().v3_write_runs.load(std::memory_order_relaxed) ||
-            fault_addr >= MAX_CPU_ADDRESS) {
+        if (fault_addr >= MAX_CPU_ADDRESS) {
             return {};
         }
         RegionManager* manager = top_tier[fault_addr >> HIGHER_PAGE_BITS];
@@ -528,8 +499,6 @@ public:
     }
 
 private:
-    inline static std::atomic<u64> next_identity{1};
-    const u64 identity{next_identity.fetch_add(1, std::memory_order_relaxed)};
     template <bool create_region_on_fail = false, typename Func>
     bool IteratePages(VAddr cpu_address, u64 size, Func&& func) {
         using FuncReturn = typename std::invoke_result<Func, RegionManager*, u64, size_t>::type;

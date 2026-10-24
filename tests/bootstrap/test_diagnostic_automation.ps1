@@ -43,21 +43,15 @@ if((Get-DiagnosticPauseResponse $pauseWithResume $true 2 $true).action -ne 'wait
 if((Get-DiagnosticPauseResponse $pauseWithResume $true 21 $true).action -ne 'fail'){throw 'Failed menu close must not repeat or proceed.'}
 if((Get-DiagnosticPauseResponse $unknown $true 2 $true).action -ne 'resumed'){throw 'Closed menu plus render telemetry must confirm the resume response.'}
 if((Get-DiagnosticPauseResponse (Get-DiagnosticMenuDecision 'Overwrite saved data?') $true 2 $true).action -ne 'fail'){throw 'A save confirmation must stop automation.'}
-foreach($profile in @('cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full','v3-performance')){
+foreach($profile in @('cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full')){
     $events=@(Get-DiagnosticWorkload $profile 60)
     $last=-1
     foreach($event in $events){
         if($event.at -le $last -or $event.at -ge 60){throw 'Workload command times must be strictly ordered within the window.'}
         $last=$event.at
-        if($event.action -eq 'axis' -and ($event.axis -notin $(if($profile -eq 'v3-performance'){@(1,2)}else{@(2)}) -or $event.value -lt 0 -or $event.value -gt 255)){throw 'Only bounded workload-axis changes are allowed.'}
+        if($event.action -eq 'axis' -and ($event.axis -ne 2 -or $event.value -lt 0 -or $event.value -gt 255)){throw 'Only bounded camera-axis changes are allowed.'}
         if($event.action -eq 'button' -and ($profile -in @('cpu','vtune') -or $event.button -notin @('square','circle'))){throw 'Unexpected workload button.'}
     }
     if($events.Count -and ($events[-1].action -ne 'axis' -or $events[-1].value -ne 128)){throw 'The final workload input must center the camera.'}
-}
-$v3Events=@(Get-DiagnosticWorkload 'v3-performance' 60)
-if(@($v3Events|Where-Object {$_.action -eq 'button' -and $_.button -eq 'circle'}).Count -ne 1 -or
-   @($v3Events|Where-Object {$_.action -eq 'button' -and $_.button -eq 'square'}).Count -ne 0 -or
-   @($v3Events|Where-Object {$_.action -eq 'axis' -and $_.axis -eq 1}).Count -ne 2){
-    throw 'V3 workload must rotate twice while running and perform one ability jump.'
 }
 Write-Host 'Diagnostic menu safety and workload scheduling checks passed.'

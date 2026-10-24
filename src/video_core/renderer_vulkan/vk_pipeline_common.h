@@ -59,10 +59,6 @@ public:
         return is_compute;
     }
 
-    u64 UniformBufferMask(Shader::SwStage stage) const {
-        return uniform_buffer_masks[u32(stage)];
-    }
-
     using DescriptorWrites = std::vector<vk::WriteDescriptorSet>;
     void BindResources(DescriptorWrites& set_writes, const Shader::PushData& push_data) const;
     /// Binds on the given scheduler's command buffer (another queue, asc_queue); only for a
@@ -112,7 +108,6 @@ protected:
     vk::UniquePipelineLayout pipeline_layout;
     vk::UniqueDescriptorSetLayout desc_layout;
     std::array<const Shader::Info*, Shader::MaxStageTypes> stages{};
-    std::array<u64, Shader::MaxStageTypes> uniform_buffer_masks{};
     bool uses_push_descriptors{};
     bool is_compute;
     VideoCore::CompileReadiness readiness;

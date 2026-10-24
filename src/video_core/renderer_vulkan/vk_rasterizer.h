@@ -274,7 +274,7 @@ private:
     void TraceShaderResources(const Shader::Info& stage);
     void TraceBufferWriters(const Shader::Info& stage);
     void BindBuffers(const Shader::Info& stage, Shader::Backend::Bindings& binding,
-                     Shader::PushData& push_data, u64 uniform_mask);
+                     Shader::PushData& push_data);
     /// Finish immutable table uploads after vertex/index preparation, immediately before
     /// recording descriptors. This prevents a later ring wrap from overwriting reused data.
     void FinalizeFlatbufUploads();
@@ -360,7 +360,6 @@ private:
     std::unique_ptr<Scheduler> compute_scheduler;
     std::unique_ptr<Runtime> compute_runtime;
     std::unique_ptr<VideoCore::StreamBuffer> compute_stream;
-    std::unique_ptr<VideoCore::Buffer> compute_transient_device;
     VideoCore::QueueContext compute_context{};
     Runtime* active_runtime;
     Scheduler* active_scheduler;
@@ -448,7 +447,6 @@ private:
         u64 offset;
         u32 size;
         bool is_written;
-        bool is_uniform;
         VAddr address{}; ///< Guest address (frame x-ray), 0 for emulator buffers.
     };
     boost::container::static_vector<BoundBuffer, Shader::NUM_BUFFERS> bound_buffers;

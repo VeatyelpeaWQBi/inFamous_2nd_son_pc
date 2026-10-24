@@ -6,15 +6,11 @@
 #include <array>
 #include <atomic>
 #include <cstring>
-#include <limits>
-#include <memory>
 #include <set>
-#include <span>
 #include <miniz.h>
 
 #include "common/elf_info.h"
 #include "common/logging/log.h"
-#include "common/perf_stats.h"
 #include "common/thread.h"
 #include "core/emulator_settings.h"
 #include "video_core/cache_file.h"
@@ -37,102 +33,6 @@ const char* Extension(BlobType type) {
 }
 std::string BlobName(BlobType type, const std::string& name) {
     return std::filesystem::path{name}.replace_extension(Extension(type)).filename().string();
-}
-
-constexpr u32 V3IndexMagic = 0x33584449; // "IDX3"
-constexpr u32 V3IndexVersion = 1;
-
-const char* V3IndexName(BlobType type) {
-    switch (type) {
-    case BlobType::ShaderMeta:
-        return "pipeline-v2-meta.index";
-    case BlobType::ShaderBinary:
-        return "pipeline-v2-spv.index";
-    case BlobType::PipelineKey:
-        return "pipeline-v2-key.index";
-    case BlobType::ShaderProfile:
-        return "pipeline-v2-profile.index";
-    }
-    return "pipeline-v2-invalid.index";
-}
-
-s64 DirectoryStamp(const std::filesystem::path& path) {
-    std::error_code ec;
-    const auto stamp = std::filesystem::last_write_time(path, ec);
-    return ec ? 0 : static_cast<s64>(stamp.time_since_epoch().count());
-}
-
-template <typename T>
-void AppendIndexValue(std::vector<u8>& out, const T& value) {
-    const auto* bytes = reinterpret_cast<const u8*>(std::addressof(value));
-    out.insert(out.end(), bytes, bytes + sizeof(T));
-}
-
-template <typename T>
-bool ReadIndexValue(std::span<const u8>& in, T& value) {
-    if (in.size() < sizeof(T)) {
-        return false;
-    }
-    std::memcpy(std::addressof(value), in.data(), sizeof(T));
-    in = in.subspan(sizeof(T));
-    return true;
-}
-
-bool LoadV3Index(const std::filesystem::path& index_path,
-                 const std::filesystem::path& directory, BlobType type,
-                 std::set<std::string>& names) {
-    std::vector<u8> bytes;
-    if (!CacheFile::Read(index_path, bytes)) {
-        return false;
-    }
-    std::span<const u8> input{bytes};
-    u32 magic{}, version{}, count{};
-    s64 stamp{};
-    if (!ReadIndexValue(input, magic) || !ReadIndexValue(input, version) ||
-        !ReadIndexValue(input, stamp) || !ReadIndexValue(input, count) ||
-        magic != V3IndexMagic || version != V3IndexVersion || stamp == 0 ||
-        stamp != DirectoryStamp(directory) || count > (1u << 24)) {
-        return false;
-    }
-    for (u32 i = 0; i < count; ++i) {
-        u16 length{};
-        if (!ReadIndexValue(input, length) || length == 0 || input.size() < length) {
-            names.clear();
-            return false;
-        }
-        std::string name{reinterpret_cast<const char*>(input.data()), length};
-        input = input.subspan(length);
-        const std::filesystem::path entry{name};
-        if (entry.filename() != entry || entry.extension() != Extension(type)) {
-            names.clear();
-            return false;
-        }
-        names.emplace(std::move(name));
-    }
-    return input.empty();
-}
-
-void SaveV3Index(const std::filesystem::path& index_path,
-                 const std::filesystem::path& directory,
-                 const std::set<std::string>& names) {
-    const s64 stamp = DirectoryStamp(directory);
-    if (stamp == 0) {
-        return;
-    }
-    std::vector<u8> bytes;
-    bytes.reserve(20 + names.size() * 24);
-    AppendIndexValue(bytes, V3IndexMagic);
-    AppendIndexValue(bytes, V3IndexVersion);
-    AppendIndexValue(bytes, stamp);
-    AppendIndexValue(bytes, static_cast<u32>(names.size()));
-    for (const auto& name : names) {
-        if (name.size() > std::numeric_limits<u16>::max()) {
-            return;
-        }
-        AppendIndexValue(bytes, static_cast<u16>(name.size()));
-        bytes.insert(bytes.end(), name.begin(), name.end());
-    }
-    CacheFile::Write(index_path, bytes);
 }
 } // namespace
 
@@ -304,21 +204,7 @@ void DataBase::ForEachBlob(BlobType type, const std::function<void(std::vector<u
                 names.emplace(it->path().filename().string());
         }
     };
-    const bool use_v3_index =
-        Common::Perf::GetTuning().v3_incremental_shader_index.load(std::memory_order_relaxed) &&
-        !impl->allow_legacy;
-    const auto index_path = impl->legacy / V3IndexName(type);
-    const bool index_loaded = use_v3_index && LoadV3Index(index_path, impl->path, type, names);
-    if (!index_loaded) {
-        collect(impl->path);
-        if (use_v3_index) {
-            SaveV3Index(index_path, impl->path, names);
-        }
-    }
-    if (use_v3_index) {
-        LOG_INFO(Render, "V3 cache index {}: {} {} entries", index_loaded ? "reused" : "rebuilt",
-                 names.size(), Extension(type));
-    }
+    collect(impl->path);
     if (impl->allow_legacy)
         collect(impl->legacy);
     if (impl->allow_legacy && impl->zip_open) {

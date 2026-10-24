@@ -297,7 +297,6 @@ private:
     tsl::robin_map<ComputePipelineKey, std::unique_ptr<ComputePipeline>> compute_pipelines;
     tsl::robin_map<GraphicsPipelineKey, std::unique_ptr<GraphicsPipeline>> graphics_pipelines;
     std::array<Shader::RuntimeInfo, MaxShaderStages> runtime_infos{};
-    std::array<u64, MaxShaderStages> uniform_masks{};
     /// Epoch-local shader params, optionally revalidated against owned metadata/scan inputs
     /// across epochs. A scanned header snapshots the entire searched prefix, so an earlier
     /// header inserted at the same address cannot be missed. Direct headers need only the
@@ -319,15 +318,6 @@ private:
     std::array<std::array<ParamsMemo, ParamsMemoWays>, 1U << NumParamsMemoBits> params_memos{};
     std::array<u8, 1U << NumParamsMemoBits> params_memo_next{};
     std::atomic<u64> shader_mapping_generation{1};
-    struct GraphicsReuseState {
-        u64 context_changes{};
-        u64 shader_changes{};
-        u64 upload_epoch{};
-        u64 host_write_generation{};
-        u64 mapping_generation{};
-        DrawIndirectParams indirect{};
-        bool valid{};
-    } graphics_reuse_state{};
     /// Pipeline key memo (pipeline_key_memo): the key and pipeline of the last draw.
     GraphicsPipelineKey last_graphics_key{};
     GraphicsPipeline* last_graphics_pipeline{};

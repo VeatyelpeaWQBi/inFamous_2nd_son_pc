@@ -49,7 +49,6 @@ struct QueueContext {
     Vulkan::Scheduler* scheduler;
     Vulkan::Runtime* runtime;
     StreamBuffer* stream_buffer;
-    Buffer* transient_device_buffer;
     u32 index; ///< 0 graphics, 1 compute (RegionManager::CrossQueueAccess).
 };
 
@@ -417,8 +416,6 @@ private:
     std::unique_ptr<MemoryTracker> memory_tracker;
 
     StreamBuffer stream_buffer;
-    /// Optional device-local mirror of stream_buffer used by V3 transient uploads.
-    std::unique_ptr<Buffer> transient_device_buffer;
     Buffer gds_buffer;
     RangeSet gpu_modified_ranges;
     RangeSet pending_download_ranges; ///< readback_keep_ranges: downloads in flight.
@@ -436,7 +433,6 @@ private:
     /// memory written by the emulator since. Command processor thread only.
     struct StreamCopy {
         VAddr address{};
-        const Buffer* buffer{};
         u64 tick{};
         u64 epoch{};
         u64 host_write_gen{};

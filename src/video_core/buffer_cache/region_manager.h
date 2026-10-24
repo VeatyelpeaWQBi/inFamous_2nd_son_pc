@@ -245,8 +245,8 @@ public:
         }
     }
 
-    /// Records a write fault and opens a bounded range ahead only after three adjacent pages
-    /// have faulted. GPU-modified pages terminate the range, preserving their unread data.
+    /// Opens a bounded range after three adjacent write faults. GPU-modified pages stop the
+    /// range so data which has not been read back remains protected.
     std::pair<VAddr, u64> OpenWriteRun(VAddr fault_addr, size_t max_pages) {
         if (fault_addr < cpu_addr || fault_addr >= cpu_addr + HIGHER_PAGE_SIZE) {
             return {};
@@ -286,8 +286,7 @@ public:
         const u64 size = (end - begin) * BYTES_PER_PAGE;
         ChangeRegionState<StateOp::Set, StateOp::None, false>(offset, size);
         const Bounds opened_bounds = GetBounds(offset, size);
-        IterateWords(opened_bounds,
-                     [&](u64 index, u64 mask) { written[index] |= mask; });
+        IterateWords(opened_bounds, [&](u64 index, u64 mask) { written[index] |= mask; });
         Unlock(lock_bounds, late);
         return {cpu_addr + offset, size};
     }

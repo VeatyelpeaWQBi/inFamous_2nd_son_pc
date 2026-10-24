@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param([ValidateSet('auto','720p','900p','1080p','1440p','1800p','pro4k')][string]$Mode='auto',
-      [switch]$WaitForDebugger,[switch]$Benchmark,[switch]$V3Test,[switch]$CheckOnly,[switch]$PrepareOnly,[switch]$NoMenu,
+      [switch]$WaitForDebugger,[switch]$Benchmark,[switch]$CheckOnly,[switch]$PrepareOnly,[switch]$NoMenu,
       [ValidateSet('none','baseline','critical','lighting')][string]$TimingProfile='none',
       [string]$SaveSession,
       [ValidateSet('none','cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full')][string]$Diagnostic='none',
@@ -12,21 +12,20 @@ $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $isDiagnostic=$Diagnostic -ne 'none'
 $isTiming=$TimingProfile -ne 'none'
 if($isTiming){
-    if($isDiagnostic -or $Benchmark -or $V3Test -or $WaitForDebugger){throw 'Timing profiles require ordinary play without full/profiler/debugger instrumentation.'}
+    if($isDiagnostic -or $Benchmark -or $WaitForDebugger){throw 'Timing profiles require ordinary play without full/profiler/debugger instrumentation.'}
     if($Mode -eq 'auto'){$Mode='pro4k'}
     if($Mode -notin @('1080p','pro4k')){throw 'Timing comparisons support 1080p and pro4k.'}
 }
 if($isDiagnostic -or $WaitForDebugger -or $isTiming -or $SaveSession){. (Join-Path $PSScriptRoot 'diagnostic_tools.ps1')}
-if($V3Test){. (Join-Path $PSScriptRoot 'diagnostic_retention.ps1')}
 if($isDiagnostic){
-    if($Benchmark -or $V3Test){throw 'Diagnostic captures cannot be combined with isolated benchmark modes.'}
+    if($Benchmark){throw 'Diagnostic captures cannot be submitted as frozen benchmarks.'}
     if($Mode -eq 'auto'){$Mode='pro4k'}
     if($Mode -notin @('1080p','pro4k')){throw 'Diagnostics currently support 1080p and pro4k.'}
     if($WaitForDebugger){$DiagnosticDelaySeconds=-1}
     Assert-DiagnosticTools (Get-DiagnosticSpec $Diagnostic) (Get-DiagnosticTools) -RequireAdministrator (-not $PrepareOnly)
 
 }
-if($Benchmark -or $V3Test){
+if($Benchmark){
     if($Mode -eq 'auto'){$Mode='pro4k'}
     if($Mode -notin @('1080p','pro4k')){throw 'Frozen benchmarks support only 1080p and pro4k.'}
 }
@@ -44,7 +43,7 @@ try{
     $saveRecord=$null
     $saveSourcePolicy=if($SaveSession){'explicit-session'}else{'fixed-project-home'}
     if($SaveSession){
-        if($Benchmark -or $V3Test){throw 'Isolated benchmarks cannot override their save source.'}
+        if($Benchmark){throw 'Frozen benchmarks cannot override their save source.'}
         $saveRecord=Read-ProjectSaveSession $projectRoot $SaveSession
         $SaveSession=Get-RelativePath $projectRoot $saveRecord.Path
     }
@@ -53,7 +52,7 @@ try{
     $homeSource=if($Benchmark){Join-Path $baseline 'home'}else{$liveHome}
     if($saveRecord){$homeSource=Resolve-ProjectChild $projectRoot ($SaveSession+'/home')}
     elseif($homeSource -ne $liveHome){$saveSourcePolicy='baseline-home'}
-    if(($isDiagnostic -or $isTiming -or $V3Test) -and -not(Test-ProjectGameSaveHome $projectRoot $homeSource $manifest.title)){
+    if(($isDiagnostic -or $isTiming) -and -not(Test-ProjectGameSaveHome $projectRoot $homeSource $manifest.title)){
         throw 'Fixed project save is missing: state/play/home. Restore the gameplay save there; no automatic session selection or new-game fallback is allowed.'
     }
     if(($isDiagnostic -or $WaitForDebugger) -and -not $PrepareOnly){
@@ -64,7 +63,7 @@ try{
         $volume=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($projectRoot))
         if($volume.AvailableFreeSpace -lt (Get-DiagnosticStoragePolicy).minimum_free_bytes){throw 'At least 2 GiB of free disk space is required for diagnostic shutdown and flushing.'}
     }
-    if(-not $isDiagnostic -and -not $Benchmark -and -not $V3Test -and -not $isTiming -and -not $PrepareOnly -and -not $NoMenu){
+    if(-not $isDiagnostic -and -not $Benchmark -and -not $isTiming -and -not $PrepareOnly -and -not $NoMenu){
         $selection=@(Invoke-ProjectNativeTool 'launch-menu' @('--mode',$Mode))
         if($LASTEXITCODE -eq 1){exit 0}
         if($LASTEXITCODE -ne 0){throw 'Launch settings could not be opened; game was not started.'}
@@ -89,7 +88,7 @@ try{
     $portableUser=Resolve-ProjectChild $projectRoot ($sessionRelative+'/user')
     $null=[IO.Directory]::CreateDirectory($portableUser)
     $persistent=Resolve-ProjectChild $projectRoot 'state\play\user'
-    $configSource=if(($V3Test -or -not $Benchmark) -and (Test-Path -LiteralPath $persistent)){$persistent}else{$baseline}
+    $configSource=if(-not $Benchmark -and (Test-Path -LiteralPath $persistent)){$persistent}else{$baseline}
     foreach($item in Get-ChildItem -LiteralPath $configSource){
         if($item.Name -notin @('home','custom_configs','cache','shader','log','temp','screenshots','captures','download','play_time.txt')){
             Copy-ProjectTree $projectRoot $item.FullName (Join-Path $portableUser $item.Name)
@@ -131,7 +130,7 @@ try{
         $null=New-Item -ItemType Junction -Path $link -Target $shared
     }
     $configPath=Join-Path $portableUser 'custom_configs\CUSA00309.json'
-    if($Benchmark -or $V3Test){
+    if($Benchmark){
         $config=Read-JsonUtf8 $configPath
         $config.General.volume_slider=0
         Write-JsonUtf8 $configPath $config
@@ -186,7 +185,7 @@ try{
     if($null -ne $verified.launcher_settings -and $verified.launcher_settings.show_fps){$arguments+='--show-fps'}
     if($WaitForDebugger){$arguments+='--wait-for-debugger'}
     $launch=[ordered]@{
-        schema=3;path_base='project';argument_path_base='working_directory';session=$sessionRelative;mode=$Mode;resolution=$verified.resolution;benchmark=[bool]$Benchmark;v3_test=[bool]$V3Test;debug=[bool]$WaitForDebugger
+        schema=3;path_base='project';argument_path_base='working_directory';session=$sessionRelative;mode=$Mode;resolution=$verified.resolution;benchmark=[bool]$Benchmark;debug=[bool]$WaitForDebugger
         runtime=$verified.runtime;runtime_sha256=$verified.runtime_sha256
         game_sha256=$verified.game_sha256;arguments=$arguments;working_directory=$sessionRelative
         user_root=(Get-RelativePath $projectRoot $portableUser);save_source=(Get-RelativePath $projectRoot $homeSource);game_launched=$false;complete=$false
@@ -194,7 +193,7 @@ try{
         save_source_policy=$saveSourcePolicy;save_source_runtime_sha256=if($saveRecord){$saveRecord.Launch.runtime_sha256}else{$null}
         source_game_written=$false;prepared_at=(Get-Date).ToString('o')
         source_config_preserved=$true;acceptance_verified=$false
-        audio_muted=[bool]($Benchmark -or $V3Test -or $isDiagnostic -or $isTiming)
+        audio_muted=[bool]($Benchmark -or $isDiagnostic -or $isTiming)
         counter_kind='guest_flip';native_benchmark_cli=$verified.runtime_capabilities.benchmark_dir
         shared_cache=if($isDiagnostic){$null}else{Get-RelativePath $projectRoot $runtimeState};launcher_settings=$verified.launcher_settings;quit_menu_key='F1'
         diagnostic=if($isDiagnostic){$Diagnostic}else{$null};progress_published=$false
@@ -299,7 +298,7 @@ try{
     $launch.finished_at=(Get-Date).ToString('o')
     $finalGameHash=(Get-FileHash -LiteralPath (Join-Path $projectRoot 'game\CUSA00309\eboot.bin') -Algorithm SHA256).Hash.ToLowerInvariant()
     if($finalGameHash -ne $manifest.game_sha256){throw 'Game executable changed; session progress was not published.'}
-    $publishProgress=(-not $isDiagnostic -and -not $Benchmark -and -not $V3Test -and -not $isTiming -and $process.ExitCode -eq 0)
+    $publishProgress=(-not $isDiagnostic -and -not $Benchmark -and -not $isTiming -and $process.ExitCode -eq 0)
     if($publishProgress){
         $null=[IO.Directory]::CreateDirectory((Split-Path -Parent $liveHome))
         Copy-ProjectTree $projectRoot (Join-Path $session 'home') $liveHome

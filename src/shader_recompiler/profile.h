@@ -14,11 +14,6 @@ struct Profile {
     u32 supported_spirv{0x00010000};
     u32 subgroup_size{};
     u32 sparse_page_shift{};
-    u32 max_uniform_buffer_size{};
-    u32 uniform_buffer_alignment{};
-    u32 robust_uniform_buffer_alignment{};
-    u32 max_stage_uniform_buffers{};
-    u32 max_uniform_buffers{};
     bool support_int8{};
     bool support_int16{};
     bool support_int64{};
@@ -65,10 +60,6 @@ struct Profile {
     bool needs_clip_distance_emulation{};
     bool supports_shader_stencil_export{};
     bool use_raw_access_chains{};
-    bool force_uniform_buffers{};
-    bool supports_uniform_buffer_int8{};
-    bool supports_uniform_buffer_int16{};
-    bool infamous_particle_sort{};
 
     bool operator==(const Profile&) const = default;
 };

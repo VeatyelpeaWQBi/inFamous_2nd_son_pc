@@ -90,9 +90,6 @@ struct BufferResource {
     BufferType buffer_type{};
     bool is_written{};
     bool is_formatted{};
-    /// Reads whose address may vary per lane are legal through a UBO, but NVIDIA serializes them.
-    /// Keep those resources as storage buffers so this optimization cannot make them slower.
-    bool is_divergent_read{};
     SharpFetchPostOp post_op{};
     u32 post_op_dw1_mask{};
 

@@ -65,20 +65,13 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
                          TextureCache& texture_cache_, PageManager& tracker)
     : instance{instance_}, scheduler{scheduler_}, runtime{runtime_},
       staging_pool{runtime_.GetStagingPool()},
-      graphics_queue{&scheduler_, &runtime_, nullptr, nullptr, 0}, active{&graphics_queue},
+      graphics_queue{&scheduler_, &runtime_, nullptr, 0}, active{&graphics_queue},
       liverpool{liverpool_}, memory{Core::Memory::Instance()}, texture_cache{texture_cache_},
       memory_tracker{std::make_unique<MemoryTracker>(tracker)},
       stream_buffer{instance, scheduler, MemoryType::Stream, STREAM_BUFFER_SIZE},
       gds_buffer{instance, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
     graphics_queue.stream_buffer = &stream_buffer;
-    if (Common::Perf::GetTuning().v3_transient_device_local.load(std::memory_order_relaxed) &&
-        !instance.IsIntegrated()) {
-        transient_device_buffer = std::make_unique<Buffer>(
-            instance, 0, STREAM_BUFFER_SIZE, MemoryType::DeviceLocal,
-            "V3 Transient Device Stream");
-        graphics_queue.transient_device_buffer = transient_device_buffer.get();
-    }
     const vk::BufferCreateInfo probe_ci = {
         .flags =
             vk::BufferCreateFlagBits::eSparseBinding | vk::BufferCreateFlagBits::eSparseResidency,
@@ -568,8 +561,8 @@ std::pair<VAddr, u64> BufferCache::InvalidateMemory(VAddr device_addr, u64 size,
                      assume_locks ? "gpu-thread" : "guest");
         }
     }
-    // Only guest write faults participate. Pages opened here are marked CPU modified and made
-    // writable before returning, so their other caches must be invalidated by the caller too.
+    // Pages opened here are already writable and CPU modified. The caller also invalidates
+    // texture-cache entries for the returned range.
     return allow_write_run && is_fault && !assume_locks
                ? memory_tracker->OpenWriteRun(device_addr, 64)
                : std::pair<VAddr, u64>{};
@@ -1600,7 +1593,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                 reuse->epoch == epoch && reuse->host_write_gen == host_write_gen) {
                 Common::Perf::Add(Common::Perf::StreamReuses);
                 Common::Perf::Add(Common::Perf::StreamReuseBytes, size);
-                return {reuse->buffer, reuse->offset};
+                return {&Stream(), reuse->offset};
             }
         }
         if (tuning.stream_static.load(std::memory_order_relaxed)) {
@@ -1631,23 +1624,12 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         const auto [data, offset] = stream.Map(size, instance.UniformMinAlignment());
         memory->CopySparseMemory(device_addr, data, size);
         stream.Commit();
-        const Buffer* result_buffer = &stream;
-        if (active->transient_device_buffer != nullptr) {
-            const vk::BufferCopy copy{
-                .srcOffset = offset,
-                .dstOffset = offset,
-                .size = size,
-            };
-            Rt().CopyBuffer(&stream, active->transient_device_buffer, std::span{&copy, 1});
-            result_buffer = active->transient_device_buffer;
-        }
         Common::Perf::Add(Common::Perf::StreamCopies);
         Common::Perf::Add(Common::Perf::StreamCopyBytes, size);
         if (reuse) {
             // The copy stays valid until the command buffer it was committed in completes.
             *reuse = StreamCopy{
                 .address = device_addr,
-                .buffer = result_buffer,
                 .tick = Sched().CurrentTick(),
                 .epoch = epoch,
                 .host_write_gen = host_write_gen,
@@ -1656,7 +1638,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                 .queue = active->index,
             };
         }
-        return {result_buffer, offset};
+        return {&stream, offset};
     }
     if (const u32 probe = Common::Perf::GetTuning().probe_host_import.load(
             std::memory_order_relaxed);

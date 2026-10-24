@@ -335,7 +335,6 @@ public:
     struct BufferDefinition {
         u32 binding;
         BufferType buffer_type;
-        bool is_uniform{};
         std::array<Id, u32(PointerSize::NumClass)> offsets;
         std::array<BufferSpv, u32(PointerType::NumAlias)> aliases;
 
@@ -408,7 +407,7 @@ private:
     SpirvAttribute GetAttributeInfo(AmdGpu::NumberFormat fmt, Id id, u32 num_components,
                                     bool output, bool loaded = false, bool array = false);
 
-    BufferSpv DefineBuffer(bool is_uniform, bool is_written, bool is_coherent, u32 elem_shift,
+    BufferSpv DefineBuffer(bool is_written, bool is_coherent, u32 elem_shift,
                            BufferType buffer_type, Id data_type);
 
     Id DefineFloat32ToUfloatM5(u32 mantissa_bits, std::string_view name);

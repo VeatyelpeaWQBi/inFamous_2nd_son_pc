@@ -24,28 +24,6 @@ namespace Vulkan {
  */
 class CommandStream {
 public:
-    struct NativeDraw {
-        vk::Pipeline pipeline{};
-        u32 count{};
-        u32 instance_count{};
-        u32 first{};
-        s32 vertex_offset{};
-        u32 first_instance{};
-        bool indexed{};
-        bool bind_pipeline{};
-
-        void Execute(vk::CommandBuffer cmdbuf) const {
-            if (bind_pipeline) {
-                cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
-            }
-            if (indexed) {
-                cmdbuf.drawIndexed(count, instance_count, first, vertex_offset, first_instance);
-            } else {
-                cmdbuf.draw(count, instance_count, first, first_instance);
-            }
-        }
-    };
-
     CommandStream() = default;
     ~CommandStream() {
         Reset();
@@ -68,9 +46,6 @@ public:
         last = command;
         ++num_commands;
     }
-
-    /// Appends the fixed POD draw record without creating another lambda command type.
-    void RecordNativeDraw(const NativeDraw& draw);
 
     /// Copies count objects in memory that stays valid until the commands are executed.
     template <typename T>
@@ -142,16 +117,6 @@ private:
         Func func;
     };
 
-    struct NativeDrawCommand final : CommandBase {
-        explicit NativeDrawCommand(const NativeDraw& draw_) : draw{draw_} {}
-
-        void Execute(vk::CommandBuffer cmdbuf) override {
-            draw.Execute(cmdbuf);
-        }
-
-        NativeDraw draw;
-    };
-
     static constexpr size_t BlockSize = 64 * 1024;
 
     void* Allocate(size_t size, size_t align) {
@@ -190,17 +155,5 @@ private:
     CommandBase* last{};
     size_t num_commands{};
 };
-
-inline void CommandStream::RecordNativeDraw(const NativeDraw& draw) {
-    void* const memory = Allocate(sizeof(NativeDrawCommand), alignof(NativeDrawCommand));
-    CommandBase* const command = new (memory) NativeDrawCommand(draw);
-    if (last) {
-        last->next = command;
-    } else {
-        first = command;
-    }
-    last = command;
-    ++num_commands;
-}
 
 } // namespace Vulkan

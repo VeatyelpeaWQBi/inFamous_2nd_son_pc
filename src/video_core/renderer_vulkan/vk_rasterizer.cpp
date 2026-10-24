@@ -591,18 +591,10 @@ bool Rasterizer::UseComputeQueue(const ComputePipeline* pipeline) {
         compute_runtime = std::make_unique<Runtime>(instance, *compute_scheduler);
         compute_stream = std::make_unique<VideoCore::StreamBuffer>(
             instance, *compute_scheduler, VideoCore::MemoryType::Stream, ComputeStreamSize);
-        if (Common::Perf::GetTuning().v3_transient_device_local.load(
-                std::memory_order_relaxed) &&
-            !instance.IsIntegrated()) {
-            compute_transient_device = std::make_unique<VideoCore::Buffer>(
-                instance, 0, ComputeStreamSize, VideoCore::MemoryType::DeviceLocal,
-                "V3 Compute Transient Device Stream");
-        }
         compute_context = VideoCore::QueueContext{
             .scheduler = compute_scheduler.get(),
             .runtime = compute_runtime.get(),
             .stream_buffer = compute_stream.get(),
-            .transient_device_buffer = compute_transient_device.get(),
             .index = 1,
         };
         compute_scheduler->SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
@@ -910,42 +902,21 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
     const auto [vertex_offset, instance_offset] = GetDrawOffsets(regs, vs_info, fetch_shader);
 
     const auto cmdbuf = scheduler.Recorder();
-    const bool crash_diag = GpuCrashDiag::Enabled();
-    const bool profile_draw =
-        Common::Perf::GetTuning().gpu_profile.load(std::memory_order_relaxed) == 3;
-    const bool draw_packet =
-        Common::Perf::GetTuning().v3_draw_packets.load(std::memory_order_relaxed) &&
-        !crash_diag && !profile_draw;
-    const bool native_draw =
-        Common::Perf::GetTuning().v3_native_draw_records.load(std::memory_order_relaxed) &&
-        !crash_diag && !profile_draw;
-    if (!draw_packet && !native_draw) {
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
-    }
-    if (crash_diag) {
+    cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
+    if (GpuCrashDiag::Enabled()) {
         MarkDraw(scheduler, cmdbuf, *pipeline,
                  is_indexed ? GpuCrashDiag::Kind::DrawIndexed : GpuCrashDiag::Kind::Draw,
                  regs.num_indices, regs.num_instances.NumInstances(), state, 0);
     }
 
+    const bool profile_draw =
+        Common::Perf::GetTuning().gpu_profile.load(std::memory_order_relaxed) == 3;
     if (profile_draw) {
         const auto* fragment = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
         scheduler.ProfileDrawBegin(fragment ? fragment->pgm_hash :
             pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash | (1ULL << 63));
     }
-    if (native_draw) {
-        cmdbuf.drawNative(pipeline->Handle(), is_indexed, regs.num_indices,
-                          regs.num_instances.NumInstances(), is_indexed ? 0 : vertex_offset,
-                          is_indexed ? s32(vertex_offset) : 0,
-                          instance_offset);
-    } else if (draw_packet && is_indexed) {
-        cmdbuf.drawIndexedPacket(pipeline->Handle(), regs.num_indices,
-                                 regs.num_instances.NumInstances(), 0, s32(vertex_offset),
-                                 instance_offset);
-    } else if (draw_packet) {
-        cmdbuf.drawPacket(pipeline->Handle(), regs.num_indices, regs.num_instances.NumInstances(),
-                          vertex_offset, instance_offset);
-    } else if (is_indexed) {
+    if (is_indexed) {
         cmdbuf.drawIndexed(regs.num_indices, regs.num_instances.NumInstances(), 0,
                            s32(vertex_offset), instance_offset);
     } else {
@@ -1396,7 +1367,7 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
         }
         set_writes.resize(set_writes.size() + stage->buffers.size() + stage->images.size() +
                           stage->samplers.size());
-        BindBuffers(*stage, binding, push_data, pipeline->UniformBufferMask(stage->sw_stage));
+        BindBuffers(*stage, binding, push_data);
         BindTextures(*stage, binding);
         uses_dma |= stage->uses_dma;
     }
@@ -1563,14 +1534,13 @@ void Rasterizer::ResetBindings(bool is_compute) {
     for (auto& image_id : bound_images) {
         texture_cache.GetImage(image_id).binding = {};
     }
-    for (const auto [buffer, offset, size, is_written, is_uniform, address] : bound_buffers) {
+    for (const auto [buffer, offset, size, is_written, address] : bound_buffers) {
         const auto dst_stage = is_compute ? vk::PipelineStageFlagBits2::eComputeShader
                                           : vk::PipelineStageFlagBits2::eAllGraphics;
         const auto write_flag =
             is_written ? vk::AccessFlagBits2::eShaderWrite : vk::AccessFlagBits2::eNone;
-        const auto read_flag = is_uniform ? vk::AccessFlagBits2::eUniformRead
-                                          : vk::AccessFlagBits2::eShaderRead;
-        Rt().AccessBuffer(buffer, offset, size, dst_stage, read_flag | write_flag);
+        Rt().AccessBuffer(buffer, offset, size, dst_stage,
+                          vk::AccessFlagBits2::eShaderRead | write_flag);
     }
     bound_images.clear();
     bound_buffers.clear();
@@ -1878,7 +1848,8 @@ void Rasterizer::TraceShaderResources(const Shader::Info& stage) {
 }
 
 void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Bindings& binding,
-                              Shader::PushData& push_data, u64 uniform_mask) {
+                             Shader::PushData& push_data) {
+    const u64 alignment = instance.StorageMinAlignment();
     for (const auto& trace : Common::Perf::GetTuning().trace_shaders) {
         const u64 hash = trace.load(std::memory_order_relaxed);
         if (hash == 0) {
@@ -1909,11 +1880,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
             }
         }
     }
-    u32 buffer_index{};
     for (const auto& desc : stage.buffers) {
-        const bool is_uniform = (uniform_mask >> buffer_index++) & 1;
-        const u64 alignment = is_uniform ? instance.UniformMinAlignment()
-                                         : instance.StorageMinAlignment();
         if (desc.IsSpecial()) {
             if (desc.buffer_type == Shader::BufferType::GdsBuffer) {
                 const auto* gds_buf = buffer_cache.GetGdsBuffer();
@@ -1921,8 +1888,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                 needs_barrier |=
                     Rt().IsBufferAccessed(gds_buf, 0, gds_buf->SizeBytes(), desc.is_written);
                 buffer_cache.NoteGdsAccess(desc.is_written);
-                bound_buffers.emplace_back(gds_buf, 0, gds_buf->SizeBytes(), desc.is_written,
-                                           false);
+                bound_buffers.emplace_back(gds_buf, 0, gds_buf->SizeBytes(), desc.is_written);
             } else if (desc.buffer_type == Shader::BufferType::Flatbuf) {
                 auto& vk_buffer = buffer_cache.GetStreamBuffer();
                 const u32 ubo_size = stage.flattened_ud_buf.size() * sizeof(u32);
@@ -2012,7 +1978,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                 // The stream buffer is only written by the CPU before submission, its reads
                 // never need a barrier. Skipping it avoids tracking most bindings of a draw.
                 if (buffer != &buffer_cache.GetStreamBuffer()) {
-                    bound_buffers.emplace_back(buffer, offset, size, desc.is_written, is_uniform,
+                    bound_buffers.emplace_back(buffer, offset, size, desc.is_written,
                                                vsharp.base_address);
                     needs_barrier |= Rt().IsBufferAccessed(buffer, offset, size, desc.is_written);
                 }
@@ -2024,11 +1990,9 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
         set_write.dstBinding = binding.unified++;
         set_write.dstArrayElement = 0;
         set_write.descriptorCount = 1;
-        set_write.descriptorType = is_uniform ? vk::DescriptorType::eUniformBuffer
-                                              : vk::DescriptorType::eStorageBuffer;
+        set_write.descriptorType = vk::DescriptorType::eStorageBuffer;
         set_write.pBufferInfo = &buffer_infos.back();
         ++binding.buffer;
-        binding.uniform_buffers += is_uniform;
     }
 }
 

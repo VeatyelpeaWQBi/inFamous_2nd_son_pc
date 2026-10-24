@@ -477,7 +477,7 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(HwStage stage, SwStag
 namespace {
 template <typename InfoT>
 u64 SpecializationKey(const InfoT& info, const Shader::RuntimeInfo& runtime_info,
-                      const Shader::Backend::Bindings& binding, u64 uniform_buffer_mask = 0);
+                      const Shader::Backend::Bindings& binding);
 template <typename InfoT>
 bool VertexAttributesMatch(const InfoT& info, const Shader::RuntimeInfo& runtime_info,
                            const Shader::StageSpecialization& spec);
@@ -530,11 +530,6 @@ struct ScoutInfo {
 void PipelineCache::ScoutDraw(const AmdGpu::Regs& regs, AmdGpu::ScoutDraw& draw,
                               AmdGpu::ScoutArena& arena) {
     draw.num_stages = 0;
-    // The scout cannot safely select a permutation whose descriptor types depend on the
-    // command processor's resolved uniform-buffer mask.
-    if (profile.force_uniform_buffers) {
-        return;
-    }
     std::array<Shader::PsColorBuffer, Shader::MaxColorBuffers> color_buffers;
     FillColorBuffers(regs, color_buffers);
     const DrawIndirectParams indirect_params{
@@ -702,11 +697,6 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .supported_spirv = SpirvVersion1_6,
         .subgroup_size = instance.SubgroupSize(),
         .sparse_page_shift = sparse_page_shift,
-        .max_uniform_buffer_size = instance.MaxUniformBufferRange(),
-        .uniform_buffer_alignment = static_cast<u32>(instance.UniformMinAlignment()),
-        .robust_uniform_buffer_alignment = instance.RobustUniformBufferAlignment(),
-        .max_stage_uniform_buffers = instance.MaxPerStageUniformBuffers(),
-        .max_uniform_buffers = instance.MaxDescriptorSetUniformBuffers(),
         .support_int8 = instance.IsShaderInt8Supported(),
         .support_int16 = instance.IsShaderInt16Supported(),
         .support_int64 = instance.IsShaderInt64Supported(),
@@ -753,32 +743,16 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
             Common::Perf::GetTuning().lds_barriers_multi_wave.load(std::memory_order_relaxed),
         .wave_memory_barriers =
             Common::Perf::GetTuning().wave_memory_barriers.load(std::memory_order_relaxed),
-        .needs_buffer_offsets =
-            instance.StorageMinAlignment() > 4 ||
-            (instance.SupportsSelectiveUniformBuffers() &&
-             Common::Perf::GetTuning().v3_selective_ubo.load(std::memory_order_relaxed) &&
-             instance.UniformMinAlignment() > 4),
+        .needs_buffer_offsets = instance.StorageMinAlignment() > 4,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
         .use_raw_access_chains = instance.IsRawAccessChainsSupported(),
-        .force_uniform_buffers = instance.SupportsSelectiveUniformBuffers() &&
-                                 Common::Perf::GetTuning().v3_selective_ubo.load(
-                                     std::memory_order_relaxed),
-        .supports_uniform_buffer_int8 = instance.SupportsUniformBufferInt8(),
-        .supports_uniform_buffer_int16 = instance.SupportsUniformBufferInt16(),
-        .infamous_particle_sort =
-            Common::Perf::GetTuning().v3_particle_sort.load(std::memory_order_relaxed),
     };
-    // Each option changing emitted SPIR-V or serialized descriptor metadata has its own bit.
-    // Profile switches share a cache directory, so incompatible entries must be rejected.
-    const u32 common_shader_variant = (profile.use_raw_access_chains ? 1u : 0u) |
-                                      (profile.force_uniform_buffers ? 2u : 0u) |
-                                      (profile.infamous_particle_sort ? 4u : 0u);
+    // Recompile cached shaders when a device changes the emitted SPIR-V variant.
     const bool lds_multi_wave = profile.needs_lds_barriers && profile.lds_barriers_multi_wave;
-    const u32 compute_shader_variant =
-        (lds_multi_wave ? 1u : 0u) | (profile.wave_memory_barriers ? 2u : 0u);
-    SetShaderVariants(common_shader_variant, compute_shader_variant);
+    SetShaderVariants(profile.use_raw_access_chains,
+                      (lds_multi_wave ? 1u : 0u) | (profile.wave_memory_barriers ? 2u : 0u));
     LOG_INFO(Render_Vulkan,
              "Compute shader LDS barriers for multi wave workgroups: {}, buffer memory barriers "
              "within split GCN waves: {}",
@@ -835,37 +809,7 @@ void PipelineCache::CompileAsync(Pipeline* pipeline) {
 
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params) {
     draw_indirect_params = params;
-    const bool reuse_enabled =
-        Common::Perf::GetTuning().v3_pipeline_reuse.load(std::memory_order_relaxed);
-    const GraphicsReuseState current_reuse{
-        .context_changes = liverpool->ContextRegChanges(),
-        .shader_changes = liverpool->ShaderRegChanges(),
-        .upload_epoch = VideoCore::CurrentUploadEpoch(),
-        .host_write_generation = VideoCore::CurrentHostWriteGen(),
-        .mapping_generation = shader_mapping_generation.load(std::memory_order_acquire),
-        .indirect = params,
-        .valid = reuse_enabled,
-    };
-    const auto same_reuse_state = [](const GraphicsReuseState& left,
-                                     const GraphicsReuseState& right) {
-        return left.valid && right.valid && left.context_changes == right.context_changes &&
-               left.shader_changes == right.shader_changes &&
-               left.upload_epoch == right.upload_epoch &&
-               left.host_write_generation == right.host_write_generation &&
-               left.mapping_generation == right.mapping_generation &&
-               left.indirect.vertex_sgpr_offset == right.indirect.vertex_sgpr_offset &&
-               left.indirect.instance_sgpr_offset == right.indirect.instance_sgpr_offset;
-    };
-    if (reuse_enabled && last_graphics_pipeline != nullptr &&
-        same_reuse_state(graphics_reuse_state, current_reuse)) {
-        // Scout entries live in a rotating arena. A reused pipeline still has valid shader info,
-        // but must not expose a pointer retained from an earlier draw.
-        taken_scout_infos.fill(nullptr);
-        Common::Perf::Add(Common::Perf::PipelineKeyMemoHits);
-        return last_graphics_pipeline;
-    }
     if (!RefreshGraphicsKey()) {
-        graphics_reuse_state.valid = false;
         return nullptr;
     }
     // Pipeline key memo: draws in a row mostly use the same pipeline, found again without
@@ -874,14 +818,12 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         Common::Perf::GetTuning().pipeline_key_memo.load(std::memory_order_relaxed);
     if (key_memo && last_graphics_pipeline != nullptr && last_graphics_key == graphics_key) {
         Common::Perf::Add(Common::Perf::PipelineKeyMemoHits);
-        graphics_reuse_state = current_reuse;
         return last_graphics_pipeline;
     }
     const auto [it, is_new] = graphics_pipelines.try_emplace(graphics_key);
     if (!is_new) {
         last_graphics_key = graphics_key;
         last_graphics_pipeline = it->second.get();
-        graphics_reuse_state = current_reuse;
     }
     if (is_new) {
         const auto pipeline_hash = std::hash<GraphicsPipelineKey>{}(graphics_key);
@@ -893,12 +835,11 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         GraphicsPipeline::SerializationSupport sdata{};
         it.value() = std::make_unique<GraphicsPipeline>(
             instance, scheduler, desc_heap, profile, graphics_key, driver_cache->Handle(), infos,
-            runtime_infos, fetch_shader, modules, sdata, uniform_masks, false, true);
+            runtime_infos, fetch_shader, modules, sdata, false, true);
         GraphicsPipeline* const pipeline = it.value().get();
         pipeline->SetDriverCache(driver_cache.get());
         last_graphics_key = graphics_key;
         last_graphics_pipeline = pipeline;
-        graphics_reuse_state = current_reuse;
 
         RegisterPipelineData(graphics_key, pipeline_hash, sdata);
         ++num_new_pipelines;
@@ -932,23 +873,14 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         LOG_INFO(Render_Vulkan, "Compiling compute pipeline {:#x}", pipeline_hash);
 
         const u64 start_ns = Common::Perf::NowNs();
-        // Raw access chains and selective UBOs can both stay enabled, but their combined shader
-        // variant must finish compilation before it is recorded. Otherwise the recorder can wait
-        // for the compiler while the game thread waits for that recorder's readback submission.
-        const bool compile_combined_shader_variant_synchronously =
-            profile.use_raw_access_chains && profile.force_uniform_buffers;
-        const bool retain =
-            !compile_combined_shader_variant_synchronously &&
-            Common::Perf::GetTuning().compute_compile_parallel.load(std::memory_order_relaxed);
+        const bool retain = Common::Perf::GetTuning().compute_compile_parallel.load(
+            std::memory_order_relaxed);
         const bool defer =
-            !compile_combined_shader_variant_synchronously &&
             Common::Perf::GetTuning().async_pipelines.load(std::memory_order_relaxed) >= 2;
         ComputePipeline::SerializationSupport sdata{};
         it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
                                                        driver_cache->Handle(), compute_key, *infos[0],
-                                                       modules[0], sdata,
-                                                       uniform_masks[u32(SwStage::Compute)], false,
-                                                       true);
+                                                       modules[0], sdata, false, true);
         ComputePipeline* const pipeline = it.value().get();
         pipeline->SetDriverCache(driver_cache.get());
         RegisterPipelineData(compute_key, sdata);
@@ -1201,8 +1133,7 @@ Shader::ShaderParams PipelineCache::GetStageParams(const ProgramRegs& pgm) {
 template <typename ProgramRegs>
 bool PipelineCache::TakeScoutedStage(Shader::HwStage stage_in, Shader::SwStage stage_out,
                                      const ProgramRegs& pgm, Shader::Backend::Bindings& binding) {
-    if (profile.force_uniform_buffers ||
-        !Common::Perf::GetTuning().scout_fast.load(std::memory_order_relaxed)) {
+    if (!Common::Perf::GetTuning().scout_fast.load(std::memory_order_relaxed)) {
         return false;
     }
     const auto* draw = liverpool->CurrentScoutDraw();
@@ -1241,9 +1172,8 @@ bool PipelineCache::TakeScoutedStage(Shader::HwStage stage_in, Shader::SwStage s
     info.pgm_base = reinterpret_cast<VAddr>(code);
     info.user_data = pgm.user_data;
     info.flattened_ud_buf.assign(scouted->flat, scouted->flat + scouted->flat_size);
+    info.AddBindings(binding);
     auto& perm = program->modules[scouted->perm_idx];
-    info.AddBindings(binding, perm.spec.uniform_buffer_mask);
-    uniform_masks[stage_out_idx] = perm.spec.uniform_buffer_mask;
     if (auto& fetch = perm.spec.fetch_shader_data; !fetch.Empty()) {
         fetch_shader = &fetch;
     }
@@ -1445,13 +1375,9 @@ namespace {
 /// textures of the same layout finds its permutation.
 template <typename InfoT>
 void SpecializationInputs(const InfoT& info, const Shader::Backend::Bindings& binding,
-                          u64 uniform_buffer_mask,
                           boost::container::small_vector<u32, 160>& words) {
     words.push_back(binding.unified);
     words.push_back(binding.buffer);
-    words.push_back(binding.uniform_buffers);
-    words.push_back(static_cast<u32>(uniform_buffer_mask));
-    words.push_back(static_cast<u32>(uniform_buffer_mask >> 32));
     if (info.has_fetch_shader) {
         // The fetch shader tells the vertex attributes (their descriptors are checked against
         // the permutation found, see VertexAttributesMatch): its code, up to the end of its page.
@@ -1499,9 +1425,9 @@ u64 SpecializationKey(std::span<const u32> words, const Shader::RuntimeInfo& run
 
 template <typename InfoT>
 u64 SpecializationKey(const InfoT& info, const Shader::RuntimeInfo& runtime_info,
-                      const Shader::Backend::Bindings& binding, u64 uniform_buffer_mask) {
+                      const Shader::Backend::Bindings& binding) {
     boost::container::small_vector<u32, 160> words;
-    SpecializationInputs(info, binding, uniform_buffer_mask, words);
+    SpecializationInputs(info, binding, words);
     return SpecializationKey({words.data(), words.size()}, runtime_info);
 }
 
@@ -1587,7 +1513,6 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         auto start = binding;
         const auto module = CompileModule(program->info, runtime_info, params.code, 0, binding);
         auto spec = Shader::StageSpecialization(program->info, runtime_info, profile, start);
-        uniform_masks[u32(sw_stage)] = spec.uniform_buffer_mask;
         const auto perm_hash = HashCombine(params.hash, 0);
 
         RegisterShaderMeta(program->info, spec.fetch_shader_data, spec, perm_hash, 0);
@@ -1641,19 +1566,17 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
                                 std::memory_order_relaxed);
     boost::container::small_vector<u32, 160> selection_words;
     const auto runtime_bytes = std::as_bytes(std::span{&runtime_info, 1});
-    const u64 uniform_buffer_mask = info.UniformBufferMask(profile, binding.uniform_buffers);
     const auto reuse_permutation = [&](u32 perm) {
         Common::Perf::Add(Common::Perf::SpecMemoHits);
+        info.AddBindings(binding);
         auto& module = program->modules[perm];
-        info.AddBindings(binding, module.spec.uniform_buffer_mask);
-        uniform_masks[u32(sw_stage)] = module.spec.uniform_buffer_mask;
         if (!module.spec.fetch_shader_data.Empty()) {
             fetch_shader = &module.spec.fetch_shader_data;
         }
         return std::make_tuple(&info, module.module, HashCombine(params.hash, u64{perm}));
     };
     if (exact_memo) {
-        SpecializationInputs(info, binding, uniform_buffer_mask, selection_words);
+        SpecializationInputs(info, binding, selection_words);
         const auto input_bytes = std::as_bytes(
             std::span<const u32>{selection_words.data(), selection_words.size()});
         const u32 perm = program->selection_perm;
@@ -1679,8 +1602,7 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         memo_key = scouted != nullptr ? scouted->memo_key
                    : exact_memo ? SpecializationKey(
                                       {selection_words.data(), selection_words.size()}, runtime_info)
-                                : SpecializationKey(info, runtime_info, binding,
-                                                    uniform_buffer_mask);
+                                : SpecializationKey(info, runtime_info, binding);
         for (const auto& entry : program->memo) {
             // The command processor is the only writer: plain (relaxed) reads.
             const u32 entry_perm = entry.perm_idx.load(std::memory_order_relaxed);
@@ -1717,7 +1639,7 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         std::unique_lock lock{program_cache_mutex};
         program->AddPermut(module, std::move(spec));
     } else {
-        info.AddBindings(binding, it->spec.uniform_buffer_mask);
+        info.AddBindings(binding);
         module = it->module;
         perm_idx = std::distance(program->modules.begin(), it);
         perm_hash = HashCombine(params.hash, perm_idx);
@@ -1729,7 +1651,6 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
     if (auto& fetch = program->modules[perm_idx].spec.fetch_shader_data; !fetch.Empty()) {
         fetch_shader = &fetch;
     }
-    uniform_masks[u32(sw_stage)] = program->modules[perm_idx].spec.uniform_buffer_mask;
     return std::make_tuple(&program->info, module, perm_hash);
 }
 

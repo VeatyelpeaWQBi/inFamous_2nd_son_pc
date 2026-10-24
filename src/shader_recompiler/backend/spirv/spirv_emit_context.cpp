@@ -13,7 +13,6 @@
 #include <fmt/format.h>
 #include <spirv/unified1/spirv.hpp11>
 
-#include <bit>
 #include <numbers>
 #include <string_view>
 
@@ -790,14 +789,10 @@ void EmitContext::DefinePushDataBlock() {
     interfaces.push_back(push_data_block);
 }
 
-EmitContext::BufferSpv EmitContext::DefineBuffer(bool is_uniform, bool is_written,
-                                                 bool is_coherent, u32 elem_shift,
+EmitContext::BufferSpv EmitContext::DefineBuffer(bool is_written, bool is_coherent, u32 elem_shift,
                                                  BufferType buffer_type, Id data_type) {
     // Define array type.
-    const Id record_array_type =
-        is_uniform
-            ? TypeArray(data_type, ConstU32(profile.max_uniform_buffer_size >> elem_shift))
-            : TypeRuntimeArray(data_type);
+    const Id record_array_type{TypeRuntimeArray(data_type)};
     // Define block struct type. Don't perform decorations twice on the same Id.
     const Id struct_type{TypeStruct(record_array_type)};
     if (std::ranges::find(buf_type_ids, record_array_type.value, &Id::value) ==
@@ -809,14 +804,13 @@ EmitContext::BufferSpv EmitContext::DefineBuffer(bool is_uniform, bool is_writte
         buf_type_ids.push_back(record_array_type);
     }
     // Define buffer binding interface.
-    const auto storage_class =
-        is_uniform ? spv::StorageClass::Uniform : spv::StorageClass::StorageBuffer;
+    constexpr auto storage_class = spv::StorageClass::StorageBuffer;
     const Id struct_pointer_type{TypePointer(storage_class, struct_type)};
     const Id pointer_type = TypePointer(storage_class, data_type);
     const Id id{AddGlobalVariable(struct_pointer_type, storage_class)};
     Decorate(id, spv::Decoration::Binding, binding.unified);
     Decorate(id, spv::Decoration::DescriptorSet, 0U);
-    if (!is_uniform && !is_written) {
+    if (!is_written) {
         Decorate(id, spv::Decoration::NonWritable);
     } else if (is_coherent) {
         // The guest V# MTYPE marks this buffer as shared between invocations;
@@ -851,8 +845,6 @@ EmitContext::BufferSpv EmitContext::DefineBuffer(bool is_uniform, bool is_writte
 };
 
 void EmitContext::DefineBuffers() {
-    const u64 uniform_mask = info.UniformBufferMask(profile, binding.uniform_buffers);
-    u32 buffer_index{};
     for (const auto& desc : info.buffers) {
         const auto buf_sharp = desc.GetSharp(info);
         // MTYPE class 3 marks guest buffers shared between invocations; shared
@@ -871,31 +863,28 @@ void EmitContext::DefineBuffers() {
 
         // Define aliases depending on the shader usage.
         auto& spv_buffer = buffers.emplace_back(binding.buffer++, desc.buffer_type);
-        const bool is_uniform = (uniform_mask >> buffer_index++) & 1;
-        spv_buffer.is_uniform = is_uniform;
         if (True(desc.used_types & IR::Type::U64)) {
             spv_buffer.Alias(PointerType::U64) =
-                DefineBuffer(is_uniform, desc.is_written, is_coherent, 3, desc.buffer_type, U64);
+                DefineBuffer(desc.is_written, is_coherent, 3, desc.buffer_type, U64);
         }
         if (True(desc.used_types & IR::Type::U32)) {
             spv_buffer.Alias(PointerType::U32) =
-                DefineBuffer(is_uniform, desc.is_written, is_coherent, 2, desc.buffer_type, U32[1]);
+                DefineBuffer(desc.is_written, is_coherent, 2, desc.buffer_type, U32[1]);
         }
         if (True(desc.used_types & IR::Type::F32)) {
             spv_buffer.Alias(PointerType::F32) =
-                DefineBuffer(is_uniform, desc.is_written, is_coherent, 2, desc.buffer_type, F32[1]);
+                DefineBuffer(desc.is_written, is_coherent, 2, desc.buffer_type, F32[1]);
         }
         if (True(desc.used_types & IR::Type::U16)) {
             spv_buffer.Alias(PointerType::U16) =
-                DefineBuffer(is_uniform, desc.is_written, is_coherent, 1, desc.buffer_type, U16);
+                DefineBuffer(desc.is_written, is_coherent, 1, desc.buffer_type, U16);
         }
         if (True(desc.used_types & IR::Type::U8)) {
             spv_buffer.Alias(PointerType::U8) =
-                DefineBuffer(is_uniform, desc.is_written, is_coherent, 0, desc.buffer_type, U8);
+                DefineBuffer(desc.is_written, is_coherent, 0, desc.buffer_type, U8);
         }
         ++binding.unified;
     }
-    binding.uniform_buffers += std::popcount(uniform_mask);
 }
 
 spv::ImageFormat GetFormat(const AmdGpu::Image& image) {

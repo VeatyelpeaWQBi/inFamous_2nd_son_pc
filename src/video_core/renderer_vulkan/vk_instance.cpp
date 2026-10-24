@@ -8,7 +8,6 @@
 
 #include "common/assert.h"
 #include "common/debug.h"
-#include "common/perf_stats.h"
 #include "common/types.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
@@ -227,15 +226,11 @@ bool Instance::CreateDevice() {
     const vk::StructureChain properties_chain = physical_device.getProperties2<
         vk::PhysicalDeviceProperties2, vk::PhysicalDeviceVulkan11Properties,
         vk::PhysicalDeviceVulkan12Properties, vk::PhysicalDeviceVulkan13Properties,
-        vk::PhysicalDevicePushDescriptorPropertiesKHR,
-        vk::PhysicalDeviceRobustness2PropertiesEXT>();
+        vk::PhysicalDevicePushDescriptorPropertiesKHR>();
     vk11_props = properties_chain.get<vk::PhysicalDeviceVulkan11Properties>();
     vk12_props = properties_chain.get<vk::PhysicalDeviceVulkan12Properties>();
     vk13_props = properties_chain.get<vk::PhysicalDeviceVulkan13Properties>();
     push_descriptor_props = properties_chain.get<vk::PhysicalDevicePushDescriptorPropertiesKHR>();
-    robust_uniform_buffer_alignment = static_cast<u32>(
-        properties_chain.get<vk::PhysicalDeviceRobustness2PropertiesEXT>()
-            .robustUniformBufferAccessSizeAlignment);
     LOG_INFO(Render_Vulkan, "Physical device subgroup size {}", vk11_props.subgroupSize);
 
     if (available_extensions.empty()) {
@@ -243,7 +238,7 @@ bool Instance::CreateDevice() {
         return false;
     }
 
-    boost::container::static_vector<const char*, 40> enabled_extensions;
+    boost::container::static_vector<const char*, 32> enabled_extensions;
     const auto add_extension = [&](std::string_view extension) -> bool {
         const auto result =
             std::find_if(available_extensions.begin(), available_extensions.end(),
@@ -370,9 +365,7 @@ bool Instance::CreateDevice() {
     }
     const auto raw_access_features =
         feature_chain.get<vk::PhysicalDeviceRawAccessChainsFeaturesNV>();
-    raw_access_chains = Common::Perf::GetTuning().v3_raw_access_chains.load(
-                            std::memory_order_relaxed) &&
-                        raw_access_features.shaderRawAccessChains &&
+    raw_access_chains = raw_access_features.shaderRawAccessChains &&
                         add_extension(VK_NV_RAW_ACCESS_CHAINS_EXTENSION_NAME);
     LOG_INFO(Render_Vulkan, "- shaderRawAccessChains: {}", raw_access_chains);
     // GPU crash diagnostics, both cost nothing until used.
@@ -433,12 +426,9 @@ bool Instance::CreateDevice() {
         .pQueuePriorities = queue_priorities.data(),
     };
 
-    vk11_features = feature_chain.get<vk::PhysicalDeviceVulkan11Features>();
+    const auto vk11_features = feature_chain.get<vk::PhysicalDeviceVulkan11Features>();
     vk12_features = feature_chain.get<vk::PhysicalDeviceVulkan12Features>();
     vk13_features = feature_chain.get<vk::PhysicalDeviceVulkan13Features>();
-    const bool enable_selective_ubo =
-        Common::Perf::GetTuning().v3_selective_ubo.load(std::memory_order_relaxed) &&
-        SupportsSelectiveUniformBuffers();
     vk::StructureChain device_chain = {
         vk::DeviceCreateInfo{
             .queueCreateInfoCount = 1u,
@@ -480,16 +470,12 @@ bool Instance::CreateDevice() {
         },
         vk::PhysicalDeviceVulkan11Features{
             .storageBuffer16BitAccess = vk11_features.storageBuffer16BitAccess,
-            .uniformAndStorageBuffer16BitAccess =
-                enable_selective_ubo && vk11_features.uniformAndStorageBuffer16BitAccess,
             .shaderDrawParameters = vk11_features.shaderDrawParameters,
         },
         vk::PhysicalDeviceVulkan12Features{
             .samplerMirrorClampToEdge = vk12_features.samplerMirrorClampToEdge,
             .drawIndirectCount = vk12_features.drawIndirectCount,
             .storageBuffer8BitAccess = vk12_features.storageBuffer8BitAccess,
-            .uniformAndStorageBuffer8BitAccess =
-                enable_selective_ubo && vk12_features.uniformAndStorageBuffer8BitAccess,
             .shaderBufferInt64Atomics = vk12_features.shaderBufferInt64Atomics,
             .shaderSharedInt64Atomics = vk12_features.shaderSharedInt64Atomics,
             .shaderFloat16 = vk12_features.shaderFloat16,

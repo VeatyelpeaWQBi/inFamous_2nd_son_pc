@@ -18,18 +18,18 @@ namespace Serialization {
 static constexpr u32 ShaderBinaryVersion =
     9u; // 7: legacy multiply-add (v_mac_legacy_f32),
         // 8: upstream ADDC/ALIGNBIT/CVT_PK_U8/thread id fixes
-        // 9: profile-aware V3 shader and descriptor variants
-static constexpr u32 ShaderMetaVersion = 7u;
+        // 9: optional NV raw access chains
+static constexpr u32 ShaderMetaVersion = 6u;
 static constexpr u32 PipelineKeyVersion = 4u; // Includes auxiliary discard-fragment SPIR-V.
 
-/// Shaders compiled with a different recompiler variant are stored with another binary version,
-/// so changing a profile cannot reuse incompatible SPIR-V or descriptor metadata.
+/// Shaders compiled with a different recompiler variant use another binary version so cached
+/// SPIR-V cannot cross an incompatible device capability or compute profile.
 static u32 common_shader_variant{};
 static u32 compute_shader_variant{};
 
 static u32 BinaryVersionFor(const Shader::Info& info) {
     const u32 variant = common_shader_variant |
-                        (info.hw_stage == Shader::HwStage::Compute ? compute_shader_variant << 3
+                        (info.hw_stage == Shader::HwStage::Compute ? compute_shader_variant << 1
                                                                   : 0u);
     return ShaderBinaryVersion + variant * 100u;
 }
@@ -37,8 +37,8 @@ static u32 BinaryVersionFor(const Shader::Info& info) {
 
 namespace Vulkan {
 
-void SetShaderVariants(u32 common_variant, u32 compute_variant) {
-    Serialization::common_shader_variant = common_variant;
+void SetShaderVariants(bool raw_access_chains, u32 compute_variant) {
+    Serialization::common_shader_variant = raw_access_chains ? 1u : 0u;
     Serialization::compute_shader_variant = compute_variant;
 }
 
@@ -224,8 +224,7 @@ bool PipelineCache::PrewarmComputePipeline(const ComputePipelineKey& key) {
     try {
         it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
                                                        driver_cache->Handle(), key,
-                                                       *infos[0], modules[0], sdata,
-                                                       spec->uniform_buffer_mask, true, true,
+                                                       *infos[0], modules[0], sdata, true, true,
                                                        image_bindings);
     } catch (...) {
         compute_pipelines.erase(it); // Never leave a null cache entry after a failed restore.
@@ -318,7 +317,7 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar, bool legacy
     try {
         it.value() = std::make_unique<GraphicsPipeline>(
             instance, scheduler, desc_heap, profile, graphics_key, driver_cache->Handle(), infos,
-            runtime_infos, fetch_shader, modules, sdata, uniform_masks, true, true);
+            runtime_infos, fetch_shader, modules, sdata, true, true);
     } catch (...) {
         graphics_pipelines.erase(it);
         throw;
@@ -342,7 +341,6 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage,
             *permutation_hash = HashCombine(program.info.pgm_hash, u64{index});
         infos[stage] = &program.info;
         prewarmed_specs[stage] = &module.spec;
-        uniform_masks[stage] = module.spec.uniform_buffer_mask;
         modules[stage] = module.module;
         runtime_infos[stage] = module.spec.runtime_info;
         if (!module.spec.fetch_shader_data.Empty())
@@ -643,7 +641,6 @@ void StageSpecialization::Serialize(Serialization::Archive& ar) const {
     spec.Write(images);
     spec.Write(fmasks);
     spec.Write(samplers);
-    spec.Write(uniform_buffer_mask);
 }
 
 bool StageSpecialization::Deserialize(Serialization::Archive& ar) {
@@ -670,7 +667,6 @@ bool StageSpecialization::Deserialize(Serialization::Archive& ar) {
     spec.Read(images);
     spec.Read(fmasks);
     spec.Read(samplers);
-    spec.Read(uniform_buffer_mask);
 
     return true;
 }

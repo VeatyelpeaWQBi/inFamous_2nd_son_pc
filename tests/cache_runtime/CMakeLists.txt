@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright 2026 shadPS4-AYOUB1080p contributors
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 cmake_minimum_required(VERSION 3.24)
 project(shadps4_cache_runtime_test LANGUAGES CXX)

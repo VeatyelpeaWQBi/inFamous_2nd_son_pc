@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  inFAMOUS Second Son (CUSA00004, APP_VER 01.00) - patches for the shadPS4-AYOUB1080p build.
+  inFAMOUS Second Son (CUSA00004, APP_VER 01.00) - patches for the shadPS4 build.
   Unofficial, not affiliated with or endorsed by Sony Interactive Entertainment or Sucker Punch Productions.
   No game code is included: every line carries OriginalHash, a FNV-1a 64-bit checksum of the bytes it
   replaces. If the game is another version, the line is skipped ("Patch ... skipped" in the log).

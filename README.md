@@ -4,7 +4,7 @@
 
 ## 简体中文
 
-基于 shadPS4 / AYOUB1080p GPL 源码的 Windows x86-64 游戏专用引擎，面向《inFAMOUS Second Son》的 1080p 与 Pro 4K 游玩和性能优化。它在 Windows 上运行 PS4 游戏程序，并非取得游戏源码后重写的 PC 移植版，也不是通用 PS4 启动器。
+基于 shadPS4 源码的 Windows x86-64 游戏专用引擎，面向《inFAMOUS Second Son》的 1080p 与 Pro 4K 游玩和性能优化。它在 Windows 上运行 PS4 游戏程序，并非取得游戏源码后重写的 PC 移植版，也不是通用 PS4 启动器。
 
 游戏文件由使用者自行提供，项目和发布包均不附带游戏。原始文件保持只读，游戏补丁只作用于运行中的程序，并检查版本、程序指纹和原始字节。
 
@@ -12,11 +12,12 @@
 
 | 分支 | 用途 | 启动方式 |
 | --- | --- | --- |
-| `main` | 与开发分支同步的源码基线，包含 V1/V2 和诊断设施；不是未经修改的上游原版 | 构建后运行 `run.bat` |
-| `feature/fps-optimization-import` | V2 核心优化，已移除 V3 实验代码 | `run.bat`、`diagnostics/` 下的诊断入口 |
-| `release/optimization-v2` | 保留已验收的 V1/V2，移除 V3、采样、调试面板及外部采集器联动，供发布游玩 | 直接打开 `inFAMOUS Second Son.exe`，进入启动菜单 |
+| `main` | 与 `develop` 同步的当前源码基线，包含 V1/V2、最终 V3-03/V3-07 和开发诊断设施；不是未经修改的上游原版 | 构建后运行 `run.bat` |
+| `develop` | 当前开发分支，与 `main` 保持相同的已采用优化和功能逻辑 | 构建后运行 `run.bat` |
+| `release/optimization-v3` | 保留 V1/V2 和已采用的 V3-03/V3-07，移除 V3 实验开关、自动化对比脚本、采样器和调试面板，供发布游玩 | 直接打开 `inFAMOUS Second Son.exe`，进入启动菜单 |
+| `release/optimization-v2` | 不含 V3 的历史 V2 发布基线，保留用于回归对照 | 直接打开 `inFAMOUS Second Son.exe`，进入启动菜单 |
 
-V1/V2 已成为引擎固定逻辑，无需开关：
+V1/V2 和最终采用的 V3 优化已成为引擎固定逻辑，无需开关：
 
 | 优化 | 解决的问题与保留的正确性条件 |
 | --- | --- |
@@ -24,10 +25,12 @@ V1/V2 已成为引擎固定逻辑，无需开关：
 | V1：精确回读范围依赖 | 按实际复制范围选择需要等待的 GPU 生产者；未知写入或版本变化时保守回退 |
 | V2：必需计算管线优先编译 | 优先处理当前游戏等待的计算管线，减少被后台编译阻塞；保留有界队列、公平调度和全部 dispatch |
 | V2：实际 CPU 读页预取 | 根据已发生的 CPU 读取选择预取页，减少无效回读；保留大小、有效期、版本与完成检查 |
+| V3-03：NV raw access chains | 在设备明确支持 `VK_NV_raw_access_chains` 和对应特性时转换符合条件的 SPIR-V 内存访问；缓存区分转换变体，不支持时保持原始路径 |
+| V3-07：有界连续写入区间 | 连续三个相邻页发生写保护异常后，最多向前开放 64 页；遇到 GPU 未回读数据立即停止，并同步失效纹理、上传最新内容和恢复保护 |
 
 精确回读、SDR、完整粒子及着色器／管线缓存继续保留。已核验游戏构建还使用分辨率、光照列表容量、4K 曝光缓冲容量和防冻结补丁。宽松回读会影响粒子及亮度，不能用其帧数代替完整画面的性能。
 
-当前分支已移除 V3 候选、相关开关和专用测试／采集入口，性能核心恢复到 V2。
+V3 调研的 12 个候选中，正式内核只保留具有稳定正收益的 V3-03 和 V3-07。其他候选未达到收益、稳定性或正确性要求，已从运行时代码和用户入口删除；开发记录保留其结论，避免重复尝试。Release 中两项优化默认启用，不依赖 BAT、环境变量或用户开关。
 
 ### 测试平台与运行表现
 
@@ -41,7 +44,7 @@ V1/V2 已成为引擎固定逻辑，无需开关：
 | 内存 | 64 GB，系统可用约 63.6 GiB |
 | 系统／显卡驱动 | Windows 11 家庭中文版，Build 26100；NVIDIA 616.56 |
 
-以下为本机 V1/V2 开发构建的**人工游玩观察**，使用港版 CUSA00309 01.07、精确回读、SDR 和完整粒子；4K 为取消棋盘格的 Pro 3840×2160。不同记录的场景、操作和预热状态有所不同：
+以下为本机 V1/V2/V3 开发构建的结果，使用港版 CUSA00309 01.07、精确回读、SDR 和完整粒子；4K 为取消棋盘格的 Pro 3840×2160。V1/V2 记录来自不同场景下的人工游玩观察，V3 最终结果来自固定高压力存档、固定输入与相同预热条件的五轮对照：
 
 | 场景 | 观察结果 |
 | --- | --- |
@@ -50,12 +53,14 @@ V1/V2 已成为引擎固定逻辑，无需开关：
 | V2 预热后的 Pro 4K 常规场景 | 约 50 FPS 以上 |
 | V2 移动／异能释放、双方同时释放异能 | 分别约 45 FPS 以上、41 FPS 以上 |
 | 开场车祸、大量火焰／烟雾的高压力场景 | 约 30–35 FPS，仍有优化空间 |
+| V3-03+V3-07 固定高压力场景 | 五轮平均 FPS 为 34.801–35.530；中位 FPS 增益 18.739%，P95 帧时间改善 30.442% |
 
-这些记录说明用户已感知 V1/V2 的收益，但不是严格同场景 A/B 测试，不能换算成统一提升百分比，也不代表全游戏最低帧率。Release 包的逐场景表现仍需另行验证。full 的验证层、采样和抓帧会显著拖慢运行，其 FPS 不能代表正常游玩，也不能简单扣除固定开销还原真实帧时间。
+V3 百分比只代表上述固定场景的开发构建对照，不代表全游戏最低帧率或所有硬件；V3-03 还要求设备支持对应 NVIDIA Vulkan 特性。V1/V2 人工记录不是严格同场景 A/B 测试，不能换算成统一提升百分比。Release V3 的固定场景配对结果仍需继续复核。full 的验证层、采样和抓帧会显著拖慢运行，其 FPS 不能代表正常游玩，也不能简单扣除固定开销还原真实帧时间。
 
 ### 预热与缓存
 
 - 首次启动、进入尚未访问的场景，或相关缓存因变更而失效后，可能触发着色器／管线编译并产生短暂卡顿。
+- V3-03 引入独立的着色器缓存变体；从 V2 更新到 V3 后，旧着色器／管线缓存会按兼容性规则失效并重新建立。不要用首次冷缓存运行判断最终收益。
 - 先正常游玩让缓存逐步建立，待场景与帧率趋稳后再评估性能。没有统一的预热时长；已预热场景也不保证之后没有新编译。
 - 可复用缓存位于 `state/runtime/`。更新或搬迁时保留 `state/`；常规清空缓存会导致重新建立。Release 按游戏构建隔离缓存，不要手工混用不同游戏程序的缓存。
 
@@ -95,13 +100,13 @@ V1/V2 已成为引擎固定逻辑，无需开关：
 | Microsoft Visual C++ v14 **x64** 运行库 | 由系统安装提供 | 包内携带所需的四个 DLL |
 | Python、Java、编译器、模拟器 GUI、性能采集工具 | **均不需要** | **均不需要** |
 
-已核对的 2026-10-19 V2 Release 构建（EXE 文件版本 0.18.1.0）使用 VC++ DLL **14.51.36247.0**；lite 建议安装该版本或更新的 [微软官方 x64 运行库](https://aka.ms/vc14/vc_redist.x64.exe)。这不是对所有旧版运行库的最低版本验证，后续包应核对 `release-manifest.json` 中的依赖版本与 `runtime_sha256`，不能仅凭 EXE 文件版本判断。
+已核对的 2026-10-24 V3 Release 构建（EXE 文件版本 0.18.1.0）使用 VC++ DLL **14.51.36247.0**；lite 建议安装该版本或更新的 [微软官方 x64 运行库](https://aka.ms/vc14/vc_redist.x64.exe)。这不是对所有旧版运行库的最低版本验证，后续包应核对 `release-manifest.json` 中的依赖版本与 `runtime_sha256`，不能仅凭 EXE 文件版本判断。
 
 portable 附带 `MSVCP140.dll`、`MSVCP140_ATOMIC_WAIT.dll`、`VCRUNTIME140.dll`、`VCRUNTIME140_1.dll`，应保持在主 EXE 旁。FFmpeg、SDL、OpenAL、FreeType 等库已静态链接到当前引擎，因此两种包都无需安装 FFmpeg 或 Python。Windows 系统组件和显卡驱动由运行电脑提供；项目没有自动依赖安装向导。
 
 ### 从 Release 分支构建与打包
 
-先切换 `release/optimization-v2`，再执行对应入口：
+V3 发布先切换 `release/optimization-v3`，再执行对应入口；`release/optimization-v2` 仅用于历史回归对照：
 
 | 版本 | 构建 | 打包 | 输出 |
 | --- | --- | --- | --- |
@@ -161,11 +166,11 @@ Release 使用 `launcher.json`；开发分支和 main 使用 `project.json`。�
 
 ### 来源与许可
 
-保留 shadPS4 Emulator Project、AYOUB1080p 及各源文件的版权声明，采用 GPL-2.0-or-later，见 [LICENSE](LICENSE) 与 [LICENSES](LICENSES/)。分发修改后的二进制时应遵守对应源码提供义务；第三方许可随包位于 `third-party-licenses/`。项目不分发游戏或个人存档。
+保留 shadPS4 Emulator Project 及各源文件的版权声明，采用 GPL-2.0-or-later，见 [LICENSE](LICENSE) 与 [LICENSES](LICENSES/)。分发修改后的二进制时应遵守对应源码提供义务；第三方许可随包位于 `third-party-licenses/`。项目不分发游戏或个人存档。
 
 ## English
 
-A Windows x86-64 engine dedicated to 1080p and Pro 4K gameplay and optimization for **inFAMOUS Second Son**, based on the GPL source of shadPS4 / AYOUB1080p. It runs the PS4 game program on Windows; it is not a PC port rewritten from the game's source code or a general-purpose PS4 launcher.
+A Windows x86-64 engine dedicated to 1080p and Pro 4K gameplay and optimization for **inFAMOUS Second Son**, based on the GPL source of shadPS4. It runs the PS4 game program on Windows; it is not a PC port rewritten from the game's source code or a general-purpose PS4 launcher.
 
 You must supply the game files. Neither the repository nor the release packages include them. Original files remain read-only; game patches modify the running program only, with version, executable fingerprint and original-byte checks.
 
@@ -173,11 +178,12 @@ You must supply the game files. Neither the repository nor the release packages 
 
 | Branch | Purpose | Launch |
 | --- | --- | --- |
-| `main` | Source baseline synchronized with development, including V1/V2 and diagnostics; not unmodified upstream | Build, then run `run.bat` |
-| `feature/fps-optimization-import` | V2 performance core with V3 experiments removed | `run.bat` and diagnostic entries under `diagnostics/` |
-| `release/optimization-v2` | Retains accepted V1/V2; removes V3, sampling, debug panels and external collector integration for regular play | Open `inFAMOUS Second Son.exe` directly to enter the launch menu |
+| `main` | Current source baseline synchronized with `develop`, including V1/V2, final V3-03/V3-07 and development diagnostics; not unmodified upstream | Build, then run `run.bat` |
+| `develop` | Current development branch with the same accepted optimizations and functional behavior as `main` | Build, then run `run.bat` |
+| `release/optimization-v3` | Retains V1/V2 and accepted V3-03/V3-07 while removing V3 experiment switches, automated comparison scripts, samplers and debug panels for regular play | Open `inFAMOUS Second Son.exe` directly to enter the launch menu |
+| `release/optimization-v2` | Historical V2 release baseline without V3, retained for regression comparisons | Open `inFAMOUS Second Son.exe` directly to enter the launch menu |
 
-V1/V2 are built into the engine and require no switches:
+V1/V2 and the accepted V3 optimizations are built into the engine and require no switches:
 
 | Optimization | Purpose and correctness safeguards |
 | --- | --- |
@@ -185,10 +191,12 @@ V1/V2 are built into the engine and require no switches:
 | V1: precise readback range dependencies | Waits for GPU producers relevant to the actual copy range; falls back conservatively for unknown writes or version changes |
 | V2: required compute pipeline compilation priority | Prioritizes pipelines the game currently needs over background compilation; retains bounded queues, fair scheduling and every dispatch |
 | V2: prefetch based on actual CPU page reads | Selects pages from observed CPU reads to reduce unnecessary readback; retains size, age, version and completion checks |
+| V3-03: NV raw access chains | Converts eligible SPIR-V memory accesses only when the device explicitly supports `VK_NV_raw_access_chains` and its feature; cache variants remain separate and unsupported devices keep the original path |
+| V3-07: bounded sequential write ranges | After write-protection faults on three adjacent pages, opens at most 64 pages ahead; stops before unread GPU data, invalidates matching textures, uploads current content and restores protection |
 
 Precise readback, SDR, complete particle effects, and shader/pipeline caches are retained. Verified game builds also use resolution, light-list capacity, 4K exposure-buffer capacity and anti-freeze patches. Relaxed readback can affect particles and brightness; its FPS does not represent performance with complete rendering.
 
-This branch removes the V3 candidates, their switches and dedicated test/capture entries, restoring the V2 performance core.
+Of the 12 investigated V3 candidates, the production engine retains only V3-03 and V3-07, which produced stable positive results. Candidates that failed performance, stability or correctness requirements have been removed from runtime code and user-facing entries; their research conclusions are retained to avoid repeating the same experiments. Both accepted optimizations are enabled by default in Release and require no BAT file, environment variable or user switch.
 
 ### Test platform and observed performance
 
@@ -202,7 +210,7 @@ Hardware and system details checked on 2026-10-19:
 | Memory | 64 GB, approximately 63.6 GiB usable by the system |
 | OS / GPU driver | Windows 11 Home, Chinese edition, Build 26100; NVIDIA 616.56 |
 
-The following are **manual gameplay observations** from V1/V2 development builds on this machine, using the Hong Kong CUSA00309 01.07 build, precise readback, SDR and complete particles. 4K means Pro 3840×2160 with checkerboard rendering disabled. Scenes, actions and warm-up conditions differ between observations:
+The following results come from V1/V2/V3 development builds on this machine, using the Hong Kong CUSA00309 01.07 build, precise readback, SDR and complete particles. 4K means Pro 3840×2160 with checkerboard rendering disabled. V1/V2 entries are manual observations from different scenes; the final V3 result uses five controlled rounds with the same high-pressure save, recorded input and warm-up conditions:
 
 | Scene | Observed performance |
 | --- | --- |
@@ -211,12 +219,15 @@ The following are **manual gameplay observations** from V1/V2 development builds
 | Typical Pro 4K scenes after V2 warm-up | Around 50 FPS or higher |
 | V2 movement / ability use; simultaneous abilities by both characters | Around 45+ FPS and 41+ FPS, respectively |
 | Opening car-crash scene with heavy fire and smoke | Around 30–35 FPS; further improvement is needed |
+| V3 fixed high-pressure baseline | Five-round average FPS range: 29.582–30.284 |
+| V3-03+V3-07 in the fixed high-pressure scene | Five-round average FPS range: 34.801–35.530; median FPS gain 18.739%, P95 frame-time improvement 30.442% |
 
-These observations reflect user-perceived V1/V2 improvements, not strict same-scene A/B measurements. They do not establish a universal percentage gain or a minimum FPS across the whole game. Release packages still need scene-by-scene testing. Validation layers, sampling and frame capture can substantially slow full diagnostics; their FPS is not normal gameplay performance, and subtracting a fixed overhead cannot recover normal frame times.
+The V3 percentages apply only to the controlled development-build scenario above; they do not establish a whole-game minimum or a universal gain on other hardware. V3-03 also requires the corresponding NVIDIA Vulkan feature. The V1/V2 manual observations are not strict same-scene A/B results and cannot be converted into one percentage. A fixed-scene paired result for Release V3 still requires further confirmation. Validation layers, sampling and frame capture can substantially slow full diagnostics; their FPS is not normal gameplay performance, and subtracting a fixed overhead cannot recover normal frame times.
 
 ### Warm-up and caches
 
 - First launch, previously unseen scenes, or changes that invalidate relevant caches may trigger shader/pipeline compilation and temporary stutter.
+- V3-03 introduces a distinct shader-cache variant. After upgrading from V2 to V3, incompatible shader and pipeline cache entries are rebuilt automatically. Do not judge final performance from the first cold-cache run.
 - Play normally to let caches build, and assess performance after the scene and frame rate settle. There is no universal warm-up duration; a warmed scene does not rule out later compilation.
 - Reusable caches are stored under `state/runtime/`. Preserve `state/` when updating or moving the package; routine cache deletion forces rebuilding. Release isolates caches by game build; do not manually mix caches from different game executables.
 
@@ -256,13 +267,13 @@ The menu offers 720p, 900p, 1080p, 1440p, 1800p and Pro 4K, currently targeting 
 | Microsoft Visual C++ v14 **x64** runtime | Installed on the system | Four required DLLs included |
 | Python, Java, compiler, emulator GUI or profiling tools | **Not required** | **Not required** |
 
-The inspected 2026-10-19 V2 Release builds (EXE file version 0.18.1.0) use VC++ DLL version **14.51.36247.0**. For lite, install that version or newer from [Microsoft's official x64 redistributable](https://aka.ms/vc14/vc_redist.x64.exe). This is not a tested minimum across every older runtime. For later packages, check dependency versions and `runtime_sha256` in `release-manifest.json`, rather than relying on the EXE file version alone.
+The inspected 2026-10-24 V3 Release build (EXE file version 0.18.1.0) uses VC++ DLL version **14.51.36247.0**. For lite, install that version or newer from [Microsoft's official x64 redistributable](https://aka.ms/vc14/vc_redist.x64.exe). This is not a tested minimum across every older runtime. For later packages, check dependency versions and `runtime_sha256` in `release-manifest.json`, rather than relying on the EXE file version alone.
 
 portable includes `MSVCP140.dll`, `MSVCP140_ATOMIC_WAIT.dll`, `VCRUNTIME140.dll` and `VCRUNTIME140_1.dll`; keep them beside the main EXE. FFmpeg, SDL, OpenAL, FreeType and other libraries are statically linked into the current engine, so neither edition needs a separate FFmpeg or Python installation. Windows components and GPU drivers must be provided by the target system. There is no automatic dependency installation wizard.
 
 ### Building and packaging the Release branch
 
-Switch to `release/optimization-v2`, then use the matching entries:
+For a V3 release, switch to `release/optimization-v3`, then use the matching entries. `release/optimization-v2` is retained only for historical regression comparisons:
 
 | Edition | Build | Package | Output |
 | --- | --- | --- | --- |
@@ -322,4 +333,4 @@ Release reads `launcher.json`; development and main read `project.json`. In eith
 
 ### Credits and license
 
-Copyright notices for the shadPS4 Emulator Project, AYOUB1080p and individual source files are retained. The project uses GPL-2.0-or-later; see [LICENSE](LICENSE) and [LICENSES](LICENSES/). Distributing modified binaries requires compliance with the corresponding-source obligations. Third-party licenses are included under `third-party-licenses/`. This project does not distribute the game or personal saves.
+Copyright notices for the shadPS4 Emulator Project and individual source files are retained. The project uses GPL-2.0-or-later; see [LICENSE](LICENSE) and [LICENSES](LICENSES/). Distributing modified binaries requires compliance with the corresponding-source obligations. Third-party licenses are included under `third-party-licenses/`. This project does not distribute the game or personal saves.

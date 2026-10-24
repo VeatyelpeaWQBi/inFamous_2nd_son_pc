@@ -118,5 +118,5 @@ SPDX-License-Identifier = "MIT"
 [[annotations]]
 path = "package/**"
 precedence = "aggregate"
-SPDX-FileCopyrightText = "2026 shadPS4-AYOUB1080p contributors"
+SPDX-FileCopyrightText = "2026 shadPS4 contributors"
 SPDX-License-Identifier = "GPL-2.0-or-later"

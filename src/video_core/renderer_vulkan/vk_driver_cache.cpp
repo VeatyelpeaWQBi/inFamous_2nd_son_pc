@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 shadPS4-AYOUB1080p contributors
+// SPDX-FileCopyrightText: Copyright 2026 shadPS4 contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_vulkan/vk_driver_cache.h"
 #include "video_core/renderer_vulkan/vk_driver_cache_format.h"

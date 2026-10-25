@@ -12,6 +12,7 @@
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "core/emulator_state.h"
+#include "core/second_son_cheats.h"
 #include "imgui/imgui_std.h"
 #include "imgui_internal.h"
 #include "options.h"
@@ -386,10 +387,11 @@ void L::SetupSettings() {
 }
 
 bool L::ShouldKeepDrawing() {
-    return DebugState.IsShowingDebugMenuBar();
+    return DebugState.IsShowingDebugMenuBar() || Overlay::IsCheatWindowOpen();
 }
 
 void L::Draw() {
+    ::Core::SecondSon::Cheats::DrawMenu();
     const auto io = GetIO();
     PushID("DevtoolsLayer");
 

@@ -150,6 +150,8 @@ main／开发分支先执行 `build.bat`，再执行 `run.bat`。默认编译为
 
 F1 打开退出确认，Enter／手柄 ×（Xbox A）确认，Esc／○（Xbox B）返回；Alt+F4 退出。F10 切换 FPS，F12 截图。FPS 是最近最多 60 个新游戏帧的平均值，帧时间为平均帧间隔，不是纯 GPU 时间；Release 保留此基础显示，不启动采集器。退出前请在游戏内保存。
 
+Insert 打开或隐藏辅助菜单：能量每秒恢复 5%、炸弹槽每十秒恢复一枚；合格业力行动三次充满大招；业力经验倍率按 5 倍／10 倍／关闭循环。默认全部关闭，隐藏菜单保留当前选择。三项效果由当前构建 XML 的 `RuntimeCheats` 字节补丁定义，未知构建禁用。此功能尚未完成构建和游戏内验收。
+
 ### Release 手柄改键测试版
 
 Release 使用 `launcher.json`；开发分支和 main 使用 `project.json`。其中，`"xbox_prompts": true` 和 `"touchpad_chords": true` 表示允许对识别出的 Xbox 手柄启用相应改动，可分别设为 `false` 后重启禁用；不会强制对 PS 手柄启用。lite 与 portable 使用相同逻辑，不增加玩家运行依赖。
@@ -316,6 +318,8 @@ Paths below are relative to the project/package directory. No automatic import f
 Ordinary development play uses a session copy of the fixed save, copied back after a normal exit and file checks. Diagnostic sessions do not automatically overwrite persistent saves. Release uses the fixed package-local save root directly. Saves are not automatically converted across regions. Preserve the entire `state/` when backing up or moving the project. `game/`, `state/`, `Build/`, `out/` and `doc/` are ignored by Git.
 
 F1 opens exit confirmation; Enter / controller × (Xbox A) confirms, and Esc / ○ (Xbox B) returns. Alt+F4 exits. F10 toggles FPS; F12 takes a screenshot. FPS averages the latest up to 60 new game frames, and frame time is the mean frame interval, not pure GPU time. Release retains this basic display without starting collectors. Save in-game before exiting.
+
+Insert toggles the assist menu: recover 5% energy per second and one bomb slot per ten seconds, fill the super meter with three qualifying karma actions, and cycle karma XP through 5x / 10x / off. All options start off; hiding the menu preserves the selection. Effects are byte patches defined by `RuntimeCheats` in the matching build XML and are unavailable for unknown builds. Build and in-game acceptance are still pending.
 
 ### Release controller remapping test version
 

@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "game": "inFAMOUS Second Son",
+  "source": "https://github.com/shadps4-emu/ps4_cheats/blob/main/PATCHES/InfamousSecondSon.xml",
+  "builds": [
+    {
+      "title_ids": [
+        "CUSA00004",
+        "CUSA00223",
+        "CUSA00305",
+        "CUSA00309"
+      ],
+      "version": "01.07",
+      "sha256": "2d1ca79630d7bbe6fa29575f59aa7996d43071d74ac8e4f7d40137967d9039ab",
+      "patch_file": "CUSA00309.xml",
+      "note": "Verified HK 01.07 program. Other listed regions reuse these offsets only if the complete program SHA256 is identical; otherwise the native 1080p path is selected.",
+      "legacy_cache_title": "CUSA00309"
+    }
+  ]
+}

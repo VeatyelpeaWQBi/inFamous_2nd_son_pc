@@ -47,6 +47,7 @@
 #include "core/libraries/save_data/save_backup.h"
 #include "core/linker.h"
 #include "core/second_son_controls.h"
+#include "core/second_son_cheats.h"
 #include "core/memory.h"
 #include "core/perf_sampler.h"
 #include "core/user_settings.h"
@@ -694,6 +695,19 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     SecondSon::ConfigureControls(id, app_version, controls_sha256,
                                 controls_enabled("IFSS_XBOX_PROMPTS"),
                                 controls_enabled("IFSS_TOUCHPAD_CHORDS"));
+    auto cheat_project_root = Common::FS::GetUserPath(Common::FS::PathType::UserDir);
+    while (!std::filesystem::is_regular_file(cheat_project_root / "project.json")) {
+        const auto parent = cheat_project_root.parent_path();
+        if (parent.empty() || parent == cheat_project_root) {
+            cheat_project_root.clear();
+            break;
+        }
+        cheat_project_root = parent;
+    }
+    if (!cheat_project_root.empty()) {
+        SecondSon::Cheats::ConfigureFromManifest(id, app_version, controls_sha256,
+                                               cheat_project_root);
+    }
 
     // Load the module with the linker.
     if (linker->LoadModule(guest_eboot_path) == -1) {

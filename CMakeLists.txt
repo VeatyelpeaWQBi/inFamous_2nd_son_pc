@@ -69,6 +69,8 @@ endif()
 if(TARGET shadps4)
     target_sources(shadps4 PRIVATE
         src/core/second_son_controls.cpp src/core/second_son_controls.h
+        src/core/second_son_cheats.cpp src/core/second_son_cheats.h
+        src/core/second_son_cheat_menu.cpp src/core/second_son_compatibility.h
         src/core/second_son_chords.h src/core/second_son_prompts.cpp
         src/core/second_son_prompts.h src/core/second_son_touchpad_icons.h
         src/input/gamepad_type.h)

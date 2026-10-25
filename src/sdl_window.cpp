@@ -249,8 +249,28 @@ void WindowSDL::WaitEvent() {
         return;
     }
 
+    // Toggle before ImGui captures keyboard input, so Insert also closes a focused menu.
+    // Reserve the physical key for this menu; repeated keydown never toggles it again.
+    if ((event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) &&
+        event.key.key == SDLK_INSERT && event.key.windowID == SDL_GetWindowID(window)) {
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+            (event.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_GUI)) == 0 &&
+            (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS)) {
+            Overlay::ToggleCheatWindow();
+            if (Overlay::IsCheatWindowOpen()) {
+#ifdef _WIN32
+                native_touchpad->Reset();
+#endif
+                Input::ReleaseMouseInput(controllers[0]);
+                SDL_SetWindowRelativeMouseMode(window, false);
+                Input::ActivateOutputsFromInputs();
+            }
+        }
+        return;
+    }
+    const bool cheats_open = Overlay::IsCheatWindowOpen();
     const bool overlay_captured = ImGui::Core::ProcessEvent(&event);
-    const bool mouse_allowed = !overlay_captured && keyboard_grab == 0 &&
+    const bool mouse_allowed = !cheats_open && !overlay_captured && keyboard_grab == 0 &&
                                !ImGui::Core::IsGamepadInputCaptured() &&
                                (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) &&
                                !(event.type == SDL_EVENT_WINDOW_FOCUS_LOST &&
@@ -269,7 +289,20 @@ void WindowSDL::WaitEvent() {
                 event.button.windowID == SDL_GetWindowID(window))) {
         Input::ProcessMouseEvent(event);
     }
-    if (overlay_captured) {
+    // Preserve release events so keys held when opening the menu cannot remain stuck.
+    // Gamepad state continues updating below; libScePad blocks game reads while captured.
+    const bool gamepad_event = event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+                               event.type == SDL_EVENT_GAMEPAD_BUTTON_UP ||
+                               event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION ||
+                               event.type == SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN ||
+                               event.type == SDL_EVENT_GAMEPAD_TOUCHPAD_UP ||
+                               event.type == SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION ||
+                               event.type == SDL_EVENT_GAMEPAD_SENSOR_UPDATE;
+    if ((overlay_captured && !(cheats_open && gamepad_event)) ||
+        (cheats_open && (event.type == SDL_EVENT_KEY_DOWN ||
+                         event.type == SDL_EVENT_TEXT_INPUT ||
+                         event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                         event.type == SDL_EVENT_MOUSE_WHEEL))) {
         return;
     }
     if (Libraries::Mouse::PushSDLEvent(event) || Libraries::Keyboard::PushSDLEvent(event)) {

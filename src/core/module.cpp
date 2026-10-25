@@ -6,6 +6,7 @@
 
 #include "core/module.h"
 #include "core/second_son_controls.h"
+#include "core/second_son_cheats.h"
 #include "common/alignment.h"
 #include "common/arch.h"
 #include "common/assert.h"
@@ -138,9 +139,10 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
                                MemoryProt::CpuReadWrite | MemoryProt::CpuExec,
                                MemoryMapFlags::Fixed, VMAType::Code, name);
     ASSERT_MSG(result == ORBIS_OK, "Failed to map trampoline area for module {}", name);
-    // Reserve the final page for the version-guarded Second Son input/UI hooks.
+    // Partition the existing arena for CPU, controls and cheat patches.
     RegisterPatchModule(*out_addr, aligned_base_size, trampoline_addr,
-                        TrampolineSize - SecondSon::ControlsTrampolineSize);
+                        TrampolineSize - SecondSon::ControlsTrampolineSize -
+                            SecondSon::Cheats::TrampolineSize);
 #endif
 
     ;
@@ -336,6 +338,12 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
                 reinterpret_cast<void*>(base_virtual_addr + aligned_base_size + TrampolineSize -
                                         SecondSon::ControlsTrampolineSize),
                 SecondSon::ControlsTrampolineSize);
+            SecondSon::Cheats::Install(
+                base_virtual_addr, base_size,
+                reinterpret_cast<void*>(base_virtual_addr + aligned_base_size + TrampolineSize -
+                                        SecondSon::ControlsTrampolineSize -
+                                        SecondSon::Cheats::TrampolineSize),
+                SecondSon::Cheats::TrampolineSize);
 #endif
         }
     }

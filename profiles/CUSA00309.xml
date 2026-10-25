@@ -149,4 +149,48 @@
             <Line Type="bytes" Address="0x00571704" Value="E97740B5006690" OriginalHash="ae4f1fb43844fc7f" />
         </PatchList>
     </Metadata>
+    <RuntimeCheats Schema="1" AppVer="01.07" AppElf="eboot.bin" SHA256="2d1ca79630d7bbe6fa29575f59aa7996d43071d74ac8e4f7d40137967d9039ab" ArenaSize="0x1000">
+        <!-- All effects are native guest byte patches. Menu controls only publish XML parameters. -->
+        <Data Size="0x50">
+            <Line Name="experience_off" Offset="0x8" Value="0000803F" />
+            <Line Name="energy_period_seconds" Offset="0x38" Value="0000803F" />
+            <Line Name="bomb_period_seconds" Offset="0x3c" Value="00002041" />
+            <Line Name="energy_fraction" Offset="0x40" Value="CDCC4C3D" />
+        </Data>
+        <!-- Run original resource update, then add 5% per simulated second and one unlocked bomb slot per ten seconds. -->
+        <Code Id="recovery" Offset="0x50" Value="534889FBE80000000049BA0000000000000000418B8200000000413B820C0000004189820C0000000F857A000000F7C0010000000F846E00000049399A280000000F856100000048B80000000000000000483998000000000F854A0000000F57C90F2E8B50EE01000F8A3A0000000F833400000048B80000000000000000F30F1080080000000F2EC10F8A190000000F86F3000000410F2E82380000000F8705000000E92200000049899A2800000041C782140000000000000041C7821800000000000000E9BE0000000F28C8F3410F588A18000000F3410F118A18000000F3410F588214000000F3410F118214000000410F2E82380000000F8235000000F3410F5C8238000000F3410F118214000000F30F1083F0A10100F3410F5982400000004889DFE80000000049BA0000000000000000F3410F108218000000410F2E823C0000000F823D000000F3410F5C823C000000F3410F11821800000048BF00000000000000008BB7DC00000085F60F88130000003BB34CEE01000F8D07000000FFC6E8000000005BC3" />
+        <!-- Multiply the signed award only; preserve the native award function and load paths. -->
+        <Code Id="experience" Offset="0x1e0" Value="F30F590500000000E900000000" />
+        <!-- Only the native aligned-action return path; carry thirds against the effective unlocked threshold. -->
+        <Code Id="karma" Offset="0x1f0" Value="5152415041514152415349BA000000000000000049BB00000000000000004C399D080000000F85D9000000458B9A0400000041F7C3010000000F84C5000000448B853CFFFFFF443983280000000F8EB10000004585C00F88A80000004181FC010000000F8C9B0000004181FCA08601000F8F8E0000004539E00F8D85000000453B9A100000000F8527000000493B9A300000000F851A000000453B82200000000F850D000000453BA2240000000F840B00000041C7821C0000000000000045899A1000000049899A300000004589A2240000004489E04103821C00000031D2B903000000F7F14189921C0000004401C04439E0410F4FC489832800000041898220000000415B415A415941585A598B83280000004439E0E900000000" />
+        <Relocations>
+            <Relocation Offset="0x55" Type="rel32" Space="image" Target="0x60ab30" />
+            <Relocation Offset="0x5b" Type="abs64" Space="arena" Target="0x0" />
+            <Relocation Offset="0x99" Type="abs64" Space="image" Target="0x210cfe0" />
+            <Relocation Offset="0xc6" Type="abs64" Space="image" Target="0x1216290" />
+            <Relocation Offset="0x176" Type="rel32" Space="image" Target="0x614b10" />
+            <Relocation Offset="0x17c" Type="abs64" Space="arena" Target="0x0" />
+            <Relocation Offset="0x1af" Type="abs64" Space="image" Target="0x12facf8" />
+            <Relocation Offset="0x1d4" Type="rel32" Space="image" Target="0x5e35a0" />
+            <Relocation Offset="0x1e4" Type="rel32" Space="arena" Target="0x8" />
+            <Relocation Offset="0x1e9" Type="rel32" Space="image" Target="0x5e3db0" />
+            <Relocation Offset="0x1fc" Type="abs64" Space="arena" Target="0x0" />
+            <Relocation Offset="0x206" Type="abs64" Space="image" Target="0x5b5df6" />
+            <Relocation Offset="0x308" Type="rel32" Space="image" Target="0x666426" />
+        </Relocations>
+        <Controls>
+            <Control Id="recovery" Offset="0x0" Mode="generation" />
+            <Control Id="karma" Offset="0x4" Mode="generation" />
+            <Control Id="experience" Offset="0x8" Mode="cycle">
+                <Value Label="Off" Display="1" Bytes="0000803F" />
+                <Value Label="5x" Display="5" Bytes="0000A040" />
+                <Value Label="10x" Display="10" Bytes="00002041" />
+            </Control>
+        </Controls>
+        <Hooks>
+            <Hook Id="recovery" Address="0x607543" Original="E8E8350000" Kind="call" Target="0x50" />
+            <Hook Id="experience" Address="0x6657cb" Original="E8E0E5F7FF" Kind="call" Target="0x1e0" />
+            <Hook Id="karma" Address="0x666420" Original="8B43284439E0" Kind="jump" Target="0x1f0" />
+        </Hooks>
+    </RuntimeCheats>
 </Patch>

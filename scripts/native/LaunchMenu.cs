@@ -40,6 +40,9 @@ namespace Ifss.Native {
                     var display = Choices(new object[] {"全屏","窗口","无边框窗口"},displayKey == "fullscreen" ? 0 : displayKey == "windowed" ? 1 : 2); Add(table,"显示模式",display);
                     var fps = new CheckBox { Text = "显示帧数（FPS）和帧时间", Checked = (bool)settings["show_fps"], AutoSize = true };
                     Add(table,"帧数显示",fps);
+#if IFSS_RELEASE
+                    Text(table,"游戏内辅助菜单：按 Insert 显示／隐藏\n能量快速恢复：每秒恢复上限的 5%，每 10 秒恢复一枚炸弹槽。\n快速积攒大招：每次有效业力行动增加三分之一，三次充满。\n业力经验倍率：在辅助菜单中点击，依次切换 5 倍／10 倍／关闭。\n每次启动默认全部关闭；隐藏菜单不会关闭已开启的功能。\n仅匹配的游戏版本可用；版本不匹配时功能禁用。",false);
+#endif
                     Text(table,"鼠标体感与触摸板\nF6 开关鼠标体感；体感模式按住左键喷漆，Home 回正。\nDelete 开关触摸板：左键触摸／拖动，右键按压；双键模拟双指。\nEsc 或切换窗口释放鼠标体感／触摸板。",false);
 #if IFSS_RELEASE
                     Text(table,"自动识别手柄（以启动时玩家 1 为准）\nPS 系列：保留原提示和操作，不启用这两项改动。\nXbox 系列：按配置启用 Xbox 提示和触摸板组合键。\n未连接／未知类型：默认不启用。请先连接再启动。\n游戏中换系列或启动后才连接，请重启游戏更新提示。\nDS4Windows／Steam Input 若映射为虚拟 Xbox，\n将按虚拟 Xbox 识别，无法保证识别其实体手柄。",false);

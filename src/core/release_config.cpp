@@ -9,6 +9,7 @@
 #include "core/file_sys/ifile.h"
 #include "core/second_son_compatibility.h"
 #include "core/second_son_controls.h"
+#include "core/second_son_cheats.h"
 #include <algorithm>
 #include <array>
 #include <fstream>
@@ -269,6 +270,9 @@ void SelectGame(std::string_view serial, std::string_view version, FileSys::IFil
     }
     const auto sha256 = HashExecutable(executable);
     const auto build = FindBuild(serial, version, sha256);
+    SecondSon::Cheats::Configure(serial, version, sha256,
+                                build ? ProjectRoot() / "profiles" / build->patch_file
+                                      : std::filesystem::path{});
     SecondSon::ConfigureControls(serial, version, sha256, xbox_prompts, touchpad_chords);
     mode = SecondSon::EffectiveMode(requested_mode, build.has_value());
     SelectCaches(serial, version, sha256, build && build->legacy_cache_title == serial);

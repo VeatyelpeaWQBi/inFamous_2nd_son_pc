@@ -58,6 +58,7 @@ target_sources(shadps4 PRIVATE src/core/runtime_policy.h src/core/release_config
     src/core/release_config.h src/core/second_son_compatibility.h src/common/display_state.h
     src/core/release_launcher.cpp src/core/release_launcher.h
     src/core/second_son_controls.cpp src/core/second_son_controls.h
+    src/core/second_son_cheats.cpp src/core/second_son_cheats.h
     src/core/second_son_chords.h src/core/second_son_prompts.cpp src/core/second_son_prompts.h
     src/input/gamepad_type.h src/core/second_son_touchpad_icons.h)
 set_target_properties(shadps4 PROPERTIES OUTPUT_NAME "inFAMOUS Second Son"

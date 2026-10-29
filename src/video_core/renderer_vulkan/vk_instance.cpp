@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <tuple>
+#include <algorithm>
+#include <array>
 
 #include <boost/container/static_vector.hpp>
 #include <cstdlib>
@@ -14,6 +15,7 @@
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
+#include "video_core/renderer_vulkan/vk_device_selection.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 
@@ -22,6 +24,28 @@
 namespace Vulkan {
 
 namespace {
+
+constexpr std::array RequiredDeviceExtensions{
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+    VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME,
+    VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
+};
+
+DeviceKind GetDeviceKind(vk::PhysicalDeviceType type) {
+    switch (type) {
+    case vk::PhysicalDeviceType::eDiscreteGpu:
+        return DeviceKind::Discrete;
+    case vk::PhysicalDeviceType::eIntegratedGpu:
+        return DeviceKind::Integrated;
+    case vk::PhysicalDeviceType::eVirtualGpu:
+        return DeviceKind::Virtual;
+    case vk::PhysicalDeviceType::eCpu:
+        return DeviceKind::Cpu;
+    default:
+        return DeviceKind::Other;
+    }
+}
 
 std::vector<vk::PhysicalDevice> EnumeratePhysicalDevices(vk::UniqueInstance& instance) {
     auto [devices_result, devices] = instance->enumeratePhysicalDevices();
@@ -95,72 +119,83 @@ Instance::Instance(bool enable_validation, bool enable_crash_diagnostic)
     : instance{CreateInstance(Frontend::WindowSystemType::Headless, false, false)},
       physical_devices{EnumeratePhysicalDevices(instance)} {}
 
-Instance::Instance(Frontend::WindowSDL& window, s32 physical_device_index,
-                   bool enable_validation /*= false*/, bool enable_crash_diagnostic /*= false*/)
+Instance::Instance(Frontend::WindowSDL& window, bool enable_validation /*= false*/,
+                   bool enable_crash_diagnostic /*= false*/)
     : instance{CreateInstance(window.GetWindowInfo().type, false, false)},
       physical_devices{EnumeratePhysicalDevices(instance)} {
-    const std::size_t num_physical_devices = static_cast<u16>(physical_devices.size());
+    const std::size_t num_physical_devices = physical_devices.size();
     ASSERT_MSG(num_physical_devices > 0, "No physical devices found");
+    LOG_INFO(Render_Vulkan, "Found {} physical devices", num_physical_devices);
 
-    if (physical_device_index < 0) {
-        std::vector<
-            std::tuple<size_t, vk::PhysicalDeviceProperties2, vk::PhysicalDeviceMemoryProperties>>
-            properties2{};
-        for (auto const& physical : physical_devices) {
-            properties2.emplace_back(properties2.size(), physical.getProperties2(),
-                                     physical.getMemoryProperties());
+    std::vector<DeviceCandidate> candidates;
+    candidates.reserve(physical_devices.size());
+    for (const auto physical : physical_devices) {
+        const auto details = physical.getProperties2<vk::PhysicalDeviceProperties2,
+                                                     vk::PhysicalDeviceIDProperties>();
+        const auto& prop = details.get<vk::PhysicalDeviceProperties2>().properties;
+        DeviceCandidate candidate{.kind = GetDeviceKind(prop.deviceType)};
+        const auto& id = details.get<vk::PhysicalDeviceIDProperties>();
+        std::copy(id.deviceUUID.begin(), id.deviceUUID.end(), candidate.uuid.begin());
+        const auto memory = physical.getMemoryProperties();
+        for (u32 i = 0; i < memory.memoryHeapCount; ++i) {
+            if (memory.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
+                candidate.local_memory =
+                    std::max(candidate.local_memory, memory.memoryHeaps[i].size);
+            }
         }
-        std::sort(properties2.begin(), properties2.end(), [](const auto& left, const auto& right) {
-            const vk::PhysicalDeviceProperties& left_prop = std::get<1>(left).properties;
-            const vk::PhysicalDeviceProperties& right_prop = std::get<1>(right).properties;
-            const bool left_supports_api = left_prop.apiVersion >= TargetVulkanApiVersion;
-            const bool right_supports_api = right_prop.apiVersion >= TargetVulkanApiVersion;
-            if (left_supports_api != right_supports_api) {
-                return left_supports_api;
-            }
 
-            const bool left_is_discrete =
-                left_prop.deviceType == vk::PhysicalDeviceType::eDiscreteGpu;
-            const bool right_is_discrete =
-                right_prop.deviceType == vk::PhysicalDeviceType::eDiscreteGpu;
-            if (left_is_discrete != right_is_discrete) {
-                return left_is_discrete;
-            }
-
-            // Software renderers advertise system memory as device local, so they
-            // would win the memory comparison below against real hardware.
-            const bool left_is_cpu = left_prop.deviceType == vk::PhysicalDeviceType::eCpu;
-            const bool right_is_cpu = right_prop.deviceType == vk::PhysicalDeviceType::eCpu;
-            if (left_is_cpu != right_is_cpu) {
-                return right_is_cpu;
-            }
-
-            constexpr auto get_mem = [](const vk::PhysicalDeviceMemoryProperties& mem) -> size_t {
-                size_t max = 0;
-                for (u32 i = 0; i < mem.memoryHeapCount; i++) {
-                    const vk::MemoryHeap& heap = mem.memoryHeaps[i];
-                    if (heap.flags & vk::MemoryHeapFlagBits::eDeviceLocal && heap.size > max) {
-                        max = heap.size;
-                    }
-                }
-                return max;
-            };
-            size_t left_mem_size = get_mem(std::get<2>(left));
-            size_t right_mem_size = get_mem(std::get<2>(right));
-            return left_mem_size > right_mem_size;
+        const bool supports_api = prop.apiVersion >= TargetVulkanApiVersion;
+        const auto extensions = GetSupportedExtensions(physical);
+        const bool supports_extensions = std::ranges::all_of(
+            RequiredDeviceExtensions, [&](const char* name) {
+                return std::ranges::find(extensions, name) != extensions.end();
+            });
+        const auto queues = physical.getQueueFamilyProperties();
+        const bool supports_graphics = std::ranges::any_of(queues, [](const auto& queue) {
+            return queue.queueCount != 0 &&
+                   static_cast<bool>(queue.queueFlags & vk::QueueFlagBits::eGraphics);
         });
-        physical_device = physical_devices[std::get<0>(properties2[0])];
-    } else {
-        ASSERT_MSG(physical_device_index < num_physical_devices,
-                   "Invalid physical device index {} provided when only {} devices exist",
-                   physical_device_index, num_physical_devices);
+        bool supports_robustness = false;
+        if (supports_api && supports_extensions) {
+            const auto features = physical.getFeatures2<
+                vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceRobustness2FeaturesEXT>();
+            const auto& robustness = features.get<vk::PhysicalDeviceRobustness2FeaturesEXT>();
+            supports_robustness = robustness.robustBufferAccess2 && robustness.robustImageAccess2 &&
+                                  robustness.nullDescriptor;
+        }
+        // Match CreateDevice's mandatory requirements before ranking; a preferred GPU must
+        // be able to create the device rather than displacing a compatible fallback.
+        candidate.compatible = supports_api && supports_extensions && supports_graphics &&
+                               supports_robustness;
+        LOG_INFO(Render_Vulkan,
+                 "GPU candidate: {} | type {} | UUID {:02x} | local memory {} MiB | "
+                 "required API {} extensions {} graphics {} robustness {}",
+                 prop.deviceName.data(), vk::to_string(prop.deviceType),
+                 fmt::join(candidate.uuid, ""), candidate.local_memory / (1024 * 1024),
+                 supports_api, supports_extensions, supports_graphics, supports_robustness);
+        candidates.push_back(candidate);
+    }
 
-        physical_device = physical_devices[physical_device_index];
+    const auto selected = SelectPhysicalDevice(candidates);
+    if (!selected) {
+        UNREACHABLE_MSG("No GPU meets the required Vulkan API, extensions, graphics queue and "
+                        "robustness features; see GPU candidate diagnostics.");
+    }
+    physical_device = physical_devices[*selected];
+    properties = physical_device.getProperties();
+    const auto& selected_candidate = candidates[*selected];
+    LOG_INFO(Render_Vulkan,
+             "Selected GPU: {} | UUID {:02x} | policy: compatible discrete GPU first, "
+             "then local memory and stable device UUID; legacy gpu_id is ignored",
+             properties.deviceName.data(), fmt::join(selected_candidate.uuid, ""));
+    if (selected_candidate.kind != DeviceKind::Discrete) {
+        LOG_WARNING(Render_Vulkan,
+                    "No compatible discrete GPU found; using compatibility fallback: {} ({})",
+                    properties.deviceName.data(), vk::to_string(properties.deviceType));
     }
 
     available_extensions = GetSupportedExtensions(physical_device);
     format_properties = GetFormatProperties(physical_device);
-    properties = physical_device.getProperties();
     memory_properties = physical_device.getMemoryProperties();
     CollectDeviceParameters();
     ASSERT_MSG(properties.apiVersion >= TargetVulkanApiVersion,

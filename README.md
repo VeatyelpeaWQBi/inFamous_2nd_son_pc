@@ -30,6 +30,8 @@ V1/V2 和最终采用的 V3 优化已成为引擎固定逻辑，无需开关：
 
 精确回读、SDR、完整粒子及着色器／管线缓存继续保留。已核验游戏构建还使用分辨率、光照列表容量、4K 曝光缓冲容量和防冻结补丁。宽松回读会影响粒子及亮度，不能用其帧数代替完整画面的性能。
 
+本分支包含读档后场景发黑的光照修复：保留原光照资源检查，仅在资源完整安装且语言可用时允许激活被误拒绝的配置。固定地址补丁只用于兼容清单中标题、01.07 版本及完整程序 SHA256 均匹配的构建，不修改任务、能力或存档。开发构建已覆盖异常霓虹存档、正常烟气存档，以及城市 7 套／村庄 2 套配置和城市 21 次切换；Release V3 合入后需重新构建并进行游戏回归，剧情自然天气流程尚未完整验证。已发布的旧包不会自动获得修复。
+
 V3 调研的 12 个候选中，正式内核只保留具有稳定正收益的 V3-03 和 V3-07。其他候选未达到收益、稳定性或正确性要求，已从运行时代码和用户入口删除；开发记录保留其结论，避免重复尝试。Release 中两项优化默认启用，不依赖 BAT、环境变量或用户开关。
 
 ### 测试平台与运行表现
@@ -56,6 +58,10 @@ V3 调研的 12 个候选中，正式内核只保留具有稳定正收益的 V3-
 | V3-03+V3-07 固定高压力场景 | 五轮平均 FPS 为 34.801–35.530；中位 FPS 增益 18.739%，P95 帧时间改善 30.442% |
 
 V3 百分比只代表上述固定场景的开发构建对照，不代表全游戏最低帧率或所有硬件；V3-03 还要求设备支持对应 NVIDIA Vulkan 特性。V1/V2 人工记录不是严格同场景 A/B 测试，不能换算成统一提升百分比。Release V3 的固定场景配对结果仍需继续复核。full 的验证层、采样和抓帧会显著拖慢运行，其 FPS 不能代表正常游玩，也不能简单扣除固定开销还原真实帧时间。
+
+### 显卡选择
+
+自动选择满足必需 Vulkan 版本、扩展、图形队列及 robustness 特性的独立显卡；同类设备按本地显存容量及设备 UUID 稳定排序。旧配置的 Vulkan.gpu_id 保留读取兼容，但不再使用可能变化的设备枚举编号。没有合格独显时记录兼容回退；日志中的 GPU candidate 和 Selected GPU 可用于核对实际设备。
 
 ### 预热与缓存
 
@@ -198,6 +204,8 @@ V1/V2 and the accepted V3 optimizations are built into the engine and require no
 
 Precise readback, SDR, complete particle effects, and shader/pipeline caches are retained. Verified game builds also use resolution, light-list capacity, 4K exposure-buffer capacity and anti-freeze patches. Relaxed readback can affect particles and brightness; its FPS does not represent performance with complete rendering.
 
+This branch includes the cold-load lighting fix: preserve the original resource check and allow rejected profiles only when their content is fully installed and language-eligible. Fixed-address patches require a matching title, version 01.07 and full executable SHA256 in the compatibility manifest; story, abilities and save data are unchanged. Development validation covered the affected neon save, a normal smoke save, seven city and two village profiles, and 21 city transitions. Rebuild and run game regression checks after this Release V3 backport; the complete story-driven weather sequence remains unverified. Previously published packages do not gain the fix automatically.
+
 Of the 12 investigated V3 candidates, the production engine retains only V3-03 and V3-07, which produced stable positive results. Candidates that failed performance, stability or correctness requirements have been removed from runtime code and user-facing entries; their research conclusions are retained to avoid repeating the same experiments. Both accepted optimizations are enabled by default in Release and require no BAT file, environment variable or user switch.
 
 ### Test platform and observed performance
@@ -225,6 +233,10 @@ The following results come from V1/V2/V3 development builds on this machine, usi
 | V3-03+V3-07 in the fixed high-pressure scene | Five-round average FPS range: 34.801–35.530; median FPS gain 18.739%, P95 frame-time improvement 30.442% |
 
 The V3 percentages apply only to the controlled development-build scenario above; they do not establish a whole-game minimum or a universal gain on other hardware. V3-03 also requires the corresponding NVIDIA Vulkan feature. The V1/V2 manual observations are not strict same-scene A/B results and cannot be converted into one percentage. A fixed-scene paired result for Release V3 still requires further confirmation. Validation layers, sampling and frame capture can substantially slow full diagnostics; their FPS is not normal gameplay performance, and subtracting a fixed overhead cannot recover normal frame times.
+
+### GPU selection
+
+The engine prefers discrete GPUs that meet the required Vulkan API, extensions, graphics queue and robustness features. Devices of the same class are ordered by local memory and stable device UUID. Legacy Vulkan.gpu_id values remain readable for configuration compatibility but no longer select by enumeration index. A compatible fallback is logged when no qualifying discrete GPU is available; GPU candidate and Selected GPU identify the evaluated and selected devices.
 
 ### Warm-up and caches
 

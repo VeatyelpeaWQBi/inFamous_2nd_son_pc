@@ -213,6 +213,7 @@ public:
         ButtonType type{};
         UserMessageType msg_type{};
         std::string msg{};
+        bool save_before_load{};
 
         UserState(const OrbisSaveDataDialogParam& param);
     };
@@ -312,6 +313,7 @@ private:
 
     void DrawList();
     void DrawUser();
+    void DrawSaveBeforeLoad(const SaveDialogState::UserState& user_state);
     void DrawSystemMessage();
     void DrawErrorCode();
     void DrawProgressBar();

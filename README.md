@@ -154,6 +154,8 @@ main／开发分支先执行 `build.bat`，再执行 `run.bat`。默认编译为
 
 开发分支普通游玩使用固定存档的会话副本，正常结束并通过文件检查后回存；诊断会话不会自动覆盖正式存档。Release 直接使用包内固定存档根。地区之间不自动转换存档。备份或搬迁时保留整个 `state/`；`game/`、`state/`、`Build/`、`out/`、`doc/` 均忽略 Git。
 
+读档前的保存提示提供“保存并读档”“不保存直接读档”“取消读档”，默认选中取消；Esc／手柄返回键取消读档。选择“不保存”会继续读取，不再被旧 SDK 兼容逻辑误判为取消。仅对支持的地区编号、01.07 版本及完整程序指纹均匹配的读档提示生效；重新构建后需在游戏中验证三个分支。
+
 F1 打开退出确认，Enter／手柄 ×（Xbox A）确认，Esc／○（Xbox B）返回；Alt+F4 退出。F10 切换 FPS，F12 截图。FPS 是最近最多 60 个新游戏帧的平均值，帧时间为平均帧间隔，不是纯 GPU 时间；Release 保留此基础显示，不启动采集器。退出前请在游戏内保存。
 
 Insert 打开或隐藏辅助菜单：能量每秒恢复 5%、炸弹槽每十秒恢复一枚；合格业力行动三次充满大招；业力经验倍率按 5 倍／10 倍／关闭循环。默认全部关闭，隐藏菜单保留当前选择。三项效果由当前构建 XML 的 `RuntimeCheats` 字节补丁定义，未知构建禁用。此功能尚未完成构建和游戏内验收。
@@ -328,6 +330,8 @@ Paths below are relative to the project/package directory. No automatic import f
 | `state/sessions/` | Development/diagnostic sessions; normal Release play does not depend on it |
 
 Ordinary development play uses a session copy of the fixed save, copied back after a normal exit and file checks. Diagnostic sessions do not automatically overwrite persistent saves. Release uses the fixed package-local save root directly. Saves are not automatically converted across regions. Preserve the entire `state/` when backing up or moving the project. `game/`, `state/`, `Build/`, `out/` and `doc/` are ignored by Git.
+
+The save-before-load prompt offers “Save and load”, “Load without saving” and “Cancel loading”, with Cancel focused by default. Escape or gamepad Back cancels loading. Choosing not to save continues loading instead of being treated as cancellation by the legacy SDK path. This applies only to load prompts with a supported title ID, version 01.07 and the exact executable fingerprint. Rebuild and verify all three paths in game.
 
 F1 opens exit confirmation; Enter / controller × (Xbox A) confirms, and Esc / ○ (Xbox B) returns. Alt+F4 exits. F10 toggles FPS; F12 takes a screenshot. FPS averages the latest up to 60 new game frames, and frame time is the mean frame interval, not pure GPU time. Release retains this basic display without starting collectors. Save in-game before exiting.
 

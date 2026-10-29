@@ -19,7 +19,7 @@
 
 namespace Core::SecondSon {
 namespace {
-bool want_prompts{}, want_chords{}, prompts_active{};
+bool verified_build{}, want_prompts{}, want_chords{}, prompts_active{};
 struct ControllerChords {
     ChordSide left, right;
     unsigned contacts{};
@@ -162,13 +162,14 @@ std::vector<u8> Branch(std::uintptr_t source, std::uintptr_t target, std::size_t
 
 void ConfigureControls(std::string_view title, std::string_view version, std::string_view sha256,
                        bool xbox_prompts, bool touchpad_chords) {
-    const bool verified = IsTitle(title) && version == "01.07" && sha256 == ControlsFingerprint;
-    want_prompts = verified && xbox_prompts;
-    want_chords = verified && touchpad_chords;
+    verified_build = IsTitle(title) && version == "01.07" && sha256 == ControlsFingerprint;
+    want_prompts = verified_build && xbox_prompts;
+    want_chords = verified_build && touchpad_chords;
     prompts_active = false;
     std::scoped_lock lock{chord_mutex};
     chord_states.clear();
 }
+bool IsVerifiedBuild() { return verified_build; }
 bool XboxPromptsEnabled() { return prompts_active; }
 bool TouchpadChordsEnabled() { return prompts_active && want_chords; }
 

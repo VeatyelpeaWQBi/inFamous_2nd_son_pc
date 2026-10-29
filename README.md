@@ -32,6 +32,8 @@ V1/V2 和最终采用的 V3 优化已成为引擎固定逻辑，无需开关：
 
 开发目录的 CUSA00309 01.07 光照修复处理一种读档后场景发黑的问题：游戏拒绝启用已经安装的昼夜光照资源。修复只调整光照选择中的内容检查，保留完整安装及语言条件，不改变任务、能力或存档。已验证异常霓虹阶段存档冷启动恢复画面、正常烟气存档保持原光照，以及城市 7 套和村庄 2 套配置激活；城市 21 次循环切换的内部状态检查通过。剧情自然触发天气的完整流程仍需持续游玩验证。现有 Release 包尚未更新此修复。
 
+读档前的保存提示区分为“保存并读档”“不保存直接读档”“取消读档”。第二项返回游戏原生的“不保存”结果，避免旧 SDK 兼容路径将其误报为取消。默认聚焦取消，Esc／手柄返回键也取消读档；仅对完整指纹匹配的 CUSA00309 01.07 读档提示生效。此项需要重新构建引擎，并在游戏中验证三个分支。
+
 V3 调研的 12 个候选中，正式内核只保留具有稳定正收益的 V3-03 和 V3-07。其他候选未达到收益、稳定性或正确性要求，已从运行时代码和用户入口删除；开发记录保留其结论，避免重复尝试。Release 中两项优化默认启用，不依赖 BAT、环境变量或用户开关。
 
 ### 测试平台与运行表现
@@ -205,6 +207,8 @@ V1/V2 and the accepted V3 optimizations are built into the engine and require no
 Precise readback, SDR, complete particle effects, and shader/pipeline caches are retained. Verified game builds also use resolution, light-list capacity, 4K exposure-buffer capacity and anti-freeze patches. Relaxed readback can affect particles and brightness; its FPS does not represent performance with complete rendering.
 
 The development CUSA00309 01.07 profile fixes a cold-load lighting failure where the game rejects installed time-of-day resources. The fallback applies only to lighting selection, requires fully installed and language-eligible content, and preserves story, ability and save state. The affected neon-stage save recovers on cold start, while a normal smoke-stage save retains its original lighting. All seven city and both village profiles activated successfully; internal state checks passed across 21 city transitions. The complete story-driven weather sequence still needs continued play testing. Existing Release packages have not been updated with this fix.
+
+The save-before-load prompt offers “Save and load”, “Load without saving” and “Cancel loading”. The second choice returns the game's native negative answer instead of the legacy SDK cancellation result. Cancel is focused by default; Escape or gamepad Back also cancels. This applies only to the matching CUSA00309 01.07 executable fingerprint and load prompt. Rebuild the engine and verify all three paths in game.
 
 Of the 12 investigated V3 candidates, the production engine retains only V3-03 and V3-07, which produced stable positive results. Candidates that failed performance, stability or correctness requirements have been removed from runtime code and user-facing entries; their research conclusions are retained to avoid repeating the same experiments. Both accepted optimizations are enabled by default in Release and require no BAT file, environment variable or user switch.
 

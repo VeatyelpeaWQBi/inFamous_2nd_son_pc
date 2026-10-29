@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <array>
 #include <fmt/chrono.h>
 #include <imgui.h>
 #include <magic_enum/magic_enum.hpp>
@@ -8,9 +10,11 @@
 #include "common/elf_info.h"
 #include "common/singleton.h"
 #include "common/string_util.h"
+#include "core/emulator_settings.h"
 #include "core/file_format/psf.h"
 #include "core/file_sys/fs.h"
 #include "core/libraries/save_data/save_instance.h"
+#include "core/second_son_controls.h"
 #include "imgui/imgui_std.h"
 #include "savedatadialog_ui.h"
 
@@ -183,6 +187,12 @@ SaveDialogState::UserState::UserState(const OrbisSaveDataDialogParam& param) {
     this->type = user.buttonType;
     this->msg_type = user.msgType;
     this->msg = user.msg != nullptr ? std::string{user.msg} : std::string{};
+    // In the fingerprint-pinned 01.07 build, this combination identifies the save-before-load
+    // question. The new-game question uses SAVE; matching the shape avoids localized text rules.
+    this->save_before_load = ::Core::SecondSon::IsVerifiedBuild() &&
+                             param.dispType == DialogType::LOAD &&
+                             this->type == ButtonType::YESNO &&
+                             this->msg_type == UserMessageType::NORMAL;
 }
 
 SaveDialogState::SystemState::SystemState(const SaveDialogState& state,
@@ -659,6 +669,11 @@ void SaveDialogUi::DrawUser() {
         DrawItem(0, *state->new_item, false);
     }
 
+    if (user_state.save_before_load) {
+        DrawSaveBeforeLoad(user_state);
+        return;
+    }
+
     auto has_btn = btn_type != ButtonType::NONE;
     ImVec2 btn_space;
     if (has_btn) {
@@ -729,6 +744,69 @@ void SaveDialogUi::DrawUser() {
             }
         }
         EndGroup();
+    }
+}
+
+void SaveDialogUi::DrawSaveBeforeLoad(const SaveDialogState::UserState& user_state) {
+    const int language = EmulatorSettings.GetConsoleLanguage();
+    const std::array<const char*, 3> labels =
+        language == 10 ? std::array{"儲存並讀檔", "不儲存直接讀檔", "取消讀檔"}
+        : language == 11 ? std::array{"保存并读档", "不保存直接读档", "取消读档"}
+                         : std::array{"Save and load", "Load without saving", "Cancel loading"};
+
+    const auto& style = GetStyle();
+    float button_width = BUTTON_SIZE.x;
+    for (const auto* label : labels) {
+        button_width = std::max(button_width, CalcTextSize(label).x + 2.0f * style.FramePadding.x);
+    }
+    const float content_x = GetCursorPosX();
+    const float available_width = GetContentRegionAvail().x;
+    const float row_width = 3.0f * button_width + 2.0f * style.ItemSpacing.x;
+    const bool stacked = row_width > available_width;
+    const float footer_height =
+        stacked ? 3.0f * BUTTON_SIZE.y + 2.0f * style.ItemSpacing.y + 15.0f : FOOTER_HEIGHT;
+    if (!user_state.msg.empty()) {
+        DrawCenteredText(user_state.msg.data(), user_state.msg.data() + user_state.msg.size(),
+                         GetContentRegionAvail() - ImVec2{0.0f, footer_height});
+    }
+
+    const auto ws = GetWindowSize();
+    SetCursorPos({stacked ? content_x : content_x + (available_width - row_width) / 2.0f,
+                  ws.y - footer_height + 5.0f});
+    const ImVec2 button_size{std::min(button_width, available_width), BUTTON_SIZE.y};
+    int choice = -1;
+    BeginGroup();
+    for (int i = 0; i < 3; ++i) {
+        if (i != 0 && !stacked) {
+            SameLine();
+        }
+        if (Button(labels[i], button_size)) {
+            choice = i;
+        }
+        if (first_render && i == 2) {
+            SetItemCurrentNavFocus();
+        }
+    }
+    EndGroup();
+
+    if (!first_render && (IsKeyPressed(ImGuiKey_Escape, false) ||
+                          IsKeyPressed(ImGuiKey_GamepadFaceRight, false))) {
+        choice = 2;
+    }
+    switch (choice) {
+    case 0:
+        Finish(ButtonId::YES, Result::OK);
+        break;
+    case 1:
+        // The guest maps OK + NO to "skip saving". USER_CANCELED instead aborts loading,
+        // so this prompt must not use the generic pre-4.50 NO compatibility conversion.
+        Finish(ButtonId::NO, Result::OK);
+        break;
+    case 2:
+        Finish(ButtonId::INVALID, Result::USER_CANCELED);
+        break;
+    default:
+        break;
     }
 }
 

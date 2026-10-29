@@ -18,6 +18,8 @@ inline constexpr std::string_view ControlsFingerprint =
 // Options allow automatic Xbox activation; PS/unknown devices never force-enable the hooks.
 void ConfigureControls(std::string_view title, std::string_view version,
                        std::string_view sha256, bool xbox_prompts, bool touchpad_chords);
+// Mounted executable identity, independent of controller family and optional input hooks.
+bool IsVerifiedBuild();
 void InstallControls(std::uintptr_t base, std::size_t image_size, void* arena,
                      std::size_t arena_size);
 // Full SHA-256 of a mounted immutable view, preserving its read position.

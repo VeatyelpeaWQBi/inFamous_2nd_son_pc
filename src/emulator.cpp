@@ -510,7 +510,8 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     LOG_INFO(Config, "GPU userfaultfdTracking: {}", EmulatorSettings.IsUserfaultfdTracking());
 #endif
     LOG_INFO(Config, "GPU inlineFetchShader: {}", EmulatorSettings.IsInlineFetchShader());
-    LOG_INFO(Config, "Vulkan gpuId: {}", EmulatorSettings.GetGpuId());
+    LOG_INFO(Config, "Vulkan GPU selection: prefer compatible discrete GPU; legacy gpu_id {} ignored",
+             EmulatorSettings.GetGpuId());
     LOG_INFO(Config, "Vulkan vkValidation: {}", EmulatorSettings.IsVkValidationEnabled());
     LOG_INFO(Config, "Vulkan vkValidationCore: {}", EmulatorSettings.IsVkValidationCoreEnabled());
     LOG_INFO(Config, "Vulkan vkValidationSync: {}", EmulatorSettings.IsVkValidationSyncEnabled());

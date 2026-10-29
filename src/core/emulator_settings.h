@@ -458,6 +458,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(GPUSettings, window_width, window_height, int
 // Vulkan settings
 // -------------------------------
 struct VulkanSettings {
+    // Kept for old JSON/TOML compatibility. Device selection no longer uses enumeration indices.
     Setting<s32> gpu_id{-1};
     Setting<bool> renderdoc_enabled{false};
     Setting<bool> vkvalidation_enabled{false};

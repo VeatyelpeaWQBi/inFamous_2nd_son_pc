@@ -30,6 +30,8 @@ V1/V2 和最终采用的 V3 优化已成为引擎固定逻辑，无需开关：
 
 精确回读、SDR、完整粒子及着色器／管线缓存继续保留。已核验游戏构建还使用分辨率、光照列表容量、4K 曝光缓冲容量和防冻结补丁。宽松回读会影响粒子及亮度，不能用其帧数代替完整画面的性能。
 
+开发目录的 CUSA00309 01.07 光照修复处理一种读档后场景发黑的问题：游戏拒绝启用已经安装的昼夜光照资源。修复只调整光照选择中的内容检查，保留完整安装及语言条件，不改变任务、能力或存档。已验证异常霓虹阶段存档冷启动恢复画面、正常烟气存档保持原光照，以及城市 7 套和村庄 2 套配置激活；城市 21 次循环切换的内部状态检查通过。剧情自然触发天气的完整流程仍需持续游玩验证。现有 Release 包尚未更新此修复。
+
 V3 调研的 12 个候选中，正式内核只保留具有稳定正收益的 V3-03 和 V3-07。其他候选未达到收益、稳定性或正确性要求，已从运行时代码和用户入口删除；开发记录保留其结论，避免重复尝试。Release 中两项优化默认启用，不依赖 BAT、环境变量或用户开关。
 
 ### 测试平台与运行表现
@@ -56,6 +58,10 @@ V3 调研的 12 个候选中，正式内核只保留具有稳定正收益的 V3-
 | V3-03+V3-07 固定高压力场景 | 五轮平均 FPS 为 34.801–35.530；中位 FPS 增益 18.739%，P95 帧时间改善 30.442% |
 
 V3 百分比只代表上述固定场景的开发构建对照，不代表全游戏最低帧率或所有硬件；V3-03 还要求设备支持对应 NVIDIA Vulkan 特性。V1/V2 人工记录不是严格同场景 A/B 测试，不能换算成统一提升百分比。Release V3 的固定场景配对结果仍需继续复核。full 的验证层、采样和抓帧会显著拖慢运行，其 FPS 不能代表正常游玩，也不能简单扣除固定开销还原真实帧时间。
+
+### 显卡选择
+
+显卡按设备能力自动选择：满足 Vulkan 版本、必需扩展、图形队列和 robustness 功能的独显优先；多块同类显卡按设备本地显存容量、设备 UUID 稳定选择。旧配置中的 `Vulkan.gpu_id` 仅保留读取兼容，不再按枚举编号选择显卡，无需手工尝试 `0`／`1`。没有合格独显时会在日志明确记录兼容回退；开发日志中的 `GPU candidate`、`Selected GPU` 记录候选条件、实际型号和 UUID。驱动缓存的 UUID 不参与设备身份判断。
 
 ### 预热与缓存
 
@@ -197,6 +203,8 @@ V1/V2 and the accepted V3 optimizations are built into the engine and require no
 | V3-07: bounded sequential write ranges | After write-protection faults on three adjacent pages, opens at most 64 pages ahead; stops before unread GPU data, invalidates matching textures, uploads current content and restores protection |
 
 Precise readback, SDR, complete particle effects, and shader/pipeline caches are retained. Verified game builds also use resolution, light-list capacity, 4K exposure-buffer capacity and anti-freeze patches. Relaxed readback can affect particles and brightness; its FPS does not represent performance with complete rendering.
+
+The development CUSA00309 01.07 profile fixes a cold-load lighting failure where the game rejects installed time-of-day resources. The fallback applies only to lighting selection, requires fully installed and language-eligible content, and preserves story, ability and save state. The affected neon-stage save recovers on cold start, while a normal smoke-stage save retains its original lighting. All seven city and both village profiles activated successfully; internal state checks passed across 21 city transitions. The complete story-driven weather sequence still needs continued play testing. Existing Release packages have not been updated with this fix.
 
 Of the 12 investigated V3 candidates, the production engine retains only V3-03 and V3-07, which produced stable positive results. Candidates that failed performance, stability or correctness requirements have been removed from runtime code and user-facing entries; their research conclusions are retained to avoid repeating the same experiments. Both accepted optimizations are enabled by default in Release and require no BAT file, environment variable or user switch.
 

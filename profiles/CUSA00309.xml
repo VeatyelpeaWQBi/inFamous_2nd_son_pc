@@ -146,6 +146,15 @@
             <Line Type="bytes" Address="0x00571704" Value="E97740B5006690" OriginalHash="ae4f1fb43844fc7f" />
         </PatchList>
     </Metadata>
+    <Metadata Title="inFAMOUS Second Son" Name="Time-of-day lighting: accept installed content groups" Note="CUSA00309 01.07 with the project-pinned executable only. Keeps the original time-of-day content check. If it rejects a loaded requested lighting profile, accepts the existing content group only when LocalFast (3) and language-eligible. Fixes cold-load Dismal lighting rejected by an inactive pgc_i2 request dependency despite installed resources. Preserves story signals, abilities, save data and all other content checks. Verified on the affected neon save and a normal smoke save; other story and weather transitions need continued play testing." Author="Local analysis" PatchVer="0.1" AppVer="01.07" AppElf="eboot.bin" isEnabled="true">
+        <PatchList>
+            <!-- Guest 0xcc57e0: keep SysV stack alignment and call the original content predicate first.
+                 On its false paths RCX identifies a valid group; require LocalFast at +68 and language eligibility at +69.
+                 Original success returns immediately, including invalid-index/null-group cases. Only the TOD call is redirected. -->
+            <Line Type="bytes" Address="0x010c57e0" Value="4883EC08E8C7F56FFF4883C40884C0750D807944037507807945000F95C0C3CC" OriginalHash="0c8210784d8af5a5" />
+            <Line Type="bytes" Address="0x0099d3fc" Value="E8DF837200" OriginalHash="df8e54f7ebb08c24" />
+        </PatchList>
+    </Metadata>
     <RuntimeCheats Schema="1" AppVer="01.07" AppElf="eboot.bin" SHA256="2d1ca79630d7bbe6fa29575f59aa7996d43071d74ac8e4f7d40137967d9039ab" ArenaSize="0x1000">
         <!-- All effects are native guest byte patches. Menu controls only publish XML parameters. -->
         <Data Size="0x50">

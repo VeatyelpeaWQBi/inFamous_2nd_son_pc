@@ -484,6 +484,7 @@ void Poll(Input::GameController& controller) {
                 {"perf_log", tuning.perf_log.load()}, {"gpu_profile", tuning.gpu_profile.load()},
                 {"readback_window_kb", tuning.readback_window_bytes.load() / 1024},
                 {"readback_prefetch", tuning.readback_prefetch.load()},
+                {"readback_writer_footprint", tuning.readback_writer_footprint.load()},
                 {"recorder_spin_us", tuning.recorder_spin_us.load()},
                 {"gpu_threads_affinity", tuning.gpu_threads_affinity.load()},
                 {"other_threads_affinity", tuning.other_threads_affinity.load()},

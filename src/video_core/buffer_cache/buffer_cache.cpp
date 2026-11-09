@@ -1704,6 +1704,9 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         gpu_modified_ranges.Add(device_addr, size);
         // The command buffer being recorded writes the range (readback queue waits for it).
         memory_tracker->SetWriteTick(device_addr, size, Sched().CurrentTick(), active->index);
+        if (FeedbackLink::IsActive()) [[unlikely]] {
+            FeedbackLink::OnWriteTickSample(device_addr, size, Sched().CurrentTick(), active->index, 0);
+        }
     } else if (memo && have_versions) {
         // Versions read before the synchronization: a write during it changes them.
         Common::Perf::Add(Common::Perf::SyncMemoMisses);

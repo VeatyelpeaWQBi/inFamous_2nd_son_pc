@@ -22,6 +22,7 @@
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
+#include "video_core/buffer_cache/feedback_link_sample.h"
 #include "video_core/buffer_cache/memory_tracker.h"
 #include "video_core/buffer_cache/readback_dependencies.h"
 #include "video_core/buffer_cache/readback_prefetch_policy.h"
@@ -1128,6 +1129,15 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     const u64 wait_tick = readback.tick;
     Common::PathTrace::Emit(Common::PathTrace::Kind::ReadCopy, trace_id, wait_tick,
                             readback.on_readback_queue, readback.record_seq, readback.trace_id);
+    if (FeedbackLink::IsActive()) [[unlikely]] {
+        u64 copy_bytes = 0;
+        for (const auto& copy : readback.copies) {
+            copy_bytes += copy.size;
+        }
+        FeedbackLink::OnBeginReadback(device_addr, size, window_start, window_end, copy_bytes,
+                                      writers.ticks[0], writers.ticks[1], writers.submitted,
+                                      writers.done, writers.current, wait_tick, trace_id);
+    }
     pending_readbacks.push_back(std::move(readback));
     Common::Perf::Add(Common::Perf::ReadbackAsync);
     return wait_tick;
@@ -1297,6 +1307,10 @@ void BufferCache::PrefetchReadbacks() {
                 window.prefetch_tick = queue_tick;
             }
         }
+    }
+    if (FeedbackLink::IsActive()) [[unlikely]] {
+        const u64 grouped = std::max(queue_wait_ticks[0], queue_wait_ticks[1]);
+        FeedbackLink::OnPrefetchBatch(queue_tick, grouped, 0, 0);
     }
 }
 
@@ -1474,6 +1488,13 @@ void BufferCache::FinishReadback(size_t index) {
     memory_tracker->RemovePendingReadback(readback.window_start, readback.window_end);
     if (readback.download.buffer) {
         staging_pool.FreeDeferred(readback.download);
+    }
+    if (FeedbackLink::IsActive()) [[unlikely]] {
+        const u64 finish_qpc = Common::Perf::NowNs();
+        FeedbackLink::OnFinishReadback(readback.window_start, readback.window_end, finish_start,
+                                       finish_qpc,
+                                       (finish_qpc - finish_start) / 1'000'000ULL);
+        FeedbackLink::ExportJsonl();
     }
     Common::Perf::Add(Common::Perf::ReadbackSyncNs, Common::Perf::NowNs() - finish_start);
 }

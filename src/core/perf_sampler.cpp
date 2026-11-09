@@ -231,6 +231,8 @@ void PollTuning() {
                 std::memory_order_relaxed);
         } else if (key == "path_trace") {
             tuning.path_trace.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "feedback_link_sample") {
+            tuning.feedback_link_sample.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gpu_threads_priority") {
             tuning.gpu_threads_priority.store(
                 static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 2)),

@@ -594,6 +594,8 @@ struct Tuning {
     std::atomic<u32> gpu_profile_draw_limit{0};
     /// Startup-only bounded asynchronous CPU path trace, enabled explicitly by the launcher.
     std::atomic<bool> path_trace{false};
+    /// Default-off FeedbackLinkSample instrument (M2-A). Never enable from ordinary run.bat.
+    std::atomic<bool> feedback_link_sample{false};
     /// readback_relaxed_sites: code of the game (offsets of 256 byte blocks of its executable, as
     /// the readback site report shows them) whose reads of GPU written memory do not wait for
     /// the GPU. The read gets guest memory as it is (data of the previous download, a frame or

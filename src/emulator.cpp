@@ -28,6 +28,7 @@
 #include "common/ntapi.h"
 #include "common/path_util.h"
 #include "common/path_trace.h"
+#include "video_core/buffer_cache/feedback_link_sample.h"
 #include "common/perf_stats.h"
 #include "common/polyfill_thread.h"
 #include "common/scm_rev.h"
@@ -543,6 +544,10 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     if (Core::Benchmark::Enabled() &&
         Common::Perf::GetTuning().path_trace.load(std::memory_order_relaxed)) {
         Common::PathTrace::Start(Core::Benchmark::TuningPath().parent_path());
+    }
+    if (Core::Benchmark::Enabled() &&
+        Common::Perf::GetTuning().feedback_link_sample.load(std::memory_order_relaxed)) {
+        VideoCore::FeedbackLink::Configure(Core::Benchmark::TuningPath().parent_path());
     }
 
     if (param_sfo_exists) {

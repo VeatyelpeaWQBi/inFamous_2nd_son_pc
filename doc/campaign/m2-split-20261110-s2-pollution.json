@@ -1,0 +1,77 @@
+{
+  "doc": "doc/145-o01-o02-split-samples-20261110-s2-pollution.md",
+  "date_asia_shanghai": "2026-11-10T00:25+08:00",
+  "author_role": "测试-仪器验收",
+  "verdict": "FAIL",
+  "gate": "pollution",
+  "pass_abs_le_2pct": false,
+  "note": "Instrument-on FPS is pollution evidence only; not a 50+ benefit claim. Not a split-label pass. Do not release M2-B. No Full this round.",
+  "entry": "diagnostics/super.bat",
+  "mode": "pro4k",
+  "profile": "lightweight",
+  "experiment": "none",
+  "candidate": "none",
+  "late_window": "[8s, 12s) after release",
+  "delta_pct": -53.80,
+  "delta_formula": "(on_late_fps - off_late_fps) / off_late_fps * 100",
+  "runtime_sha256": "04d6a25ac7c04632b76778f680823b240a4e4ae0b50768466ede8a8f5504cd97",
+  "game_sha256": "2d1ca79630d7bbe6fa29575f59aa7996d43071d74ac8e4f7d40137967d9039ab",
+  "source_commit": "0d9f8a9fd40fbdf9b11300d2cc9a2c741e63d3fd",
+  "tree_clean": false,
+  "tree_note": "HEAD hooks 0d9f8a9 plus uncommitted harness; binary is not a clean 0d9f8a9 build",
+  "display": "2560x1600",
+  "parallel_capture": false,
+  "full_capture": false,
+  "off": {
+    "feedback_link_sample": 0,
+    "session": "state/sessions/20261110-001855-081-pro4k-9e48256c",
+    "batch": "state/super-captures/20261110-001854-pro4k-4f3d509b",
+    "late_fps": 34.888,
+    "n": 139,
+    "jsonl": null,
+    "status": "collected",
+    "compute_barrier_scope": 0
+  },
+  "on": {
+    "feedback_link_sample": 1,
+    "session": "state/sessions/20261110-002108-417-pro4k-a62ff55e",
+    "batch": "state/super-captures/20261110-002107-pro4k-a437dea7",
+    "late_fps": 16.118,
+    "n": 65,
+    "jsonl_bytes": 36857,
+    "jsonl_lines": 64,
+    "status": "collected",
+    "compute_barrier_scope": 0
+  },
+  "baseline_batch": "state/super-captures/20261110-001854-pro4k-4f3d509b",
+  "baseline_late_fps": 34.888,
+  "treatment_late_fps": 16.118,
+  "samples_jsonl": [
+    "state/sessions/20261110-002108-417-pro4k-a62ff55e/diagnostics/feedback-link-samples.jsonl"
+  ],
+  "label_histogram": {
+    "O01_candidate": 0,
+    "O02_candidate": 0,
+    "O03_redirect": 0,
+    "O08_candidate": 0,
+    "publish_wake": 64,
+    "inconclusive": 0
+  },
+  "sample_notes": "All 64 ON samples are publish_wake with missing_gpu_end=true; not usable for O01 split acceptance.",
+  "voided": [
+    {
+      "reason": "bare super.bat defaulted to compute-barriers / A-B opts; cannot be off baseline",
+      "batch": "state/super-captures/20261110-001548-pro4k-08a4d945",
+      "session": "state/sessions/20261110-001548-928-pro4k-02ac5bdb"
+    }
+  ],
+  "inconclusive_not_veto": [
+    "state/super-captures/20261109-235923-pro4k-04fc50c1",
+    "state/super-captures/20261110-000146-pro4k-dea32f5b"
+  ],
+  "next": [
+    "Reduce ON-path overhead (check ExportJsonl on every FinishReadback) and rerun off vs on after user wake",
+    "Prefer a clean tree or explicitly disclose harness in the next SHA",
+    "Do not release M2-B or start Full until pollution passes"
+  ]
+}

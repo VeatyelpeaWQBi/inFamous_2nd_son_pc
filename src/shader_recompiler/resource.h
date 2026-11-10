@@ -84,6 +84,14 @@ enum class BufferType : u8 {
     ClipPlanes,
 };
 
+/// Bind-time-evaluable GPU write subrange relative to the V# base.
+/// Unknown: every consumer must use the full descriptor for write ticks.
+enum class WriteFootprintMode : u8 {
+    Unknown = 0,
+    Immediate = 1,
+    SoffsetUserData = 2,
+};
+
 struct BufferResource {
     SharpFetch<AmdGpu::Buffer> sharp_fetch{};
     IR::Type used_types{};
@@ -92,6 +100,11 @@ struct BufferResource {
     bool is_formatted{};
     SharpFetchPostOp post_op{};
     u32 post_op_dw1_mask{};
+    /// Proven stores only: [write_imm_offset, write_end) plus optional flatbuf soffset.
+    WriteFootprintMode write_footprint{WriteFootprintMode::Unknown};
+    u16 write_soffset_dw{};
+    u32 write_imm_offset{};
+    u32 write_end{};
 
     bool IsSpecial() const noexcept {
         return buffer_type != BufferType::Guest;

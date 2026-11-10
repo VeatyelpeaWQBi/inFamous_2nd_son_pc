@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <limits>
 #include "shader_recompiler/info.h"
 #include "shader_recompiler/ir/basic_block.h"
@@ -16,6 +17,176 @@
 
 namespace Shader::Optimization {
 namespace {
+
+u32 StoreWriteSize(const IR::Inst& inst) {
+    switch (inst.GetOpcode()) {
+    case IR::Opcode::StoreBufferU8:
+        return 1;
+    case IR::Opcode::StoreBufferU16:
+        return 2;
+    case IR::Opcode::StoreBufferU32:
+    case IR::Opcode::StoreBufferF32:
+    case IR::Opcode::BufferAtomicIAdd32:
+    case IR::Opcode::BufferAtomicISub32:
+    case IR::Opcode::BufferAtomicSMin32:
+    case IR::Opcode::BufferAtomicUMin32:
+    case IR::Opcode::BufferAtomicFMin32:
+    case IR::Opcode::BufferAtomicSMax32:
+    case IR::Opcode::BufferAtomicUMax32:
+    case IR::Opcode::BufferAtomicFMax32:
+    case IR::Opcode::BufferAtomicInc32:
+    case IR::Opcode::BufferAtomicDec32:
+    case IR::Opcode::BufferAtomicAnd32:
+    case IR::Opcode::BufferAtomicOr32:
+    case IR::Opcode::BufferAtomicXor32:
+    case IR::Opcode::BufferAtomicSwap32:
+    case IR::Opcode::BufferAtomicCmpSwap32:
+    case IR::Opcode::BufferAtomicFCmpSwap32:
+        return 4;
+    case IR::Opcode::StoreBufferU32x2:
+    case IR::Opcode::StoreBufferF32x2:
+    case IR::Opcode::StoreBufferU64:
+    case IR::Opcode::BufferAtomicIAdd64:
+    case IR::Opcode::BufferAtomicSMin64:
+    case IR::Opcode::BufferAtomicUMin64:
+    case IR::Opcode::BufferAtomicSMax64:
+    case IR::Opcode::BufferAtomicUMax64:
+        return 8;
+    case IR::Opcode::StoreBufferU32x3:
+    case IR::Opcode::StoreBufferF32x3:
+        return 12;
+    case IR::Opcode::StoreBufferU32x4:
+    case IR::Opcode::StoreBufferF32x4:
+    case IR::Opcode::StoreBufferFormatF32:
+        return 16;
+    default:
+        return 0;
+    }
+}
+
+struct ResolvedSoffset {
+    bool ok{};
+    WriteFootprintMode mode{WriteFootprintMode::Unknown};
+    u32 imm{};
+    u16 ud_dw{};
+};
+
+ResolvedSoffset ResolveSoffset(IR::Value value, int depth = 0) {
+    ResolvedSoffset fail{};
+    if (depth > 8) {
+        return fail;
+    }
+    if (value.Type() == IR::Type::U32) {
+        return ResolvedSoffset{true, WriteFootprintMode::Immediate, value.U32(), 0};
+    }
+    if (value.IsImmediate()) {
+        return fail;
+    }
+    IR::Inst* inst = value.TryInst();
+    if (!inst) {
+        return fail;
+    }
+    switch (inst->GetOpcode()) {
+    case IR::Opcode::GetUserData: {
+        const u32 reg = static_cast<u32>(inst->Arg(0).ScalarReg());
+        if (reg > 0xffff) {
+            return fail;
+        }
+        return ResolvedSoffset{true, WriteFootprintMode::SoffsetUserData, 0, static_cast<u16>(reg)};
+    }
+    case IR::Opcode::ReadConstBuffer: {
+        const u32 dw = inst->Flags<IR::BufferInstInfo>().flatbuf_off_dw.Value();
+        if (dw > 0xffff) {
+            return fail;
+        }
+        return ResolvedSoffset{true, WriteFootprintMode::SoffsetUserData, 0, static_cast<u16>(dw)};
+    }
+    case IR::Opcode::IAdd32: {
+        const auto a = ResolveSoffset(inst->Arg(0), depth + 1);
+        const auto b = ResolveSoffset(inst->Arg(1), depth + 1);
+        if (!a.ok || !b.ok) {
+            return fail;
+        }
+        const u64 imm = u64{a.imm} + u64{b.imm};
+        if (imm > std::numeric_limits<u32>::max()) {
+            return fail;
+        }
+        if (a.mode == WriteFootprintMode::Immediate) {
+            return ResolvedSoffset{true, b.mode, static_cast<u32>(imm), b.ud_dw};
+        }
+        if (b.mode == WriteFootprintMode::Immediate) {
+            return ResolvedSoffset{true, a.mode, static_cast<u32>(imm), a.ud_dw};
+        }
+        return fail;
+    }
+    case IR::Opcode::ISub32: {
+        const auto a = ResolveSoffset(inst->Arg(0), depth + 1);
+        const auto b = ResolveSoffset(inst->Arg(1), depth + 1);
+        if (!a.ok || !b.ok || b.mode != WriteFootprintMode::Immediate || a.imm < b.imm) {
+            return fail;
+        }
+        return ResolvedSoffset{true, a.mode, a.imm - b.imm, a.ud_dw};
+    }
+    default:
+        return fail;
+    }
+}
+
+void MergeWriteFootprint(BufferResource& dst, const BufferResource& src) {
+    if (!src.is_written || src.write_footprint == WriteFootprintMode::Unknown) {
+        if (src.is_written) {
+            dst.write_footprint = WriteFootprintMode::Unknown;
+            dst.write_end = 0;
+        }
+        return;
+    }
+    if (dst.write_end == 0 && dst.write_footprint == WriteFootprintMode::Unknown) {
+        dst.write_footprint = src.write_footprint;
+        dst.write_soffset_dw = src.write_soffset_dw;
+        dst.write_imm_offset = src.write_imm_offset;
+        dst.write_end = src.write_end;
+        return;
+    }
+    if (dst.write_footprint != src.write_footprint || dst.write_soffset_dw != src.write_soffset_dw) {
+        dst.write_footprint = WriteFootprintMode::Unknown;
+        dst.write_end = 0;
+        return;
+    }
+    dst.write_imm_offset = std::min(dst.write_imm_offset, src.write_imm_offset);
+    dst.write_end = std::max(dst.write_end, src.write_end);
+}
+
+void AnnotateWriteFootprint(BufferResource& desc, const IR::Inst& inst) {
+    desc.write_footprint = WriteFootprintMode::Unknown;
+    desc.write_end = 0;
+    const u32 size = StoreWriteSize(inst);
+    if (size == 0) {
+        return;
+    }
+    const auto inst_info = inst.Flags<IR::BufferInstInfo>();
+    if (inst_info.index_enable || inst_info.voffset_enable) {
+        return;
+    }
+    const IR::Value address = inst.Arg(IR::StoreBufferArgs::Address);
+    const IR::Inst* addr_inst = address.TryInst();
+    if (!addr_inst || addr_inst->GetOpcode() != IR::Opcode::CompositeConstructU32x3) {
+        return;
+    }
+    const auto soffset = ResolveSoffset(addr_inst->Arg(2));
+    if (!soffset.ok) {
+        return;
+    }
+    const u64 start = u64{soffset.imm} + inst_info.inst_offset.Value();
+    const u64 end = start + size;
+    if (end > std::numeric_limits<u32>::max() || end <= start) {
+        return;
+    }
+    desc.write_footprint = soffset.mode;
+    desc.write_soffset_dw = soffset.ud_dw;
+    desc.write_imm_offset = static_cast<u32>(start);
+    desc.write_end = static_cast<u32>(end);
+}
+
 
 IR::Type BufferDataType(const IR::Inst& inst, const Profile& profile) {
     switch (inst.GetOpcode()) {
@@ -106,8 +277,9 @@ public:
         })};
         auto& buffer = buffer_resources[index];
         buffer.used_types |= desc.used_types;
-        buffer.is_written |= desc.is_written;
         buffer.is_formatted |= desc.is_formatted;
+        MergeWriteFootprint(buffer, desc);
+        buffer.is_written |= desc.is_written;
         return index;
     }
 
@@ -210,7 +382,7 @@ void PatchBufferSharp(const ResourceDiscovery& resource, Info& info, Descriptors
                       const Profile& profile) {
     IR::Inst& inst = *resource.user;
 
-    const u32 buffer_binding = descriptors.Add(BufferResource{
+    BufferResource buffer_desc{
         .sharp_fetch = ConstructSharpFetch<AmdGpu::Buffer>(resource.sharps[0]),
         .used_types = BufferDataType(inst, profile),
         .buffer_type = BufferType::Guest,
@@ -219,7 +391,11 @@ void PatchBufferSharp(const ResourceDiscovery& resource, Info& info, Descriptors
                         inst.GetOpcode() == IR::Opcode::StoreBufferFormatF32,
         .post_op = resource.sharps[0].post_op,
         .post_op_dw1_mask = resource.sharps[0].post_op_data.dw1_mask,
-    });
+    };
+    if (buffer_desc.is_written) {
+        AnnotateWriteFootprint(buffer_desc, inst);
+    }
+    const u32 buffer_binding = descriptors.Add(buffer_desc);
 
     // Replace handle with binding index in buffer resource list.
     IR::IREmitter ir{*inst.GetParent(), IR::Block::InstructionList::s_iterator_to(inst)};

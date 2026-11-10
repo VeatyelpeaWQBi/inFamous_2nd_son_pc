@@ -1665,7 +1665,8 @@ void BufferCache::PrefetchStreamSource(VAddr device_addr, u64 size) noexcept {
 }
 
 std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 size,
-                                                        bool is_written, bool is_texel_buffer) {
+                                                        bool is_written, bool is_texel_buffer,
+                                                        std::optional<WrittenRange> written) {
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
     if (!is_written && size <= STREAM_THRESHOLD && !HasGpuData(device_addr, size)) {
         const auto& tuning = Common::Perf::GetTuning();
@@ -1766,20 +1767,48 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     const u64 last_block = (device_addr + size - 1) >> block_shift;
     const auto* arena = GetArena(first_block, last_block);
     EnsureResident(arena, first_block, last_block);
-    SynchronizeMemory(arena, device_addr, size, is_written, is_texel_buffer);
-    if (is_texel_buffer && !is_written && !OnComputeQueue()) {
-        SynchronizeMemoryFromImage(arena, device_addr, size);
-    }
-    // Cross queue dependencies before the write tick of this access is recorded.
-    NoteQueueAccess(device_addr, size, is_written);
-    if (is_written) {
-        gpu_modified_ranges.Add(device_addr, size);
-        // The command buffer being recorded writes the range (readback queue waits for it).
-        memory_tracker->SetWriteTick(device_addr, size, Sched().CurrentTick(), active->index);
-        if (FeedbackLink::IsActive()) [[unlikely]] {
-            FeedbackLink::OnWriteTickSample(device_addr, size, Sched().CurrentTick(), active->index, 0);
+    const bool narrow_write =
+        is_written && written.has_value() &&
+        Common::Perf::GetTuning().readback_writer_footprint.load(std::memory_order_relaxed) &&
+        written->size != 0 && written->address >= device_addr &&
+        static_cast<u64>(written->address) - device_addr + written->size <= size;
+    if (narrow_write) {
+        const VAddr write_addr = written->address;
+        const u32 write_size = written->size;
+        // Full descriptor stays synchronized for the bind; only the proven subrange is
+        // registered as a GPU write (SetWriteTick / gpu-modified / cross-queue write).
+        SynchronizeMemory(arena, device_addr, size, false, is_texel_buffer);
+        SynchronizeMemory(arena, write_addr, write_size, true, false);
+        if (is_texel_buffer && !OnComputeQueue()) {
+            SynchronizeMemoryFromImage(arena, device_addr, size);
         }
-    } else if (memo && have_versions) {
+        NoteQueueAccess(device_addr, size, false);
+        NoteQueueAccess(write_addr, write_size, true);
+        gpu_modified_ranges.Add(write_addr, write_size);
+        memory_tracker->SetWriteTick(write_addr, write_size, Sched().CurrentTick(), active->index);
+        if (FeedbackLink::IsActive()) [[unlikely]] {
+            FeedbackLink::OnWriteTickSample(write_addr, write_size, Sched().CurrentTick(),
+                                            active->index, 0);
+        }
+        Common::Perf::Add(Common::Perf::WriterFootprintNarrowed);
+    } else {
+        SynchronizeMemory(arena, device_addr, size, is_written, is_texel_buffer);
+        if (is_texel_buffer && !is_written && !OnComputeQueue()) {
+            SynchronizeMemoryFromImage(arena, device_addr, size);
+        }
+        // Cross queue dependencies before the write tick of this access is recorded.
+        NoteQueueAccess(device_addr, size, is_written);
+        if (is_written) {
+            gpu_modified_ranges.Add(device_addr, size);
+            // The command buffer being recorded writes the range (readback queue waits for it).
+            memory_tracker->SetWriteTick(device_addr, size, Sched().CurrentTick(), active->index);
+            if (FeedbackLink::IsActive()) [[unlikely]] {
+                FeedbackLink::OnWriteTickSample(device_addr, size, Sched().CurrentTick(),
+                                                active->index, 0);
+            }
+        }
+    }
+    if (!is_written && memo && have_versions) {
         // Versions read before the synchronization: a write during it changes them.
         Common::Perf::Add(Common::Perf::SyncMemoMisses);
         *memo = SyncMemo{

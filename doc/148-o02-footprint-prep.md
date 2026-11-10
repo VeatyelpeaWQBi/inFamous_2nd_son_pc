@@ -36,8 +36,8 @@ A 登记侧收窄；B 等待侧精化；C 禁止取消全部写者/硬编码 VA/
 
 ## 5. 状态
 
-- 判定：证据不足 / 暂缓
-- 下一动作：等稳定 `O02_candidate` 再做 Draft A/B
+- 判定：Draft A 已在默认关键后落地（doc/156）；验收仍为证据不足 / 暂缓
+- 下一动作：授权后按 doc/152 开关对照；Draft B / GDS 精化仍未做
 
 ---
 
@@ -47,7 +47,13 @@ A 登记侧收窄；B 等待侧精化；C 禁止取消全部写者/硬编码 VA/
 - 调谐键：`readback_writer_footprint`，默认 **`false` / `0`**
 - 已接线：`perf_stats.h` Tuning；`perf_sampler.cpp` 重置/INI；`benchmark_control` 回执开/关；`ValidateSet` + `Get-SuperFeedbackVariant`（B=1，A/`-CandidateBaseline`=0）
 - `run.bat` **不**打开该键
-- **仍未做：** Draft A/B、`SetWriteTick` 收窄、`FeedbackWriteTicks` 精化、`BindBuffers` 写路径语义
+- 已做 Draft A：可证明子范围 SetWriteTick / 别名失效收窄（默认关）。仍未做：Draft B、FeedbackWriteTicks 精化、GDS 收窄
 - 验收：`doc/152`（勿占 `doc/150`）
+
+---
+
+## 7. Draft A 落地（2026-11-10，见 `doc/156`）
+
+已在默认关键后实现登记侧收窄：可证明的常量化 store/atomic 子范围进入 `SetWriteTick` / 别名失效；Vulkan descriptor 仍用完整 V#。Draft B / GDS 精化 / 采集未做。
 
 *End of doc/148.*

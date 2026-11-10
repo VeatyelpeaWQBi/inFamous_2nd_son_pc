@@ -128,6 +128,10 @@ add_executable(ifss_readback_dependencies_test EXCLUDE_FROM_ALL tests/test_readb
 target_compile_features(ifss_readback_dependencies_test PRIVATE cxx_std_23)
 target_include_directories(ifss_readback_dependencies_test PRIVATE src)
 
+add_executable(ifss_writer_footprint_test EXCLUDE_FROM_ALL tests/test_writer_footprint.cpp)
+target_compile_features(ifss_writer_footprint_test PRIVATE cxx_std_23)
+target_include_directories(ifss_writer_footprint_test PRIVATE src)
+
 # V2 scheduling/bounds policies: no device, framework or new dependency.
 add_executable(ifss_optimization_v2_test EXCLUDE_FROM_ALL tests/test_optimization_v2.cpp)
 target_compile_features(ifss_optimization_v2_test PRIVATE cxx_std_23)

@@ -1981,7 +1981,8 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                                               : Common::Perf::WriterFootprintFallbacks);
                 }
                 const auto [buffer, offset] = buffer_cache.ObtainBuffer(
-                    vsharp.base_address, size, desc.is_written, desc.is_formatted, written);
+                    vsharp.base_address, size, desc.is_written, desc.is_formatted, written,
+                    stage.pgm_hash);
                 const u64 offset_aligned = Common::AlignDown(offset, alignment);
                 const u64 adjust = offset - offset_aligned;
                 if (adjust % 4 != 0) {

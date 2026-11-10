@@ -826,10 +826,15 @@ void BufferCache::WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, 
                     scheduler.GetWorkSemaphore()->KnownGpuTick());
         semaphore->Wait(tick);
     }
-    Common::Perf::Add(Common::Perf::ReadbackAsyncWaitNs, Common::Perf::NowNs() - wait_start);
+    const u64 wait_end = Common::Perf::NowNs();
+    Common::Perf::Add(Common::Perf::ReadbackAsyncWaitNs, wait_end - wait_start);
     // CPU observation of readiness; this includes scheduling and is not GPU execution time.
     Common::PathTrace::Emit(Common::PathTrace::Kind::ReadWaitEnd, trace_id, round,
                             on_readback_queue, tick);
+    if (FeedbackLink::IsActive()) [[unlikely]] {
+        // Timeline semaphore reached this tick: a genuine fence observation (QPC-domain NowNs).
+        FeedbackLink::OnGpuEndObservedTick(device_addr, tick, wait_end);
+    }
 }
 
 const BufferCache::PendingReadback* BufferCache::FirstUnfinishedReadback(VAddr device_addr,
@@ -1348,42 +1353,46 @@ void BufferCache::PrefetchReadbacks() {
         scheduler.Flush();
         Common::Perf::Add(Common::Perf::ReadbackPrefetchFlushes);
     }
-    if (!recorded_on_queue) {
-        return;
-    }
-    // One submission for the windows of the readback queue, after the last graphics submission
-    // that wrote them (all submitted to the driver already).
-    boost::container::small_vector<ReadbackQueue::Job, 16> jobs;
-    for (size_t i = first_queued; i < pending_readbacks.size(); ++i) {
-        const auto& readback = pending_readbacks[i];
-        if (!readback.on_readback_queue) {
-            continue;
+    if (recorded_on_queue) {
+        // One submission for the windows of the readback queue, after the last graphics submission
+        // that wrote them (all submitted to the driver already).
+        boost::container::small_vector<ReadbackQueue::Job, 16> jobs;
+        for (size_t i = first_queued; i < pending_readbacks.size(); ++i) {
+            const auto& readback = pending_readbacks[i];
+            if (!readback.on_readback_queue) {
+                continue;
+            }
+            jobs.push_back(ReadbackQueue::Job{
+                .src = readback.arena_handle,
+                .dst = readback.download.buffer->Handle(),
+                .copies = readback.copies,
+            });
         }
-        jobs.push_back(ReadbackQueue::Job{
-            .src = readback.arena_handle,
-            .dst = readback.download.buffer->Handle(),
-            .copies = readback.copies,
-        });
-    }
-    WindowWriters queue_writers;
-    queue_writers.ticks = queue_wait_ticks;
-    const u64 queue_tick = readback_queue->Submit(jobs, ReadbackWaits(queue_writers));
-    for (size_t i = first_queued; i < pending_readbacks.size(); ++i) {
-        auto& readback = pending_readbacks[i];
-        if (!readback.on_readback_queue) {
-            continue;
-        }
-        readback.tick = queue_tick;
-        for (auto& window : hot_windows) {
-            if (window.start == readback.window_start && window.end == readback.window_end &&
-                window.demand_pages == readback.demand_page_prefetch) {
-                window.prefetch_tick = queue_tick;
+        WindowWriters queue_writers;
+        queue_writers.ticks = queue_wait_ticks;
+        const u64 queue_tick = readback_queue->Submit(jobs, ReadbackWaits(queue_writers));
+        for (size_t i = first_queued; i < pending_readbacks.size(); ++i) {
+            auto& readback = pending_readbacks[i];
+            if (!readback.on_readback_queue) {
+                continue;
+            }
+            readback.tick = queue_tick;
+            for (auto& window : hot_windows) {
+                if (window.start == readback.window_start && window.end == readback.window_end &&
+                    window.demand_pages == readback.demand_page_prefetch) {
+                    window.prefetch_tick = queue_tick;
+                }
             }
         }
     }
-    if (FeedbackLink::IsActive()) [[unlikely]] {
+    if (FeedbackLink::IsActive() && first_queued < pending_readbacks.size()) [[unlikely]] {
         const u64 grouped = std::max(queue_wait_ticks[0], queue_wait_ticks[1]);
-        FeedbackLink::OnPrefetchBatch(queue_tick, grouped, 0, 0);
+        for (size_t i = first_queued; i < pending_readbacks.size(); ++i) {
+            const auto& readback = pending_readbacks[i];
+            FeedbackLink::OnPrefetchBatch(readback.tick,
+                                          readback.on_readback_queue ? grouped : 0,
+                                          readback.window_start, readback.window_end);
+        }
     }
 }
 
@@ -1399,8 +1408,15 @@ void BufferCache::CompleteReadbacks(bool wait) {
                 } else {
                     scheduler.Wait(readback.tick);
                 }
-                Common::Perf::Add(Common::Perf::ReadbackSyncNs,
-                                  Common::Perf::NowNs() - sync_start);
+                const u64 sync_end = Common::Perf::NowNs();
+                Common::Perf::Add(Common::Perf::ReadbackSyncNs, sync_end - sync_start);
+                if (FeedbackLink::IsActive()) [[unlikely]] {
+                    FeedbackLink::OnGpuEndObserved(readback.window_start, readback.window_end,
+                                                   sync_end);
+                }
+            } else if (FeedbackLink::IsActive()) [[unlikely]] {
+                FeedbackLink::OnGpuEndObserved(readback.window_start, readback.window_end,
+                                               Common::Perf::NowNs());
             }
             FinishReadback(0);
             pending_readbacks.pop_front();
@@ -1436,6 +1452,11 @@ void BufferCache::CompleteReadbacks(bool wait) {
         }
         if (i != 0) {
             Common::Perf::Add(Common::Perf::ReadbackOutOfOrder);
+        }
+        if (FeedbackLink::IsActive()) [[unlikely]] {
+            // Refresh()+IsFree already showed the timeline tick is complete.
+            FeedbackLink::OnGpuEndObserved(readback.window_start, readback.window_end,
+                                           Common::Perf::NowNs());
         }
         FinishReadback(i);
         pending_readbacks.erase(pending_readbacks.begin() + static_cast<std::ptrdiff_t>(i));
@@ -1666,7 +1687,8 @@ void BufferCache::PrefetchStreamSource(VAddr device_addr, u64 size) noexcept {
 
 std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 size,
                                                         bool is_written, bool is_texel_buffer,
-                                                        std::optional<WrittenRange> written) {
+                                                        std::optional<WrittenRange> written,
+                                                        u64 writer_shader) {
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
     if (!is_written && size <= STREAM_THRESHOLD && !HasGpuData(device_addr, size)) {
         const auto& tuning = Common::Perf::GetTuning();
@@ -1788,7 +1810,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         memory_tracker->SetWriteTick(write_addr, write_size, Sched().CurrentTick(), active->index);
         if (FeedbackLink::IsActive()) [[unlikely]] {
             FeedbackLink::OnWriteTickSample(write_addr, write_size, Sched().CurrentTick(),
-                                            active->index, 0);
+                                            active->index, writer_shader);
         }
         Common::Perf::Add(Common::Perf::WriterFootprintNarrowed);
     } else {
@@ -1804,7 +1826,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             memory_tracker->SetWriteTick(device_addr, size, Sched().CurrentTick(), active->index);
             if (FeedbackLink::IsActive()) [[unlikely]] {
                 FeedbackLink::OnWriteTickSample(device_addr, size, Sched().CurrentTick(),
-                                                active->index, 0);
+                                                active->index, writer_shader);
             }
         }
     }

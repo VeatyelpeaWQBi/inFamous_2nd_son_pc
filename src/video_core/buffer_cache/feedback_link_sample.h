@@ -76,8 +76,12 @@ void OnPrefetchBatch(u64 job_id, u64 grouped_max_tick, u64 window_start,
 void OnWriteTickSample(u64 address, u64 size, u64 tick, u32 queue, u64 shader_hash) noexcept;
 void OnDispatchOrBind(u64 shader_hash, u64 command_tick, u64 address, u64 size) noexcept;
 void OnSchedulerFlush(u64 submit_tick_end) noexcept;
+/// CPU observation that a timeline tick or readback window is GPU-complete.
+/// Keeps the earliest qpc and clears FlagMissingGpuEnd when qpc != 0.
+void OnGpuEndObserved(u64 window_start, u64 window_end, u64 gpu_end_qpc) noexcept;
+void OnGpuEndObservedTick(u64 demand_addr, u64 tick, u64 gpu_end_qpc) noexcept;
 void OnFinishReadback(u64 window_start, u64 window_end, u64 finish_qpc, u64 wake_qpc,
-                      u64 cpu_wait_ms) noexcept;
+                      u64 cpu_wait_ms, u64 gpu_end_qpc = 0) noexcept;
 
 /// Cold path: writes sealed in-memory samples to path, or to the configured
 /// state/sessions/<id>/diagnostics/feedback-link-samples.jsonl when path is empty.

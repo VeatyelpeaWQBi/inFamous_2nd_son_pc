@@ -1494,7 +1494,6 @@ void BufferCache::FinishReadback(size_t index) {
         FeedbackLink::OnFinishReadback(readback.window_start, readback.window_end, finish_start,
                                        finish_qpc,
                                        (finish_qpc - finish_start) / 1'000'000ULL);
-        FeedbackLink::ExportJsonl();
     }
     Common::Perf::Add(Common::Perf::ReadbackSyncNs, Common::Perf::NowNs() - finish_start);
 }

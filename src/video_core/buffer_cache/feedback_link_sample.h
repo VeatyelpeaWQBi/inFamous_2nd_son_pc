@@ -79,8 +79,9 @@ void OnSchedulerFlush(u64 submit_tick_end) noexcept;
 void OnFinishReadback(u64 window_start, u64 window_end, u64 finish_qpc, u64 wake_qpc,
                       u64 cpu_wait_ms) noexcept;
 
-/// Writes sealed samples to path, or to the configured
+/// Cold path: writes sealed in-memory samples to path, or to the configured
 /// state/sessions/<id>/diagnostics/feedback-link-samples.jsonl when path is empty.
+/// Must not be called from FinishReadback or other per-hook hot paths.
 void ExportJsonl(const std::filesystem::path& path = {}) noexcept;
 
 [[nodiscard]] Label Classify(const Sample& sample) noexcept;

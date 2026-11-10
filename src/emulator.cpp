@@ -100,6 +100,7 @@ void Emulator::Shutdown() {
     if (exit_done) {
         return;
     }
+    VideoCore::FeedbackLink::ExportJsonl();
     Common::PathTrace::Stop();
     Common::Log::Flush();
     Libraries::SaveData::Backup::StopThread();
@@ -831,6 +832,7 @@ void Emulator::Restart(std::filesystem::path eboot_path,
     LOG_INFO(Common, "Relaunching the emulator with args: {}", fmt::join(args, " "));
     Core::PerfSampler::Stop();
     Common::PathTrace::Stop();
+    VideoCore::FeedbackLink::ExportJsonl();
     Common::Log::Shutdown();
 
     auto& ipc = IPC::Instance();

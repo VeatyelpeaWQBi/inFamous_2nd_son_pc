@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "common/perf_stats.h"
 
@@ -319,21 +320,30 @@ void ExportJsonl(const std::filesystem::path& path) noexcept {
     if (!state) {
         return;
     }
-    std::scoped_lock lock{state->mutex};
-    std::filesystem::path out = path.empty() ? state->export_path : path;
-    if (out.empty() || state->sealed_count == 0) {
-        return;
+
+    std::vector<Sample> sealed;
+    std::filesystem::path out;
+    {
+        std::scoped_lock lock{state->mutex};
+        out = path.empty() ? state->export_path : path;
+        if (out.empty() || state->sealed_count == 0) {
+            return;
+        }
+        sealed.reserve(state->sealed_count);
+        for (const auto& sample : state->ring) {
+            if (sample.sealed) {
+                sealed.push_back(sample);
+            }
+        }
     }
+
     try {
         std::filesystem::create_directories(out.parent_path());
         std::ofstream file{out, std::ios::out | std::ios::trunc};
         if (!file) {
             return;
         }
-        for (const auto& sample : state->ring) {
-            if (!sample.sealed) {
-                continue;
-            }
+        for (const auto& sample : sealed) {
             char line[768];
             const int n = std::snprintf(
                 line, sizeof(line),
@@ -383,7 +393,7 @@ void ExportJsonl(const std::filesystem::path& path) noexcept {
             }
         }
     } catch (...) {
-        // Diagnostics must never throw into the readback path.
+        // Diagnostics must never throw into the caller.
     }
 }
 

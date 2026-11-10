@@ -304,6 +304,9 @@ enum Counter : u32 {
     ReadbackDependenciesReduced,
     ReadbackDependencyFallbacks,
     ReadbackQueuePromotions,
+    WriterFootprintProven,
+    WriterFootprintFallbacks,
+    WriterFootprintNarrowed,
     // V2: first-use warmup coverage, compiler scheduling and precise demand-page prefetch.
     ComputeWarmFirstUses,
     ComputeColdFirstUses,
@@ -598,7 +601,7 @@ struct Tuning {
     std::atomic<bool> feedback_link_sample{false};
     /// O01 early-complete switch; default off. No Flush-timing change until the boundary patch.
     std::atomic<bool> readback_early_complete{false};
-    /// O02 writer-footprint switch; default off. No Draft A/B / SetWriteTick semantics until O02_candidate.
+    /// O02 writer-footprint switch; default off. Draft A: proven subrange SetWriteTick only when 1.
     std::atomic<bool> readback_writer_footprint{false};
     /// readback_relaxed_sites: code of the game (offsets of 256 byte blocks of its executable, as
     /// the readback site report shows them) whose reads of GPU written memory do not wait for
@@ -924,14 +927,17 @@ inline void OnFlip(float draws_per_frame, float dispatches_per_frame) {
              ms(t[ComputeBindWaitNs]), ms(t[ComputeCompileQueueWaitNs]));
 
     if (t[VertexBufferBinds] || t[IndexBufferBinds] || t[ReadbackDependencyChecks] ||
-        t[RecorderQueueWaitNs]) {
+        t[RecorderQueueWaitNs] || t[WriterFootprintProven] || t[WriterFootprintFallbacks] ||
+        t[WriterFootprintNarrowed]) {
         LOG_INFO(Debug,
                  "Perf V1: vertex binds skipped {}/{} index binds skipped {}/{} "
                  "readback dependencies: checked {} reduced {} fallback {} queue promotions {} "
+                 "writer footprint: proven {} fallback {} narrowed {} "
                  "recorder backlog wait {:.1f} ms",
                  t[VertexBufferBindsSkipped], t[VertexBufferBinds], t[IndexBufferBindsSkipped],
                  t[IndexBufferBinds], t[ReadbackDependencyChecks], t[ReadbackDependenciesReduced],
                  t[ReadbackDependencyFallbacks], t[ReadbackQueuePromotions],
+                 t[WriterFootprintProven], t[WriterFootprintFallbacks], t[WriterFootprintNarrowed],
                  ms(t[RecorderQueueWaitNs]));
     }
 

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <xxhash.h>
+#include <limits>
+#include <optional>
 
 #include <array>
 #include <filesystem>
@@ -1964,8 +1966,22 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                     LOG_ERROR(Render, "Clamped size from {} to {} for stage {:#x}",
                               vsharp.GetSize(), size, stage.pgm_hash);
                 }
+                std::optional<VideoCore::WrittenRange> written;
+                if (desc.is_written &&
+                    Common::Perf::GetTuning().readback_writer_footprint.load(
+                        std::memory_order_relaxed)) {
+                    if (size <= std::numeric_limits<u32>::max()) {
+                        written = VideoCore::EvaluateWriterFootprint(
+                            static_cast<u8>(desc.write_footprint), desc.write_imm_offset,
+                            desc.write_end, desc.write_soffset_dw, stage.flattened_ud_buf,
+                            vsharp.base_address, static_cast<u32>(size),
+                            vsharp.add_tid_enable != 0, vsharp.swizzle_enable != 0);
+                    }
+                    Common::Perf::Add(written ? Common::Perf::WriterFootprintProven
+                                              : Common::Perf::WriterFootprintFallbacks);
+                }
                 const auto [buffer, offset] = buffer_cache.ObtainBuffer(
-                    vsharp.base_address, size, desc.is_written, desc.is_formatted);
+                    vsharp.base_address, size, desc.is_written, desc.is_formatted, written);
                 const u64 offset_aligned = Common::AlignDown(offset, alignment);
                 const u64 adjust = offset - offset_aligned;
                 if (adjust % 4 != 0) {
@@ -1975,11 +1991,13 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                 push_data.AddOffset(binding.buffer, adjust);
                 buffer_infos.emplace_back(buffer->Handle(), offset_aligned, size + adjust);
                 if (desc.is_written) {
+                    const VAddr inv_addr = written ? written->address : vsharp.base_address;
+                    const u64 inv_size = written ? written->size : size;
                     // Raw storage-buffer writes can also make an aliased cached image stale.
-                    texture_cache.InvalidateMemoryFromGPU(
-                        vsharp.base_address, size);
+                    // Keep InvalidateMemoryFromGPU in lockstep with SetWriteTick qualification.
+                    texture_cache.InvalidateMemoryFromGPU(inv_addr, inv_size);
                     if (!skipped_writes.empty()) {
-                        ClearSkippedWrites(vsharp.base_address, size);
+                        ClearSkippedWrites(inv_addr, inv_size);
                     }
                 }
                 // The stream buffer is only written by the CPU before submission, its reads

@@ -12,6 +12,7 @@
 #include "common/interval_set.h"
 #include "common/types.h"
 #include "video_core/buffer_cache/buffer.h"
+#include "video_core/buffer_cache/writer_footprint.h"
 #include "video_core/buffer_cache/fault_manager.h"
 #include "video_core/buffer_cache/range_set.h"
 #include "video_core/buffer_cache/region_definitions.h"
@@ -173,9 +174,9 @@ public:
     void PrefetchStreamSource(VAddr device_addr, u64 size) noexcept;
 
     /// Finds a buffer for the specified region.
-    [[nodiscard]] std::pair<const Buffer*, u64> ObtainBuffer(VAddr device_addr, u32 size,
-                                                           bool is_written,
-                                                           bool is_texel_buffer = false);
+    [[nodiscard]] std::pair<const Buffer*, u64> ObtainBuffer(
+        VAddr device_addr, u32 size, bool is_written, bool is_texel_buffer = false,
+        std::optional<WrittenRange> written = std::nullopt);
 
     /// Attempts to obtain a buffer without modifying the cache contents.
     [[nodiscard]] std::pair<const Buffer*, u64> ObtainBufferForImage(VAddr device_addr, u32 size);

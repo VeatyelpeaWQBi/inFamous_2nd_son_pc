@@ -1,4 +1,4 @@
-﻿# 155 — O01 early-complete 完成边界实现（默认关）
+﻿# 157 — O01 early-complete 完成边界实现（默认关）
 
 - 日期（Asia/Shanghai）：2026-11-10 12:40+08
 - 作者：开发-反馈边界 / O01
@@ -26,4 +26,4 @@
 
 逻辑已进源码，但默认关时计数保持 0、完成边界不变。验收入口仍跟测试 `doc/150`：`diagnostics\super_feedback.bat -Candidate early-complete`。不要把裸 `super.bat` 当 off。
 
-*End of doc/155.*
+*End of doc/157.*

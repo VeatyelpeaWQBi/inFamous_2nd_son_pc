@@ -69,6 +69,7 @@ void ApplyGameProfile(std::string_view serial) {
     t.skip_redundant_binds.store(true, relaxed);
     t.shader_params_memo.store(true, relaxed);
     t.runtime_lookup_memo.store(serial == "CUSA00309", relaxed);
+    t.readback_early_complete.store(false, relaxed);
     t.readback_writer_footprint.store(false, relaxed);
     t.skip_empty_draws.store(true, relaxed);
     t.pipeline_key_memo.store(true, relaxed);
@@ -234,6 +235,8 @@ void PollTuning() {
             tuning.path_trace.store(value != "0", std::memory_order_relaxed);
         } else if (key == "feedback_link_sample") {
             tuning.feedback_link_sample.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "readback_early_complete") {
+            tuning.readback_early_complete.store(value != "0", std::memory_order_relaxed);
         } else if (key == "readback_writer_footprint") {
             tuning.readback_writer_footprint.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gpu_threads_priority") {

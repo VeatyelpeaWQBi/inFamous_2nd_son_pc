@@ -596,6 +596,8 @@ struct Tuning {
     std::atomic<bool> path_trace{false};
     /// Default-off FeedbackLinkSample instrument (M2-A). Never enable from ordinary run.bat.
     std::atomic<bool> feedback_link_sample{false};
+    /// O01 early-complete switch; default off. No Flush-timing change until the boundary patch.
+    std::atomic<bool> readback_early_complete{false};
     /// O02 writer-footprint switch; default off. No Draft A/B / SetWriteTick semantics until O02_candidate.
     std::atomic<bool> readback_writer_footprint{false};
     /// readback_relaxed_sites: code of the game (offsets of 256 byte blocks of its executable, as

@@ -24,8 +24,12 @@ namespace Core::SecondSon::Cheats {
 namespace {
 // All game instructions, addresses, arithmetic and parameters come from the build's XML.
 struct Choice { u32 bits{}, display{}; };
-struct Control { std::size_t offset{}; bool generation{}; std::vector<Choice> choices; };
-struct Runtime { u8* arena{}; std::array<Control, 3> controls; };
+struct Control {
+    std::size_t offset{}, completed_offset{}, result_offset{};
+    bool generation{}, request{};
+    std::vector<Choice> choices;
+};
+struct Runtime { u8* arena{}; std::array<Control, 4> controls; };
 struct ImageWrite { std::size_t offset; std::vector<u8> original, replacement; };
 struct Range { std::size_t begin, end; };
 struct Selection {
@@ -34,7 +38,7 @@ struct Selection {
 } selection;
 std::atomic<std::shared_ptr<Runtime>> runtime;
 std::atomic<Status> status{Status::Unsupported};
-constexpr std::array<std::string_view, 3> ControlIds{"recovery", "karma", "experience"};
+constexpr std::array<std::string_view, 4> ControlIds{"recovery", "karma", "experience", "karma_fill"};
 static_assert(std::atomic_ref<u32>::is_always_lock_free);
 
 [[noreturn]] void Reject(const char* reason) { throw std::runtime_error(reason); }
@@ -145,6 +149,30 @@ Options GetOptions() {
 }
 void SetRecovery(bool enabled) { SetToggle(0, enabled); }
 void SetKarma(bool enabled) { SetToggle(1, enabled); }
+KarmaFill GetKarmaFill() {
+    if (auto active = runtime.load(std::memory_order_acquire)) {
+        const auto& control = active->controls[3];
+        const auto completed = std::atomic_ref(*reinterpret_cast<u32*>(
+            active->arena + control.completed_offset)).load(std::memory_order_acquire);
+        const auto count = std::atomic_ref(*reinterpret_cast<u32*>(
+            active->arena + control.result_offset)).load(std::memory_order_relaxed);
+        return {Word(*active, control).load(std::memory_order_acquire), completed, count};
+    }
+    return {};
+}
+u32 RequestKarmaFill() {
+    if (auto active = runtime.load(std::memory_order_acquire)) {
+        const auto& control = active->controls[3];
+        auto word = Word(*active, control);
+        auto old = word.load(std::memory_order_acquire);
+        const auto completed = std::atomic_ref(*reinterpret_cast<u32*>(
+            active->arena + control.completed_offset)).load(std::memory_order_acquire);
+        if (old != completed || old == std::numeric_limits<u32>::max()) return 0;
+        if (word.compare_exchange_strong(old, old + 1, std::memory_order_release,
+                                        std::memory_order_relaxed)) return old + 1;
+    }
+    return 0;
+}
 void CycleExperience() {
     if (auto active = runtime.load(std::memory_order_acquire)) {
         const auto& control = active->controls[2];
@@ -268,14 +296,31 @@ void Install(std::uintptr_t base, std::size_t image_size, void* arena, std::size
             control.offset = static_cast<std::size_t>(offset);
             const std::string_view mode = entry.attribute("Mode").as_string();
             control.generation = mode == "generation";
-            if ((index < 2 && !control.generation) || (index == 2 && mode != "cycle"))
+            control.request = mode == "request";
+            if ((index < 2 && !control.generation) || (index == 2 && mode != "cycle") ||
+                (index == 3 && !control.request))
                 Reject("XML menu control mode does not match the menu.");
             u32 initial{};
             std::memcpy(&initial, payload.data() + offset, sizeof(initial));
-            if (control.generation && initial != 0) Reject("XML toggle must initially be off.");
+            if ((control.generation || control.request) && initial != 0)
+                Reject("XML toggle/request must initially be off.");
+            if (control.request) {
+                for (const auto pair : {std::pair{"CompletedOffset", &control.completed_offset},
+                                        std::pair{"ResultOffset", &control.result_offset}}) {
+                    const auto value = Hex(entry.attribute(pair.first).as_string());
+                    Bounds(value, sizeof(u32), data_size);
+                    if (value % alignof(u32)) Reject("XML request field is not aligned.");
+                    AddRange(controls, value, sizeof(u32));
+                    *pair.second = static_cast<std::size_t>(value);
+                    u32 initial_result{};
+                    std::memcpy(&initial_result, payload.data() + value, sizeof(u32));
+                    if (initial_result) Reject("XML request fields must initially be zero.");
+                }
+            }
             for (const auto value : entry.children("Value")) {
                 const auto bytes = Bytes(value.attribute("Bytes").as_string());
-                if (bytes.size() != sizeof(u32) || control.generation) Reject("Invalid XML control value.");
+                if (bytes.size() != sizeof(u32) || control.generation || control.request)
+                    Reject("Invalid XML control value.");
                 Choice choice{};
                 std::memcpy(&choice.bits, bytes.data(), sizeof(choice.bits));
                 choice.display = value.attribute("Display").as_uint();
@@ -283,7 +328,7 @@ void Install(std::uintptr_t base, std::size_t image_size, void* arena, std::size
                     Reject("Invalid or duplicate XML control choice.");
                 control.choices.push_back(choice);
             }
-            if (!control.generation && (control.choices.size() < 2 ||
+            if (!control.generation && !control.request && (control.choices.size() < 2 ||
                 control.choices.front().bits != initial || control.choices.front().display != 1))
                 Reject("XML cycle must initially select its off value.");
         }
@@ -317,6 +362,10 @@ void Install(std::uintptr_t base, std::size_t image_size, void* arena, std::size
             u32 initial{};
             std::memcpy(&initial, payload.data() + control.offset, sizeof(initial));
             std::construct_at(reinterpret_cast<u32*>(active->arena + control.offset), initial);
+            if (control.request) {
+                std::construct_at(reinterpret_cast<u32*>(active->arena + control.completed_offset), 0);
+                std::construct_at(reinterpret_cast<u32*>(active->arena + control.result_offset), 0);
+            }
         }
         for (const auto& write : writes)
             std::memcpy(reinterpret_cast<void*>(base + write.offset), write.replacement.data(), write.replacement.size());

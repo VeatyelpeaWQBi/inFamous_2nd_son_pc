@@ -23,5 +23,12 @@ Status GetStatus();
 Options GetOptions();
 void SetRecovery(bool enabled);
 void SetKarma(bool enabled);
+struct KarmaFill {
+    // count is the live guest meter after an explicit request, including consumption.
+    std::uint32_t requested{}, completed{}, count{};
+};
+// One-shot request consumed by the verified guest update hook, never a host memory write.
+std::uint32_t RequestKarmaFill();
+KarmaFill GetKarmaFill();
 void CycleExperience();
 } // namespace Core::SecondSon::Cheats

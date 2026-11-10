@@ -47,6 +47,18 @@ void DrawCheats() {
         }
         ImGui::TextDisabled("%s", text("每次有效业力行动增加三分之一；三次充满",
                                       "Each qualifying karma action adds 1/3; three fill the meter"));
+        const auto fill = Cheats::GetKarmaFill();
+        ImGui::BeginDisabled(fill.requested != fill.completed);
+        if (ImGui::Button(text("测试：立即充满大招", "Test: fill super move now"))) {
+            Cheats::RequestKarmaFill();
+        }
+        ImGui::EndDisabled();
+        if (fill.requested != fill.completed) {
+            ImGui::TextDisabled("%s", text("等待游戏更新，关闭菜单后生效", "Pending game update; close this menu"));
+        } else if (fill.completed) {
+            ImGui::TextDisabled(text("当前大招计量：%u；满槽后关闭菜单按十字键下释放",
+                                      "Current super meter: %u; close menu and press D-pad down when full"), fill.count);
+        }
         if (ImGui::Button(text("快速积攒业力经验", "Cycle karma XP multiplier"))) {
             Cheats::CycleExperience();
         }

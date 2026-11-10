@@ -169,6 +169,8 @@
         <Code Id="experience" Offset="0x1e0" Value="F30F590500000000E900000000" />
         <!-- Only the native aligned-action return path; carry thirds against the effective unlocked threshold. -->
         <Code Id="karma" Offset="0x1f0" Value="5152415041514152415349BA000000000000000049BB00000000000000004C399D080000000F85D9000000458B9A0400000041F7C3010000000F84C5000000448B853CFFFFFF443983280000000F8EB10000004585C00F88A80000004181FC010000000F8C9B0000004181FCA08601000F8F8E0000004539E00F8D85000000453B9A100000000F8527000000493B9A300000000F851A000000453B82200000000F850D000000453BA2240000000F840B00000041C7821C0000000000000045899A1000000049899A300000004589A2240000004489E04103821C00000031D2B903000000F7F14189921C0000004401C04439E0410F4FC489832800000041898220000000415B415A415941585A598B83280000004439E0E900000000" />
+        <!-- One-shot fill request, serviced after the existing hero resource update. -->
+        <Code Id="karma_fill_update" Offset="0x320" Value="53415441554889FBE80000000049BC0000000000000000458B6C24444585ED745548B80000000000000000483918754648399B48EF0100753D48B8000000000000000083B8C400000001772A453B6C24487413488DBB30EF0100BEFFFFFF7F31D2E8000000008B8358EF0100418944244C45896C2448415D415C5BC3" />
         <Relocations>
             <Relocation Offset="0x55" Type="rel32" Space="image" Target="0x60ab30" />
             <Relocation Offset="0x5b" Type="abs64" Space="arena" Target="0x0" />
@@ -183,8 +185,14 @@
             <Relocation Offset="0x1fc" Type="abs64" Space="arena" Target="0x0" />
             <Relocation Offset="0x206" Type="abs64" Space="image" Target="0x5b5df6" />
             <Relocation Offset="0x308" Type="rel32" Space="image" Target="0x666426" />
+            <Relocation Offset="0x329" Type="rel32" Space="arena" Target="0x50" />
+            <Relocation Offset="0x32f" Type="abs64" Space="arena" Target="0x0" />
+            <Relocation Offset="0x343" Type="abs64" Space="image" Target="0x210cfe0" />
+            <Relocation Offset="0x35b" Type="abs64" Space="image" Target="0x12facf8" />
+            <Relocation Offset="0x382" Type="rel32" Space="image" Target="0x666310" />
         </Relocations>
         <Controls>
+            <Control Id="karma_fill" Offset="0x44" Mode="request" CompletedOffset="0x48" ResultOffset="0x4c" />
             <Control Id="recovery" Offset="0x0" Mode="generation" />
             <Control Id="karma" Offset="0x4" Mode="generation" />
             <Control Id="experience" Offset="0x8" Mode="cycle">
@@ -194,7 +202,7 @@
             </Control>
         </Controls>
         <Hooks>
-            <Hook Id="recovery" Address="0x607543" Original="E8E8350000" Kind="call" Target="0x50" />
+            <Hook Id="recovery" Address="0x607543" Original="E8E8350000" Kind="call" Target="0x320" />
             <Hook Id="experience" Address="0x6657cb" Original="E8E0E5F7FF" Kind="call" Target="0x1e0" />
             <Hook Id="karma" Address="0x666420" Original="8B43284439E0" Kind="jump" Target="0x1f0" />
         </Hooks>

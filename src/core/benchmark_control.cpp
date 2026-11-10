@@ -27,6 +27,7 @@
 #include "common/path_util.h"
 #include "core/emulator_settings.h"
 #include "core/debug_state.h"
+#include "core/second_son_cheats.h"
 #include "input/controller.h"
 #include "video_core/renderdoc.h"
 #ifdef IFSS_HAVE_ITT
@@ -470,10 +471,17 @@ void Poll(Input::GameController& controller) {
 #else
             throw std::runtime_error("This engine was built without the installed Nsight SDK");
 #endif
+        } else if (action == "karma-fill") {
+            if (!SecondSon::Cheats::RequestKarmaFill())
+                throw std::runtime_error("Karma fill unavailable or a request is already pending");
         } else if (action == "status") {
             const auto& tuning = Common::Perf::GetTuning();
+            const auto fill = SecondSon::Cheats::GetKarmaFill();
             nlohmann::json status{
                 {"schema", 2},
+                {"karma_fill_requested", fill.requested},
+                {"karma_fill_completed", fill.completed},
+                {"karma_fill_count", fill.count},
                 {"sequence", sequence}, {"game_serial", Common::ElfInfo::Instance().GameSerial()},
                 {"observed_unix_ms", SampleClock().unix_ns / 1000000},
                 {"draws_per_frame", DebugState.GetDrawCallsAvg()},

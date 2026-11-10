@@ -485,6 +485,8 @@ void Poll(Input::GameController& controller) {
                 {"readback_window_kb", tuning.readback_window_bytes.load() / 1024},
                 {"readback_prefetch", tuning.readback_prefetch.load()},
                 {"readback_early_complete", tuning.readback_early_complete.load()},
+                {"feedback_early_complete_submits", Common::Perf::Total(Common::Perf::ReadbackEarlyCompleteSubmits)},
+                {"feedback_early_complete_fallbacks", Common::Perf::Total(Common::Perf::ReadbackEarlyCompleteFallbacks)},
                 {"readback_writer_footprint", tuning.readback_writer_footprint.load()},
                 {"recorder_spin_us", tuning.recorder_spin_us.load()},
                 {"gpu_threads_affinity", tuning.gpu_threads_affinity.load()},

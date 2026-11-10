@@ -304,6 +304,8 @@ enum Counter : u32 {
     ReadbackDependenciesReduced,
     ReadbackDependencyFallbacks,
     ReadbackQueuePromotions,
+    ReadbackEarlyCompleteSubmits,
+    ReadbackEarlyCompleteFallbacks,
     // V2: first-use warmup coverage, compiler scheduling and precise demand-page prefetch.
     ComputeWarmFirstUses,
     ComputeColdFirstUses,
@@ -928,10 +930,11 @@ inline void OnFlip(float draws_per_frame, float dispatches_per_frame) {
         LOG_INFO(Debug,
                  "Perf V1: vertex binds skipped {}/{} index binds skipped {}/{} "
                  "readback dependencies: checked {} reduced {} fallback {} queue promotions {} "
-                 "recorder backlog wait {:.1f} ms",
+                 "early-complete {} fallback {} recorder backlog wait {:.1f} ms",
                  t[VertexBufferBindsSkipped], t[VertexBufferBinds], t[IndexBufferBindsSkipped],
                  t[IndexBufferBinds], t[ReadbackDependencyChecks], t[ReadbackDependenciesReduced],
                  t[ReadbackDependencyFallbacks], t[ReadbackQueuePromotions],
+                 t[ReadbackEarlyCompleteSubmits], t[ReadbackEarlyCompleteFallbacks],
                  ms(t[RecorderQueueWaitNs]));
     }
 

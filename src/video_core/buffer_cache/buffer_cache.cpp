@@ -25,6 +25,7 @@
 #include "video_core/buffer_cache/feedback_link_sample.h"
 #include "video_core/buffer_cache/memory_tracker.h"
 #include "video_core/buffer_cache/readback_dependencies.h"
+#include "video_core/buffer_cache/readback_early_complete_policy.h"
 #include "video_core/buffer_cache/readback_prefetch_policy.h"
 #include "video_core/buffer_cache/region_definitions.h"
 #include "video_core/page_manager.h"
@@ -943,7 +944,8 @@ bool BufferCache::CollectReadback(const Buffer* arena, PendingReadback& readback
 }
 
 bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback,
-                                   WindowWriters& writers, bool queue_enabled, bool& on_queue) {
+                                   WindowWriters& writers, bool queue_enabled, bool& on_queue,
+                                   bool record_if_graphics) {
     on_queue = queue_enabled && writers.submitted;
     // Precise downloads always refine the conservative window dependency using actual
     // copied ranges. Unknown writers or a changed version still keep whole-window waits.
@@ -982,7 +984,7 @@ bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback
             on_queue = queue_enabled && writers.submitted;
         }
     }
-    if (!on_queue) {
+    if (!on_queue && record_if_graphics) {
         runtime.CopyBuffer(arena, readback.download.buffer, readback.copies);
     }
     return true;
@@ -1008,6 +1010,64 @@ void BufferCache::NoteHotWindow(VAddr start, VAddr end, bool demand_pages) {
         .prefetch_on_queue = false,
         .demand_pages = demand_pages,
     });
+}
+
+bool BufferCache::SubmitEarlyComplete(const Buffer* arena, PendingReadback& readback,
+                                      WindowWriters& writers, bool queue_enabled,
+                                      Vulkan::Semaphore*& wait_semaphore) {
+    auto ensure_submitted = [this](u32 queue, u64 tick) {
+        if (tick == 0) {
+            return true;
+        }
+        if (queue == 1 && compute_queue == nullptr) {
+            return true;
+        }
+        Vulkan::Scheduler& sched = queue == 0 ? scheduler : *compute_queue->scheduler;
+        if (tick <= sched.SubmittedTick()) {
+            return true;
+        }
+        // Still being recorded: the producer shares this session with already-recorded work,
+        // so the copy cannot get a tighter completion boundary than the ordinary Flush.
+        if (tick >= sched.CurrentTick()) {
+            return false;
+        }
+        // Flushed to the recording thread but not yet handed to the driver. Waiting on the
+        // readback queue for this tick would freeze the game; wait until it is submitted.
+        sched.WaitSubmitted(tick);
+        return tick <= sched.SubmittedTick();
+    };
+    if (!ensure_submitted(0, writers.ticks[0]) || !ensure_submitted(1, writers.ticks[1])) {
+        return false;
+    }
+    writers = ClassifyWriters(writers.ticks);
+    if (!writers.submitted) {
+        return false;
+    }
+
+    if (queue_enabled && readback_queue) {
+        const ReadbackQueue::Job job{
+            .src = readback.arena_handle,
+            .dst = readback.download.buffer->Handle(),
+            .copies = readback.copies,
+        };
+        readback.tick = readback_queue->Submit(std::span{&job, 1}, ReadbackWaits(writers));
+        readback.on_readback_queue = true;
+        wait_semaphore = &readback_queue->Semaphore();
+        return true;
+    }
+
+    // Queue disabled: record the copy in its own graphics session so the guest wait is not
+    // tied to work already recorded in the current session.
+    if (scheduler.HasWork()) {
+        scheduler.Flush();
+    }
+    WaitComputeWriter(writers);
+    runtime.CopyBuffer(arena, readback.download.buffer, readback.copies);
+    readback.tick = scheduler.CurrentTick();
+    scheduler.MarkReadbackSession();
+    scheduler.Flush();
+    wait_semaphore = scheduler.GetWorkSemaphore();
+    return true;
 }
 
 u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
@@ -1057,6 +1117,11 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     // (with threaded recording, such a wait froze the game).
     const bool queue_enabled = UseReadbackQueue();
     bool use_queue = queue_enabled && writers.submitted;
+    const bool early_complete = EarlyCompleteDemandEligible(
+        Common::Perf::GetTuning().readback_early_complete.load(std::memory_order_relaxed),
+        is_write, size, BYTES_PER_PAGE,
+        EmulatorSettings.GetReadbacksMode() == GpuReadbacksMode::Precise);
+    const bool try_early_complete = early_complete && !use_queue;
     // Pages of the window downloaded by earlier readbacks stay protected until those complete:
     // wait for the last overlapping one (earlier ones of another queue may complete after it,
     // the guest thread then waits for them too, see ReadMemory).
@@ -1074,7 +1139,8 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
         // pending one, which was recorded after the last GPU write of the window.
         memory_tracker->AddPendingReadback(window_start, window_end);
     } else {
-        recorded = PrepareReadback(arena, readback, writers, queue_enabled, use_queue);
+        recorded = PrepareReadback(arena, readback, writers, queue_enabled, use_queue,
+                                   !try_early_complete);
     }
     if (!recorded) {
         // Nothing left to download in the window.
@@ -1118,7 +1184,14 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
         readback.tick = readback_queue->Submit(std::span{&job, 1}, ReadbackWaits(writers));
         readback.on_readback_queue = true;
         wait_semaphore = &readback_queue->Semaphore();
+    } else if (try_early_complete && SubmitEarlyComplete(arena, readback, writers, queue_enabled,
+                                                         wait_semaphore)) {
+        Common::Perf::Add(Common::Perf::ReadbackEarlyCompleteSubmits);
     } else {
+        if (try_early_complete) {
+            Common::Perf::Add(Common::Perf::ReadbackEarlyCompleteFallbacks);
+            runtime.CopyBuffer(arena, readback.download.buffer, readback.copies);
+        }
         WaitComputeWriter(writers);
         readback.tick = scheduler.CurrentTick();
         scheduler.MarkReadbackSession();

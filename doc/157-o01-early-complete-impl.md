@@ -1,6 +1,7 @@
 ﻿# 157 — O01 early-complete 完成边界实现（默认关）
 
 - 日期（Asia/Shanghai）：2026-11-10 12:40+08
+- 修订（Asia/Shanghai）：2026-11-11 12:40+08 — 两个路径计数从 perf_log 门解绑
 - 作者：开发-反馈边界 / O01
 - 分支：`feat/o01-early-complete-impl`（从 `develop` @ `eb52d90` 另开工作树）
 - 状态：完成边界逻辑已实现；**开关默认关**；未打开、未构建、未采集
@@ -21,6 +22,8 @@
 
 - `ReadbackEarlyCompleteSubmits` / 回执 `feedback_early_complete_submits`：走了定点提交
 - `ReadbackEarlyCompleteFallbacks` / 回执 `feedback_early_complete_fallbacks`：资格到了但回退现行 Flush
+
+这两个计数从 `perf_log` 门解绑，走进程级原子量，不占用 per-thread 计数槽。轻量采集（`perf_log=0`）也会在 status 回执里看到实际路径次数，不必开 `-Profile counters`。其它 Perf 计数仍受 `perf_log` 门控。
 
 ## 仍由开关挡住
 

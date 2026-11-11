@@ -374,28 +374,38 @@ inline ThreadCounters* LocalCounters(bool& shared) {
     return local;
 }
 
-/// O02 path receipts that must remain visible in lightweight captures (perf_log = 0).
-/// Official lightweight BA/AB needs proven/fallback/narrowed in the status JSON even
-/// when perf_log is off; these use process-wide atomics and never take a per-thread
-/// counter slot. Other Perf counters remain gated.
+/// O01/O02 path receipts that must remain visible in lightweight captures (perf_log = 0).
+/// Official lightweight BA/AB needs these in the status JSON even when perf_log is off;
+/// they use process-wide atomics and never take a per-thread counter slot.
+/// Other Perf counters remain gated.
 inline bool IsLightweightReceipt(Counter counter) {
-    return counter == WriterFootprintProven ||
+    return counter == ReadbackEarlyCompleteSubmits ||
+           counter == ReadbackEarlyCompleteFallbacks ||
+           counter == WriterFootprintProven ||
            counter == WriterFootprintFallbacks ||
            counter == WriterFootprintNarrowed;
 }
 
 inline std::atomic<u64>& LightweightReceipt(Counter counter) {
-    static std::atomic<u64> proven{0};
-    static std::atomic<u64> fallbacks{0};
-    static std::atomic<u64> narrowed{0};
-    if (counter == WriterFootprintProven) {
-        return proven;
+    static std::atomic<u64> early_complete_submits{0};
+    static std::atomic<u64> early_complete_fallbacks{0};
+    static std::atomic<u64> writer_footprint_proven{0};
+    static std::atomic<u64> writer_footprint_fallbacks{0};
+    static std::atomic<u64> writer_footprint_narrowed{0};
+    switch (counter) {
+    case ReadbackEarlyCompleteSubmits:
+        return early_complete_submits;
+    case ReadbackEarlyCompleteFallbacks:
+        return early_complete_fallbacks;
+    case WriterFootprintProven:
+        return writer_footprint_proven;
+    case WriterFootprintFallbacks:
+        return writer_footprint_fallbacks;
+    default:
+        return writer_footprint_narrowed;
     }
-    if (counter == WriterFootprintFallbacks) {
-        return fallbacks;
-    }
-    return narrowed;
 }
+
 
 /// Sum of the counter over all threads.
 inline u64 Total(Counter counter) {

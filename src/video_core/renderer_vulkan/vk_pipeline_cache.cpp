@@ -23,6 +23,7 @@
 #include "common/thread.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
+#include "video_core/compile_observer.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/backend/spirv/raw_access_chains.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
@@ -1324,6 +1325,7 @@ bool PipelineCache::RefreshComputeKey() {
 vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
                                               const std::span<const u32>& code, size_t perm_idx,
                                               Shader::Backend::Bindings& binding) {
+    VideoCore::ObserveCompile observe{true};
     Common::Perf::ScopedTimer compile_timer{Common::Perf::ShaderCompiles,
                                             Common::Perf::ShaderCompileNs};
     const bool time_compute = info.hw_stage == HwStage::Compute &&

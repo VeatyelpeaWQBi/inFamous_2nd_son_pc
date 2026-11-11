@@ -30,6 +30,7 @@
 #include "core/second_son_cheats.h"
 #include "input/controller.h"
 #include "video_core/renderdoc.h"
+#include "video_core/compile_observer.h"
 #ifdef IFSS_HAVE_ITT
 #include <ittnotify.h>
 #endif
@@ -477,11 +478,15 @@ void Poll(Input::GameController& controller) {
         } else if (action == "status") {
             const auto& tuning = Common::Perf::GetTuning();
             const auto fill = SecondSon::Cheats::GetKarmaFill();
+            auto& compiles = VideoCore::CompileObserver::Get();
             nlohmann::json status{
                 {"schema", 2},
                 {"karma_fill_requested", fill.requested},
                 {"karma_fill_completed", fill.completed},
                 {"karma_fill_count", fill.count},
+                {"shader_compile_starts", compiles.shaders.load(std::memory_order_acquire)},
+                {"pipeline_compile_starts", compiles.pipelines.load(std::memory_order_acquire)},
+                {"compilations_active", compiles.active.load(std::memory_order_acquire)},
                 {"sequence", sequence}, {"game_serial", Common::ElfInfo::Instance().GameSerial()},
                 {"observed_unix_ms", SampleClock().unix_ns / 1000000},
                 {"draws_per_frame", DebugState.GetDrawCallsAvg()},

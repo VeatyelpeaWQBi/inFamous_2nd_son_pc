@@ -7,6 +7,7 @@
 
 #include "common/assert.h"
 #include "common/perf_stats.h"
+#include "video_core/compile_observer.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_discard_frag.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_quad_rect.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
@@ -118,6 +119,7 @@ GraphicsPipeline::GraphicsPipeline(
 }
 
 void GraphicsPipeline::Compile() {
+    VideoCore::ObserveCompile observe{false};
     const u64 start_ns = Common::Perf::NowNs();
     const vk::Device device = instance.GetDevice();
     auto& sdata = build->sdata;

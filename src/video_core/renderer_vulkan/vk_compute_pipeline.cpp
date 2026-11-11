@@ -4,6 +4,7 @@
 #include <boost/container/small_vector.hpp>
 
 #include "common/perf_stats.h"
+#include "video_core/compile_observer.h"
 #include "shader_recompiler/info.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_driver_cache.h"
@@ -121,6 +122,7 @@ void ComputePipeline::NoteFirstUse() {
 }
 
 void ComputePipeline::Compile() {
+    VideoCore::ObserveCompile observe{false};
     const u64 start_ns = Common::Perf::NowNs();
     const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_size_ci = {
         .requiredSubgroupSize = 64,

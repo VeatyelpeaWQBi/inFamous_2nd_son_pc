@@ -8,6 +8,7 @@
 #include "common/elf_info.h"
 #include "common/path_trace.h"
 #include "common/perf_stats.h"
+#include "core/benchmark_control.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -191,11 +192,11 @@ Runtime::Runtime(const Instance& instance_, Scheduler& scheduler_)
     const char* experiment = std::getenv("IFSS_EXPERIMENT_ACCESS_UNION");
     if (experiment && std::strcmp(experiment, "1") == 0) access_union_state = 0;
     const char* audit = std::getenv("IFSS_READBACK_BARRIER_AUDIT");
-    if (audit && std::strcmp(audit, "1") == 0) {
+    if (Core::Benchmark::CaptureEnabled() && audit && std::strcmp(audit, "1") == 0) {
         readback_barrier_audit = std::make_unique<ReadbackBarrierAudit>();
     }
     const char* scope_audit = std::getenv("IFSS_COMPUTE_SCOPE_AUDIT");
-    if (scope_audit && std::strcmp(scope_audit, "1") == 0) {
+    if (Core::Benchmark::CaptureEnabled() && scope_audit && std::strcmp(scope_audit, "1") == 0) {
         compute_scope_audit = std::make_unique<ComputeScopeAudit>();
     }
     const char* readback = std::getenv("IFSS_READBACK_COPY_STAGE");

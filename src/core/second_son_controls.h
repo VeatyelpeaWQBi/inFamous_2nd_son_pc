@@ -28,7 +28,6 @@ void InstallControls(std::uintptr_t base, std::size_t image_size, void* arena,
 void InstallParticlePollPause(std::uintptr_t base, std::size_t image_size, void* arena);
 void InstallFeedbackArena(std::uintptr_t base, std::size_t image_size, void* arena);
 std::array<std::uint64_t, 2> FeedbackArenaMoves();
-std::array<std::uint64_t, 32> FeedbackArenaGroupMoves();
 struct FeedbackPoolCounts {
     std::array<std::uint64_t, 2> moves{}, overflows{}, busy{}, used{}, resets{};
     std::uint32_t capacity{}, stride{}, group_records{};

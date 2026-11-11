@@ -5,6 +5,7 @@
 #include <limits>
 #include "common/assert.h"
 #include "common/logging/log.h"
+#include "core/benchmark_control.h"
 #include "core/emulator_settings.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
@@ -306,7 +307,7 @@ void Swapchain::RefreshSemaphores() {
     image_index = 0;
     image_acquired.resize(image_count);
     present_ready.resize(image_count);
-    if (EmulatorSettings.IsVkValidationEnabled()) {
+    if (Core::Benchmark::CaptureEnabled() && EmulatorSettings.IsVkValidationEnabled()) {
         const auto [result, fence] = device.createFence({});
         ASSERT_MSG(result == vk::Result::eSuccess,
                    "Swapchain availability fence creation failed: {}", vk::to_string(result));

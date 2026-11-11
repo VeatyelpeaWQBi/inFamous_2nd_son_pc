@@ -27,7 +27,6 @@ namespace Core::SecondSon {
 namespace {
 bool verified_build{}, want_prompts{}, want_chords{}, prompts_active{};
 alignas(8) volatile LONG64 feedback_arena_moves[2]{};
-alignas(8) volatile LONG64 feedback_arena_group_moves[32]{};
 constexpr u32 FeedbackSideBytes = 30 * 1024 * 1024;
 constexpr u32 FeedbackWindowBytes = 512 * 1024;
 constexpr u32 FeedbackRecordPage = 0xd00000;
@@ -376,14 +375,6 @@ std::array<std::uint64_t, 2> FeedbackArenaMoves() {
     };
 }
 
-std::array<std::uint64_t, 32> FeedbackArenaGroupMoves() {
-    std::array<std::uint64_t, 32> result{};
-    for (size_t i = 0; i < result.size(); ++i) {
-        result[i] = static_cast<u64>(InterlockedCompareExchange64(&feedback_arena_group_moves[i], 0, 0));
-    }
-    return result;
-}
-
 FeedbackPoolCounts FeedbackArenaPoolCounts() {
     FeedbackPoolCounts result;
     result.capacity = FeedbackPoolCapacity;
@@ -678,93 +669,19 @@ void CheckFeedbackPoolMapping(u32 group_records) {
     LOG_INFO(Loader, "Feedback arena pool: generated reservation, epoch, capacity and concurrency checks passed, group {}", group_records);
 }
 
-// Input RAX is the successful original reservation and R10 is the enlarged allocation base.
-// On success RAX names its private window and R11 its diagnostic counter. Rejects keep RAX.
-void EmitFeedbackGroupMapping(Xbyak::CodeGenerator& code, Xbyak::Label& done) {
-    constexpr u32 side_size = FeedbackSideBytes;
-    constexpr u32 window = FeedbackWindowBytes;
-    constexpr u32 page = FeedbackRecordPage;
-    Xbyak::Label side_one, indexed;
-    // Encode the original side and page-relative 256 B slot in [0,32). No new
-    // reservation is made; each successful original reservation retains its lifetime.
-    code.mov(code.r11, code.rax);
-    code.sub(code.r11, code.r10);
-    code.cmp(code.r11, side_size);
-    code.jae(side_one);
-    code.sub(code.r11, page);
-    code.cmp(code.r11, 0x1000);
-    code.jae(done, code.T_NEAR);
-    code.jmp(indexed);
-    code.L(side_one);
-    code.sub(code.r11, side_size + page);
-    code.cmp(code.r11, 0x1000);
-    code.jae(done, code.T_NEAR);
-    code.add(code.r11, 0x1000);
-    code.L(indexed);
-    code.test(code.r11, 0xff);
-    code.jnz(done, code.T_NEAR);
-    code.shr(code.r11, 8);
-    code.lea(code.rax, code.ptr[code.r10 + 2 * side_size + window - 1]);
-    code.and_(code.rax, -static_cast<s32>(window));
-    code.mov(code.r10, code.r11);
-    code.shl(code.r10, 19);
-    code.add(code.rax, code.r10);
-    code.mov(code.r10, reinterpret_cast<std::uintptr_t>(&feedback_arena_group_moves[0]));
-    code.lea(code.r11, code.ptr[code.r10 + code.r11 * 8]);
-}
-
-void CheckFeedbackGroupMapping() {
-    // Exercise the exact mapping emitter with numeric guest addresses. The generated probe
-    // returns addresses only and never accesses guest memory or changes any move counter.
-    Xbyak::CodeGenerator probe(512);
-    Xbyak::Label done;
-    probe.mov(probe.rax, probe.rcx);
-    probe.mov(probe.r10, probe.rdx);
-    EmitFeedbackGroupMapping(probe, done);
-    probe.L(done);
-    probe.mov(probe.qword[probe.r8], probe.rax);
-    probe.mov(probe.qword[probe.r8 + 8], probe.r11);
-    probe.ret();
-    probe.ready();
-    struct Result { u64 address, counter; };
-    const auto run = probe.getCode<void (*)(u64, u64, Result*)>();
-    for (u64 residue = 0; residue < FeedbackWindowBytes; residue += 256) {
-        const u64 allocation = 0x200000000ULL + residue;
-        const u64 first = (allocation + 2 * FeedbackSideBytes + FeedbackWindowBytes - 1) &
-                          ~(u64{FeedbackWindowBytes} - 1);
-        for (u64 index = 0; index < 32; ++index) {
-            const u64 original = allocation + (index / 16) * FeedbackSideBytes +
-                                 FeedbackRecordPage + (index % 16) * 256;
-            Result result{};
-            run(original, allocation, &result);
-            if (result.address != first + index * FeedbackWindowBytes ||
-                result.counter != reinterpret_cast<u64>(&feedback_arena_group_moves[index])) {
-                throw std::runtime_error("Feedback group generated mapping check failed.");
-            }
-        }
-        for (u64 offset : {u64{FeedbackRecordPage - 256}, u64{FeedbackRecordPage + 1},
-                           u64{FeedbackRecordPage + 0xfff}, u64{FeedbackRecordPage + 0x1000},
-                           u64{FeedbackSideBytes + FeedbackRecordPage + 0x1000}}) {
-            Result result{};
-            run(allocation + offset, allocation, &result);
-            if (result.address != allocation + offset) {
-                throw std::runtime_error("Feedback group rejection check failed.");
-            }
-        }
-    }
-    LOG_INFO(Loader, "Feedback arena group: generated mapping checks passed");
-}
 } // namespace
 
 void InstallFeedbackArena(std::uintptr_t base, std::size_t image_size, void* arena) {
     const char* enabled = std::getenv("IFSS_FEEDBACK_ARENA");
     const char* group_env = std::getenv("IFSS_FEEDBACK_ARENA_GROUP");
-    const bool group = group_env && std::string_view{group_env} == "1";
     const char* pool_env = std::getenv("IFSS_FEEDBACK_ARENA_POOL");
-    const bool tiled = pool_env && std::string_view{pool_env} == "tiled64";
-    const bool pool = tiled || (pool_env && std::string_view{pool_env} == "1");
-    const u32 group_records = tiled ? 64 : FeedbackPoolCapacity;
-    if (!verified_build || (!pool && !group && (!enabled || std::string_view{enabled} != "1"))) {
+    if ((group_env && std::string_view{group_env} == "1") ||
+        (pool_env && std::string_view{pool_env} == "tiled64")) {
+        throw std::runtime_error("The grouped and tiled feedback arena experiments are retired.");
+    }
+    const bool pool = pool_env && std::string_view{pool_env} == "1";
+    constexpr u32 group_records = FeedbackPoolCapacity;
+    if (!verified_build || (!pool && (!enabled || std::string_view{enabled} != "1"))) {
         return;
     }
     constexpr std::size_t alloc_call = 0x3e97ac;
@@ -773,7 +690,7 @@ void InstallFeedbackArena(std::uintptr_t base, std::size_t image_size, void* are
     constexpr std::size_t manager = 0x7d3eb10;
     constexpr u32 side_size = FeedbackSideBytes;
     constexpr u32 window = FeedbackWindowBytes;
-    const u32 extra_windows = pool ? 2 * (FeedbackPoolCapacity / group_records) + 1 : group ? 33 : 3;
+    const u32 extra_windows = pool ? 2 * (FeedbackPoolCapacity / group_records) + 1 : 3;
     const u32 expanded_size = 2 * side_size + extra_windows * window;
     // The observed record follows the 12 MiB particle array and 1 MiB sort list.
     constexpr u32 slot = 0xd00400;
@@ -783,12 +700,8 @@ void InstallFeedbackArena(std::uintptr_t base, std::size_t image_size, void* are
         throw std::runtime_error("Second Son feedback arena manager is outside the image.");
     }
 
-    if (group) {
-        CheckFeedbackGroupMapping();
-    }
     if (pool) {
         CheckFeedbackPoolMapping(FeedbackPoolCapacity);
-        CheckFeedbackPoolMapping(64);
         InterlockedExchange(&feedback_pool_group_records, group_records);
     }
 
@@ -852,8 +765,6 @@ void InstallFeedbackArena(std::uintptr_t base, std::size_t image_size, void* are
         code.cmp(code.rax, code.r11);
         code.jb(done, code.T_NEAR);
         EmitFeedbackPoolMapping(code, done, reinterpret_cast<u64>(&feedback_pool), group_records);
-    } else if (group) {
-        EmitFeedbackGroupMapping(code, done);
     } else {
         code.sub(code.r11, side_size - slot);
         code.cmp(code.rax, code.r11);
@@ -914,9 +825,6 @@ void InstallFeedbackArena(std::uintptr_t base, std::size_t image_size, void* are
         FlushInstructionCache(GetCurrentProcess(), address, write.replacement.size());
     }
     LOG_INFO(Loader, "Feedback arena experiment: verified allocation and record hooks");
-    if (group) {
-        LOG_INFO(Loader, "Feedback arena group: 32 isolated windows, 16.5 MiB extension");
-    }
     if (pool) {
         LOG_INFO(Loader, "Feedback arena pool: 2048 records per original side epoch, {} records per window, {} KiB extension",
                  group_records, extra_windows * (window / 1024));

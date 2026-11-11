@@ -7,6 +7,7 @@
 #include <array>
 #include <algorithm>
 #include <charconv>
+#include <cctype>
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
@@ -48,13 +49,41 @@ namespace Core::Benchmark {
 namespace {
 using Clock = std::chrono::steady_clock;
 std::filesystem::path root;
+bool capture_enabled{};
+
+bool IsCaptureSession(const std::filesystem::path& session) {
+    std::ifstream input{session / "launch.json"};
+    if (!input) return false;
+    const auto manifest = nlohmann::json::parse(input, nullptr, false);
+    if (!manifest.is_object() || !manifest.contains("schema") || manifest["schema"] != 3) {
+        return false;
+    }
+    const auto flag = [&manifest](const char* key) {
+        const auto it = manifest.find(key);
+        return it != manifest.end() && it->is_boolean() && it->get<bool>();
+    };
+    const auto mode = [&manifest](const char* key) -> std::string {
+        const auto it = manifest.find(key);
+        if (it == manifest.end() || !it->is_string()) return {};
+        auto name = it->get<std::string>();
+        std::ranges::transform(name, name.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return name;
+    };
+    constexpr std::array<std::string_view, 14> diagnostics{
+        "cpu", "gpu", "memory", "compute", "draw", "validation", "crash", "shaders",
+        "renderdoc", "nsight", "vtune", "vtune-memory", "all", "full"};
+    const auto timing = mode("timing_profile");
+    return flag("benchmark") || flag("super_capture") ||
+           std::ranges::find(diagnostics, mode("diagnostic")) != diagnostics.end() ||
+           timing == "baseline" || timing == "critical" || timing == "lighting";
+}
 Clock::time_point next_poll{}, release_time{};
 Clock::time_point button_watchdog{};
 u64 button_release_frame{};
 u64 last_sequence{};
 std::atomic<bool> quit_requested{};
 std::atomic<u64> native_compute{}, native_graphics_compute{};
-std::atomic<u64> compute_recorder_submits{};
 std::atomic<u64> gds_scope_bindings{}, gds_scope_conflicts_reduced{}, gds_scope_barriers_avoided{};
 std::atomic<u64> completed_flips{};
 struct ThreadCpuSample {
@@ -181,6 +210,7 @@ void Configure(const std::filesystem::path& directory) {
     if (root != user.parent_path()) {
         throw std::runtime_error("Benchmark directory must own the selected project user directory");
     }
+    capture_enabled = IsCaptureSession(root);
     for (const char* child : {"log", "screenshots", "home", "custom_configs", "patches"}) {
         std::filesystem::create_directories(root / child);
     }
@@ -194,9 +224,13 @@ bool Enabled() {
     return !root.empty();
 }
 
+bool CaptureEnabled() {
+    return capture_enabled;
+}
+
 void PrepareGpuDiagnostics() {
 #ifdef _WIN32
-    if (!Enabled()) return;
+    if (!CaptureEnabled()) return;
     const auto environment_path = [](const wchar_t* name) {
         std::wstring value(32768, L'\0');
         const DWORD count = GetEnvironmentVariableW(name, value.data(), DWORD(value.size()));
@@ -294,7 +328,8 @@ LONG WINAPI RecordShutdownException(EXCEPTION_POINTERS* info) noexcept {
 
 void ArmShutdownTrace() {
 #ifdef _WIN32
-    if (!Enabled() || shutdown_trace != INVALID_HANDLE_VALUE || !std::getenv("IFSS_NSIGHT_INSTALL")) return;
+    if (!CaptureEnabled() || shutdown_trace != INVALID_HANDLE_VALUE ||
+        !std::getenv("IFSS_NSIGHT_INSTALL")) return;
     const auto path = root / "diagnostics" / "shutdown-exceptions.txt";
     shutdown_trace = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
                                  CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -340,13 +375,13 @@ bool ProfilerFastExitReady() {
 }
 
 void NoteNativeCompute(bool graphics) {
-    if (!Enabled()) return;
+    if (!CaptureEnabled()) return;
     native_compute.fetch_add(1, std::memory_order_relaxed);
     if (graphics) native_graphics_compute.fetch_add(1, std::memory_order_relaxed);
 }
 
 void NoteThreadCpu(std::string_view name, double cpu, double kernel, double seconds) {
-    if (!Enabled()) return;
+    if (!CaptureEnabled()) return;
     for (size_t i = 0; i < ThreadCpuNames.size(); ++i) {
         if (name == ThreadCpuNames[i]) {
             std::scoped_lock lock{thread_cpu_mutex};
@@ -356,18 +391,15 @@ void NoteThreadCpu(std::string_view name, double cpu, double kernel, double seco
     }
 }
 
-void NoteComputeRecorderSubmit() {
-    if (Enabled()) compute_recorder_submits.fetch_add(1, std::memory_order_relaxed);
-}
 
 void NoteGdsCounterScope(bool reduced_conflict) {
-    if (!Enabled()) return;
+    if (!CaptureEnabled()) return;
     gds_scope_bindings.fetch_add(1, std::memory_order_relaxed);
     if (reduced_conflict) gds_scope_conflicts_reduced.fetch_add(1, std::memory_order_relaxed);
 }
 
 void NoteGdsCounterBarrierAvoided() {
-    if (Enabled()) gds_scope_barriers_avoided.fetch_add(1, std::memory_order_relaxed);
+    if (CaptureEnabled()) gds_scope_barriers_avoided.fetch_add(1, std::memory_order_relaxed);
 }
 
 std::filesystem::path TuningPath() {
@@ -387,10 +419,14 @@ void PrepareGame(std::string_view serial) {
 
 void OnFlip() {
     if (!Enabled()) return;
+    if (!CaptureEnabled()) {
+        completed_flips.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    const auto index = completed_flips.load(std::memory_order_relaxed);
     struct Frames {
         std::ofstream file{root / "frames.csv"};
         Clock::time_point start{}, previous{}, flushed{};
-        u64 index{};
         Frames() {
             file.imbue(std::locale::classic());
             file << "frame,elapsed_ns,interval_ns,utc_ns,qpc_before,qpc_after\n";
@@ -410,7 +446,7 @@ void OnFlip() {
     };
     static Frames frames;
     const auto now = Clock::now();
-    if (frames.index == 0) {
+    if (index == 0) {
         frames.start = frames.previous = frames.flushed = now;
     }
     const auto ns = [](auto duration) {
@@ -419,14 +455,14 @@ void OnFlip() {
     const auto stamp = SampleClock();
     // Exact join to frames.csv: both use this index and the same steady-clock sample.
     Common::PathTrace::Emit(Common::PathTrace::Kind::FrameSample,
-                            Common::PathTrace::NextId(), frames.index,
+                            Common::PathTrace::NextId(), index,
                             ns(now.time_since_epoch()), ns(now - frames.previous),
                             ns(now - frames.start));
-    frames.file << frames.index++ << ',' << ns(now - frames.start) << ','
+    frames.file << index << ',' << ns(now - frames.start) << ','
                 << ns(now - frames.previous) << ',' << stamp.unix_ns << ','
                 << stamp.qpc_before << ',' << stamp.qpc_after << '\n';
     frames.previous = now;
-    completed_flips.store(frames.index, std::memory_order_relaxed);
+    completed_flips.store(index + 1, std::memory_order_relaxed);
     if (now - frames.flushed >= std::chrono::seconds{1}) {
         frames.file.flush();
         frames.flushed = now;
@@ -571,7 +607,6 @@ void Poll(Input::GameController& controller) {
                 {"image_read_transition_used", image_read.used},
                 {"readback_copy_stage_narrowed", readback_copy.narrowed_copies},
                 {"feedback_arena_moves", SecondSon::FeedbackArenaMoves()},
-                {"feedback_arena_group_moves", SecondSon::FeedbackArenaGroupMoves()},
                 {"feedback_arena_pool_moves", feedback_pool.moves},
                 {"feedback_arena_pool_overflows", feedback_pool.overflows},
                 {"feedback_arena_pool_busy", feedback_pool.busy},
@@ -595,8 +630,8 @@ void Poll(Input::GameController& controller) {
                 {"cpu_affinity", tuning.cpu_affinity.load()},
                 {"asc_queue", tuning.asc_queue.load()},
                 {"threaded_recording", tuning.threaded_recording.load()},
-                {"compute_threaded_recording", tuning.compute_threaded_recording.load()},
-                {"compute_recorder_submits", compute_recorder_submits.load(std::memory_order_relaxed)},
+                {"compute_threaded_recording", false},
+                {"compute_recorder_submits", 0},
                 {"command_buffer_sharps", tuning.command_buffer_sharps.load()},
                 {"written_sync_fastpath", tuning.written_sync_fastpath.load()},
                 {"written_sync_skips", feedback.written_sync_skips.load()},

@@ -670,7 +670,6 @@ struct Tuning {
     std::atomic<bool> asc_queue{false};
     /// Experimental: allow the independent compute scheduler to use its own CPU recorder.
     /// Per-session mode still obeys threaded_recording; default and ordinary baseline stay off.
-    std::atomic<bool> compute_threaded_recording{false};
     /// Performance reports in the log: the per second counters line, slow frames, the CPU usage
     /// of the emulator threads and their profiles (perf_tuning.ini perf_log = 1). Off by default.
     std::atomic<bool> perf_log{false};

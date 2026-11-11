@@ -22,6 +22,7 @@
 #include "common/perf_stats.h"
 #include "common/polyfill_thread.h"
 #include "common/thread.h"
+#include "core/benchmark_control.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "video_core/compile_observer.h"
@@ -846,7 +847,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         RegisterPipelineData(graphics_key, pipeline_hash, sdata);
         ++num_new_pipelines;
 
-        if (EmulatorSettings.IsShaderCollect()) {
+        if (Core::Benchmark::CaptureEnabled() && EmulatorSettings.IsShaderCollect()) {
             for (auto stage = 0; stage < MaxShaderStages; ++stage) {
                 if (infos[stage]) {
                     auto& m = modules[stage];
@@ -897,7 +898,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline(CommandBufferSharps* sh
         RegisterPipelineData(compute_key, sdata);
         ++num_new_pipelines;
 
-        if (EmulatorSettings.IsShaderCollect()) {
+        if (Core::Benchmark::CaptureEnabled() && EmulatorSettings.IsShaderCollect()) {
             auto& m = modules[0];
             module_related_pipelines[m].emplace_back(compute_key);
         }
@@ -1374,7 +1375,7 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
 
     const auto name = GetShaderName(info.hw_stage, info.pgm_hash, perm_idx);
     Vulkan::SetObjectName(instance.GetDevice(), module, name);
-    if (EmulatorSettings.IsShaderCollect()) {
+    if (Core::Benchmark::CaptureEnabled() && EmulatorSettings.IsShaderCollect()) {
         DebugState.CollectShader(name, info.sw_stage, module, spv, code,
                                  patch ? *patch : std::span<const u32>{}, is_patched);
     }

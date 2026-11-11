@@ -543,15 +543,15 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     Core::PerfSampler::ApplyGameProfile(id);
     LOG_INFO(Debug, "Core rendering policies: buffer bind deduplication, precise range dependencies, "
                     "required compute priority, demand-page prefetch");
-    Core::PerfSampler::Start();
     // Tuning read once before the renderer starts (some settings only apply at startup).
-    Core::PerfSampler::PollTuning();
-    if (Core::Benchmark::Enabled() &&
+    Core::PerfSampler::PollTuning(true);
+    Core::PerfSampler::Start();
+    if (Core::Benchmark::CaptureEnabled() &&
         Common::Perf::GetTuning().path_trace.load(std::memory_order_relaxed)) {
         Common::PathTrace::Start(Core::Benchmark::TuningPath().parent_path(),
                                  std::getenv("IFSS_PATH_TRACE_ARMED") != nullptr);
     }
-    if (Core::Benchmark::Enabled() &&
+    if (Core::Benchmark::CaptureEnabled() &&
         Common::Perf::GetTuning().feedback_link_sample.load(std::memory_order_relaxed)) {
         VideoCore::FeedbackLink::Configure(Core::Benchmark::TuningPath().parent_path());
     }
@@ -599,7 +599,9 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     linker = Common::Singleton<Core::Linker>::Instance();
 
     // Load renderdoc module
-    VideoCore::LoadRenderDoc();
+    if (Core::Benchmark::CaptureEnabled()) {
+        VideoCore::LoadRenderDoc();
+    }
 
     // Initialize patcher
     if (!id.empty()) {

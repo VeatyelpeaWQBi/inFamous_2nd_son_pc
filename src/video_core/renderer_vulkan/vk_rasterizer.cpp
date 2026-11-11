@@ -799,16 +799,17 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
       guest_markers_enabled{EmulatorSettings.IsVkGuestMarkersEnabled()},
       occlusion{instance, scheduler} {
     const char* draw_audit = std::getenv("IFSS_DRAW_PREP_AUDIT");
-    draw_prep_audit_requested = draw_audit && std::string_view{draw_audit} == "1";
+    draw_prep_audit_requested = Core::Benchmark::CaptureEnabled() &&
+                                draw_audit && std::string_view{draw_audit} == "1";
     const char* vertex_input_key = std::getenv("IFSS_VERTEX_INPUT_KEY");
     vertex_input_key_requested =
         vertex_input_key && std::string_view{vertex_input_key} == "1" &&
         instance.IsVertexInputDynamicState();
     const char* audit = std::getenv("IFSS_COMPUTE_SCOPE_AUDIT");
-    if (audit && audit[0] == '1' && audit[1] == '\0') {
+    if (Core::Benchmark::CaptureEnabled() && audit && audit[0] == '1' && audit[1] == '\0') {
         dispatch_pair_census = std::make_unique<DispatchPairCensus>();
     }
-    if (Core::Benchmark::Enabled()) {
+    if (Core::Benchmark::CaptureEnabled()) {
         std::ofstream{Core::Benchmark::TuningPath().parent_path() / "renderer.json"}
             << fmt::format("{{\"compute_queue\":{},\"readback_queue\":{}}}",
                            instance.HasComputeQueue(), instance.HasReadbackQueue());
@@ -880,11 +881,6 @@ bool Rasterizer::UseComputeQueue(const ComputePipeline* pipeline) {
         });
         buffer_cache.SetCrossQueueTracking(&compute_context);
         LOG_INFO(Render_Vulkan, "asc_queue: compute work on a queue of its own");
-    }
-    if (Common::Perf::GetTuning().compute_threaded_recording.load(std::memory_order_relaxed)) {
-        // The first session may remain direct; later sessions use immutable command streams.
-        // BeginSession also checks the flag, so disabling it drains the recorder before direct use.
-        compute_scheduler->AllowThreadedRecording();
     }
     return true;
 }

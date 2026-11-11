@@ -13,6 +13,7 @@
 #include "common/thread.h"
 #include "core/aerolib/aerolib.h"
 #include "core/aerolib/stubs.h"
+#include "core/benchmark_control.h"
 #include "core/devtools/widget/module_list.h"
 #include "core/emulator_settings.h"
 #include "core/file_sys/backends/host_fs.h"
@@ -69,7 +70,7 @@ Linker::Linker() : memory{Memory::Instance()} {}
 Linker::~Linker() = default;
 
 void Linker::Execute(const std::vector<std::string>& args) {
-    if (EmulatorSettings.IsDebugDump()) {
+    if (Benchmark::CaptureEnabled() && EmulatorSettings.IsDebugDump()) {
         DebugDump();
     }
 

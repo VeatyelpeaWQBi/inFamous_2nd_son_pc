@@ -15,6 +15,7 @@
 #include <fstream>
 #include <functional>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -76,7 +77,6 @@ void ApplyGameProfile(std::string_view serial) {
     t.readback_word_load.store(false, relaxed);
     t.readback_writer_footprint.store(false, relaxed);
     t.gds_counter_scope.store(false, relaxed);
-    t.compute_threaded_recording.store(false, relaxed);
     t.skip_empty_draws.store(true, relaxed);
     t.pipeline_key_memo.store(true, relaxed);
     t.bind_prefetch.store(true, relaxed);
@@ -87,7 +87,7 @@ void ApplyGameProfile(std::string_view serial) {
     LOG_INFO(Debug, "Game profile of {} applied (inFAMOUS Second Son settings)", serial);
 }
 
-void PollTuning() {
+void PollTuning(bool startup) {
     using Clock = std::chrono::steady_clock;
     static Clock::time_point next_check{};
     static std::filesystem::file_time_type last_write{};
@@ -115,6 +115,7 @@ void PollTuning() {
     last_write = write_time;
 
     auto& tuning = Common::Perf::GetTuning();
+    const bool capture = Core::Benchmark::CaptureEnabled();
     std::ifstream file{path};
     std::string line;
     const auto trim = [](std::string text) {
@@ -134,6 +135,13 @@ void PollTuning() {
         const std::string key = trim(line.substr(0, equal));
         const std::string value = trim(line.substr(equal + 1));
         if (value.empty()) {
+            continue;
+        }
+        if (!capture &&
+            (key == "perf_log" || key == "profile_stacks" || key.starts_with("gpu_profile") ||
+             key == "path_trace" || key == "feedback_link_sample" || key.starts_with("trace_") ||
+             key == "dump_frames" || key == "dump_images" || key == "dump_after" ||
+             key == "gpu_checkpoints" || key == "probe_host_import")) {
             continue;
         }
         if (key == "readback_window_kb") {
@@ -242,7 +250,13 @@ void PollTuning() {
             tuning.num_relaxed_sites.store(count, std::memory_order_release);
             tuning.relaxed_all.store(all, std::memory_order_release);
         } else if (key == "compute_threaded_recording") {
-            tuning.compute_threaded_recording.store(value != "0", std::memory_order_relaxed);
+            if (capture && value != "0") {
+                constexpr auto message = "The independent compute recorder experiment is retired.";
+                if (startup) {
+                    throw std::runtime_error(message);
+                }
+                LOG_ERROR(Debug, "{}", message);
+            }
         } else if (key == "asc_queue") {
             tuning.asc_queue.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gpu_profile") {

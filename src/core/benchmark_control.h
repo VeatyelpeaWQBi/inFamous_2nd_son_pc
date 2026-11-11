@@ -12,9 +12,10 @@ class GameController;
 }
 
 namespace Core::Benchmark {
-// Explicit local test mode only. Ordinary launches never poll command files or redirect saves.
+// Session isolation and the local control protocol are also used by ordinary play.
 void Configure(const std::filesystem::path& directory);
 bool Enabled();
+bool CaptureEnabled();
 // Diagnostic SDK injection before Vulkan objects exist; ordinary launches do nothing.
 void PrepareGpuDiagnostics();
 // Bounded native exception evidence during profiler DLL teardown; never handles faults.
@@ -28,7 +29,6 @@ void Poll(Input::GameController& controller);
 // One cheap timestamp per guest frame, buffered CSV output in explicit test mode only.
 void OnFlip();
 void NoteNativeCompute(bool graphics);
-void NoteComputeRecorderSubmit();
 // Reuses the existing sampler's GetThreadTimes deltas; 100% means one logical processor.
 void NoteThreadCpu(std::string_view name, double cpu, double kernel, double interval_seconds);
 void NoteGdsCounterScope(bool reduced_conflict);

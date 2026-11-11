@@ -368,7 +368,7 @@ Scheduler::Scheduler(const Instance& instance, vk::Queue queue_, const char* nam
     : instance{instance}, queue{queue_ ? queue_ : instance.GetGraphicsQueue()}, name{name_},
       work_semaphore{instance}, command_pool{instance, &work_semaphore} {
     const char* audit = std::getenv("IFSS_COMPUTE_SCOPE_AUDIT");
-    draw_batch_audit = audit && std::strcmp(audit, "1") == 0;
+    draw_batch_audit = Core::Benchmark::CaptureEnabled() && audit && std::strcmp(audit, "1") == 0;
     GpuCrashDiag::g_instance.store(&instance, std::memory_order_relaxed);
 #if TRACY_GPU_ENABLED
     profiler_scope = reinterpret_cast<tracy::VkCtxScope*>(std::malloc(sizeof(tracy::VkCtxScope)));
@@ -508,9 +508,7 @@ vk::CommandBuffer Scheduler::RecorderCommandBuffer() {
 }
 
 void Scheduler::RecorderThread(std::stop_token stoken) {
-    Common::SetCurrentThreadName(std::strcmp(name, "compute") == 0
-                                     ? "shadPS4:ComputeRecorder"
-                                     : "shadPS4:GpuCommandRecorder");
+    Common::SetCurrentThreadName("shadPS4:GpuCommandRecorder");
     while (true) {
         // Optionally wait a little for the next commands before sleeping: the command processor
         // then rarely has to wake this thread up.
@@ -550,10 +548,6 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
             recorder_cmdbuf = vk::CommandBuffer{};
             std::scoped_lock lk{submit_mutex};
             SubmitToQueue(std::span{&cmdbuf, 1}, job.info);
-            if (std::strcmp(name, "compute") == 0) {
-                // Actual worker submission, not a requested flag or a CP dispatch count.
-                Core::Benchmark::NoteComputeRecorderSubmit();
-            }
         }
         Common::Perf::Add(Common::Perf::RecorderBusyNs, Common::Perf::NowNs() - busy_start);
         {
@@ -708,9 +702,7 @@ void Scheduler::BeginSession() {
 
     // Threaded recording (perf_tuning.ini), decided per session.
     const auto& tuning = Common::Perf::GetTuning();
-    const bool compute_recording = std::strcmp(name, "compute") != 0 ||
-        tuning.compute_threaded_recording.load(std::memory_order_relaxed);
-    stream_session = threading_allowed && compute_recording &&
+    stream_session = threading_allowed &&
                      tuning.threaded_recording.load(std::memory_order_relaxed);
     if (stream_session) {
         // The recording thread allocates and records the command buffer of the session.

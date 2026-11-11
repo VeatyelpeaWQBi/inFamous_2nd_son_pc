@@ -170,7 +170,7 @@ void ApplyGameProfile(std::string_view serial);
  *                                 runs on a GPU queue of its own alongside the graphics work
  *                                 (as on the PS4), except the dispatches using images
  */
-void PollTuning();
+void PollTuning(bool startup = false);
 
 /// Records a guest read of GPU written memory that needed a precise readback (address and guest
 /// instruction), reported with the profiles to find which data the game reads back.

@@ -730,11 +730,13 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
         // waited for the GPU to become idle, hundreds of times per second in busy scenes.
         path_mode = 1;
         u64 wait_tick = 0;
+        u64 feedback_copy_id = 0;
         Vulkan::Semaphore* wait_semaphore = nullptr;
         liverpool->SendCommand<true>([&] {
             Common::Perf::Add(Common::Perf::ReadbackQueueNs, Common::Perf::NowNs() - request_ns);
             Emit(Kind::ReadCpBegin, path_id, 0);
-            wait_tick = BeginReadback(device_addr, size, is_write, wait_semaphore, path_id);
+            wait_tick = BeginReadback(device_addr, size, is_write, wait_semaphore, feedback_copy_id,
+                                      path_id);
             Emit(Kind::ReadCpEnd, path_id, 0, 0, wait_tick);
         });
         if (wait_tick == 0) {
@@ -742,7 +744,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
             path_nothing = true;
             return;
         }
-        WaitReadback(device_addr, wait_semaphore, wait_tick, path_id, 0);
+        WaitReadback(device_addr, wait_semaphore, wait_tick, path_id, 0, feedback_copy_id);
         for (u32 round = 0;; ++round) {
             // An earlier readback of the window (another queue) may still be in flight: its data
             // must land first, then this one's. The guest thread waits for it (a few times at
@@ -809,7 +811,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
 }
 
 void BufferCache::WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, u64 tick,
-                              u64 trace_id, u32 round) {
+                              u64 trace_id, u32 round, u64 feedback_copy_id) {
     const bool on_readback_queue = readback_queue && semaphore == &readback_queue->Semaphore();
     Common::PathTrace::Emit(Common::PathTrace::Kind::ReadWaitBegin, trace_id, round,
                             on_readback_queue, tick);
@@ -833,7 +835,7 @@ void BufferCache::WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, 
                             on_readback_queue, tick);
     if (FeedbackLink::IsActive()) [[unlikely]] {
         // Timeline semaphore reached this tick: a genuine fence observation (QPC-domain NowNs).
-        FeedbackLink::OnGpuEndObservedTick(device_addr, tick, wait_end);
+        FeedbackLink::OnGpuEndObserved(feedback_copy_id, wait_end);
     }
 }
 
@@ -942,6 +944,9 @@ bool BufferCache::CollectReadback(const Buffer* arena, PendingReadback& readback
     }
     Common::Perf::Add(Common::Perf::ReadbackBytes, total_size_bytes);
     readback.trace_id = Common::PathTrace::NextId();
+    if (FeedbackLink::IsActive()) [[unlikely]] {
+        readback.feedback.id = FeedbackLink::NextCopyId();
+    }
     Common::PathTrace::Emit(Common::PathTrace::Kind::CopyRecord, readback.trace_id,
                             readback.window_start, readback.window_end, readback.record_seq,
                             total_size_bytes);
@@ -1076,7 +1081,8 @@ bool BufferCache::SubmitEarlyComplete(const Buffer* arena, PendingReadback& read
 }
 
 u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
-                               Vulkan::Semaphore*& wait_semaphore, u64 trace_id) {
+                               Vulkan::Semaphore*& wait_semaphore, u64& feedback_copy_id,
+                               u64 trace_id) {
     // Readbacks the GPU has finished are written first, the requested data may be among them.
     CompleteReadbacks(false);
 
@@ -1163,12 +1169,23 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
                 device_addr + size <= overlapping->window_end) {
                 Common::Perf::Add(Common::Perf::ReadbackPagePrefetchHits);
             }
+            if (FeedbackLink::IsActive()) [[unlikely]] {
+                u64 copy_bytes = 0;
+                for (const auto& copy : overlapping->copies) {
+                    copy_bytes += copy.size;
+                }
+                FeedbackLink::OnBeginReadback(device_addr, size, window_start, window_end,
+                                              copy_bytes, writers.ticks[0], writers.ticks[1],
+                                              writers.submitted, writers.done, writers.current,
+                                              overlapping->tick, trace_id, overlapping->feedback);
+            }
         }
         wait_semaphore = overlapping->on_readback_queue ? &readback_queue->Semaphore()
                                                         : scheduler.GetWorkSemaphore();
         Common::PathTrace::Emit(Common::PathTrace::Kind::ReadCopy, trace_id,
                                 overlapping->tick, overlapping->on_readback_queue,
                                 overlapping->record_seq, overlapping->trace_id);
+        feedback_copy_id = overlapping->feedback.id;
         return overlapping->tick;
     }
     Common::PathTrace::Emit(Common::PathTrace::Kind::ReadDependencies, trace_id,
@@ -1214,8 +1231,10 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
         }
         FeedbackLink::OnBeginReadback(device_addr, size, window_start, window_end, copy_bytes,
                                       writers.ticks[0], writers.ticks[1], writers.submitted,
-                                      writers.done, writers.current, wait_tick, trace_id);
+                                      writers.done, writers.current, wait_tick, trace_id,
+                                      readback.feedback);
     }
+    feedback_copy_id = readback.feedback.id;
     pending_readbacks.push_back(std::move(readback));
     Common::Perf::Add(Common::Perf::ReadbackAsync);
     return wait_tick;
@@ -1336,6 +1355,9 @@ void BufferCache::PrefetchReadbacks() {
         if (on_queue) {
             queue_wait_ticks[0] = std::max(queue_wait_ticks[0], writers.ticks[0]);
             queue_wait_ticks[1] = std::max(queue_wait_ticks[1], writers.ticks[1]);
+            if (readback.feedback.id != 0) [[unlikely]] {
+                readback.feedback_writer_ticks = writers.ticks;
+            }
             recorded_on_queue = true;
         } else {
             WaitComputeWriter(writers);
@@ -1377,21 +1399,20 @@ void BufferCache::PrefetchReadbacks() {
                 continue;
             }
             readback.tick = queue_tick;
+            if (readback.feedback.id != 0) [[unlikely]] {
+                readback.feedback.prefetch_batch_tick = queue_tick;
+                readback.feedback.grouped_max_tick =
+                    std::max(queue_wait_ticks[0], queue_wait_ticks[1]);
+                readback.feedback.has_extra_dependency =
+                    queue_wait_ticks[0] > readback.feedback_writer_ticks[0] ||
+                    queue_wait_ticks[1] > readback.feedback_writer_ticks[1];
+            }
             for (auto& window : hot_windows) {
                 if (window.start == readback.window_start && window.end == readback.window_end &&
                     window.demand_pages == readback.demand_page_prefetch) {
                     window.prefetch_tick = queue_tick;
                 }
             }
-        }
-    }
-    if (FeedbackLink::IsActive() && first_queued < pending_readbacks.size()) [[unlikely]] {
-        const u64 grouped = std::max(queue_wait_ticks[0], queue_wait_ticks[1]);
-        for (size_t i = first_queued; i < pending_readbacks.size(); ++i) {
-            const auto& readback = pending_readbacks[i];
-            FeedbackLink::OnPrefetchBatch(readback.tick,
-                                          readback.on_readback_queue ? grouped : 0,
-                                          readback.window_start, readback.window_end);
         }
     }
 }
@@ -1411,12 +1432,10 @@ void BufferCache::CompleteReadbacks(bool wait) {
                 const u64 sync_end = Common::Perf::NowNs();
                 Common::Perf::Add(Common::Perf::ReadbackSyncNs, sync_end - sync_start);
                 if (FeedbackLink::IsActive()) [[unlikely]] {
-                    FeedbackLink::OnGpuEndObserved(readback.window_start, readback.window_end,
-                                                   sync_end);
+                    FeedbackLink::OnGpuEndObserved(readback.feedback.id, sync_end);
                 }
             } else if (FeedbackLink::IsActive()) [[unlikely]] {
-                FeedbackLink::OnGpuEndObserved(readback.window_start, readback.window_end,
-                                               Common::Perf::NowNs());
+                FeedbackLink::OnGpuEndObserved(readback.feedback.id, Common::Perf::NowNs());
             }
             FinishReadback(0);
             pending_readbacks.pop_front();
@@ -1455,8 +1474,7 @@ void BufferCache::CompleteReadbacks(bool wait) {
         }
         if (FeedbackLink::IsActive()) [[unlikely]] {
             // Refresh()+IsFree already showed the timeline tick is complete.
-            FeedbackLink::OnGpuEndObserved(readback.window_start, readback.window_end,
-                                           Common::Perf::NowNs());
+            FeedbackLink::OnGpuEndObserved(readback.feedback.id, Common::Perf::NowNs());
         }
         FinishReadback(i);
         pending_readbacks.erase(pending_readbacks.begin() + static_cast<std::ptrdiff_t>(i));
@@ -1585,9 +1603,7 @@ void BufferCache::FinishReadback(size_t index) {
     }
     if (FeedbackLink::IsActive()) [[unlikely]] {
         const u64 finish_qpc = Common::Perf::NowNs();
-        FeedbackLink::OnFinishReadback(readback.window_start, readback.window_end, finish_start,
-                                       finish_qpc,
-                                       (finish_qpc - finish_start) / 1'000'000ULL);
+        FeedbackLink::OnFinishReadback(readback.feedback.id, finish_qpc);
     }
     Common::Perf::Add(Common::Perf::ReadbackSyncNs, Common::Perf::NowNs() - finish_start);
 }

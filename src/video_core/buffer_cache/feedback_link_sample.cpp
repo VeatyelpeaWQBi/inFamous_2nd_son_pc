@@ -25,13 +25,6 @@ struct WriteNote {
     u32 queue{};
 };
 
-struct PrefetchNote {
-    u64 job_id{};
-    u64 grouped_max_tick{};
-    u64 window_start{};
-    u64 window_end{};
-};
-
 struct State {
     std::array<Sample, kRingCap> ring{};
     u32 next{};
@@ -40,32 +33,13 @@ struct State {
     std::atomic<u64> next_trace_id{1};
     std::array<WriteNote, 64> write_notes{};
     u32 write_note_next{};
-    std::array<PrefetchNote, 64> prefetch_notes{};
-    u32 prefetch_note_next{};
+    std::atomic<u64> next_copy_id{1};
     std::filesystem::path export_path;
     std::mutex mutex;
 };
 
 [[nodiscard]] bool RangesOverlap(u64 a, u64 a_size, u64 start, u64 end) noexcept {
-    return a_size != 0 && a < end && start < a + a_size;
-}
-
-void ApplyWriteNote(Sample& sample, const WriteNote& note) noexcept {
-    sample.flags |= FlagWriterHit;
-    if (note.queue < sample.tick_components.size()) {
-        sample.tick_components[note.queue] = std::max(sample.tick_components[note.queue], note.tick);
-        sample.tick_max = std::max(sample.tick_max, note.tick);
-    }
-    if (sample.shader_hash == 0) {
-        sample.shader_hash = note.shader_hash;
-    }
-}
-
-void ApplyPrefetchNote(Sample& sample, const PrefetchNote& note) noexcept {
-    if (note.job_id != 0) {
-        sample.prefetch_job_id = note.job_id;
-    }
-    sample.grouped_max_tick = std::max(sample.grouped_max_tick, note.grouped_max_tick);
+    return a_size != 0 && start < end && a < end && (a >= start || a_size > start - a);
 }
 
 void ApplyGpuEnd(Sample& sample, u64 gpu_end_qpc) noexcept {
@@ -116,16 +90,6 @@ const char* LabelName(Label label) noexcept {
     }
 }
 
-Sample* FindOpen(State& state, u64 window_start, u64 window_end) noexcept {
-    for (auto& sample : state.ring) {
-        if (sample.open && !sample.sealed && sample.window_start == window_start &&
-            sample.window_end == window_end) {
-            return &sample;
-        }
-    }
-    return nullptr;
-}
-
 } // namespace
 
 bool IsActive() noexcept {
@@ -141,14 +105,22 @@ void Configure(const std::filesystem::path& session_root) noexcept {
         return;
     }
     std::scoped_lock lock{state->mutex};
-    // Fixed contract: state/sessions/<session_id>/diagnostics/feedback-link-samples.jsonl
-    state->export_path = session_root / "diagnostics" / "feedback-link-samples.jsonl";
+    try {
+        state->export_path = session_root / "diagnostics" / "feedback-link-samples.jsonl";
+    } catch (...) {
+        // Diagnostics must not make game startup fail.
+    }
+}
+
+u64 NextCopyId() noexcept {
+    auto* state = g_state.load(std::memory_order_acquire);
+    return state ? state->next_copy_id.fetch_add(1, std::memory_order_relaxed) : 0;
 }
 
 void OnBeginReadback(u64 demand_addr, u64 demand_size, u64 window_start, u64 window_end,
                      u64 copy_bytes, u64 tick0, u64 tick1, bool submitted, bool done, bool current,
-                     u64 wait_tick, u64 trace_id) noexcept {
-    if (!IsActive()) {
+                     u64 wait_tick, u64 trace_id, const CopyInfo& copy) noexcept {
+    if (!IsActive() || copy.id == 0) {
         return;
     }
     State* state = EnsureState();
@@ -183,61 +155,31 @@ void OnBeginReadback(u64 demand_addr, u64 demand_size, u64 window_start, u64 win
     sample.queued = (!done && !submitted && !current) ? 1u : 0u;
     sample.command_tick = wait_tick;
     sample.writer_domain = (tick0 ? 1u : 0u) | (tick1 ? 2u : 0u);
-    // Missing until a timeline/fence observation fills gpu_end_qpc_or_ts (doc/149 §10.2).
+    // Missing until a timeline/fence observation fills gpu_end_qpc_or_ts (doc/149 搂10.2).
     sample.flags = FlagMissingGpuEnd;
     sample.gpu_end_qpc_or_ts = 0;
     if (tick0 != 0 || tick1 != 0) {
         sample.flags |= FlagWriterHit;
     }
+    const u64 demand_end = demand_addr + demand_size;
     for (const auto& note : state->write_notes) {
-        if (note.size != 0 &&
-            RangesOverlap(note.address, note.size, sample.window_start, sample.window_end)) {
-            ApplyWriteNote(sample, note);
+        if (note.queue >= 2 || note.tick == 0 || note.tick != sample.tick_components[note.queue] ||
+            note.shader_hash == 0 || !RangesOverlap(note.address, note.size, demand_addr, demand_end)) {
+            continue;
         }
-    }
-    for (const auto& note : state->prefetch_notes) {
-        if (note.window_end > note.window_start && note.window_start == sample.window_start &&
-            note.window_end == sample.window_end) {
-            ApplyPrefetchNote(sample, note);
+        if (sample.shader_hash != 0 && sample.shader_hash != note.shader_hash) {
+            sample.shader_hash = 0;
+            break;
         }
+        sample.shader_hash = note.shader_hash;
     }
+    sample.copy_id = copy.id;
+    sample.prefetch_job_id = copy.prefetch_batch_tick != 0 ? copy.id : 0;
+    sample.grouped_max_tick = copy.grouped_max_tick;
+    sample.prefetch_extra_dependency = copy.has_extra_dependency;
     sample.open = true;
     sample.sealed = false;
     ++state->window_count;
-}
-
-void OnPrefetchBatch(u64 job_id, u64 grouped_max_tick, u64 window_start,
-                     u64 window_end) noexcept {
-    if (!IsActive()) {
-        return;
-    }
-    State* state = g_state.load(std::memory_order_acquire);
-    if (!state) {
-        return;
-    }
-    std::scoped_lock lock{state->mutex};
-    PrefetchNote note{
-        .job_id = job_id,
-        .grouped_max_tick = grouped_max_tick,
-        .window_start = window_start,
-        .window_end = window_end,
-    };
-    state->prefetch_notes[state->prefetch_note_next++ % state->prefetch_notes.size()] = note;
-    if (window_end > window_start) {
-        if (Sample* sample = FindOpen(*state, window_start, window_end)) {
-            ApplyPrefetchNote(*sample, note);
-        }
-        return;
-    }
-    // Window identity unavailable (legacy 0,0): attach only to the newest open sample.
-    for (u32 i = 0; i < kRingCap; ++i) {
-        const u32 idx = (state->next + kRingCap - 1 - i) % kRingCap;
-        Sample& sample = state->ring[idx];
-        if (sample.open && !sample.sealed) {
-            ApplyPrefetchNote(sample, note);
-            break;
-        }
-    }
 }
 
 void OnWriteTickSample(u64 address, u64 size, u64 tick, u32 queue, u64 shader_hash) noexcept {
@@ -257,73 +199,10 @@ void OnWriteTickSample(u64 address, u64 size, u64 tick, u32 queue, u64 shader_ha
         .queue = queue,
     };
     state->write_notes[state->write_note_next++ % state->write_notes.size()] = note;
-    for (u32 i = 0; i < kRingCap; ++i) {
-        const u32 idx = (state->next + kRingCap - 1 - i) % kRingCap;
-        Sample& sample = state->ring[idx];
-        if (!sample.open || sample.sealed) {
-            continue;
-        }
-        if (!RangesOverlap(address, size, sample.window_start, sample.window_end)) {
-            continue;
-        }
-        ApplyWriteNote(sample, note);
-        break;
-    }
 }
 
-void OnDispatchOrBind(u64 shader_hash, u64 command_tick, u64 /*address*/,
-                      u64 /*size*/) noexcept {
-    if (!IsActive()) {
-        return;
-    }
-    State* state = g_state.load(std::memory_order_acquire);
-    if (!state || shader_hash == 0) {
-        return;
-    }
-    std::scoped_lock lock{state->mutex};
-    for (u32 i = 0; i < kRingCap; ++i) {
-        const u32 idx = (state->next + kRingCap - 1 - i) % kRingCap;
-        Sample& sample = state->ring[idx];
-        if (!sample.open || sample.sealed) {
-            continue;
-        }
-        if (sample.shader_hash == 0) {
-            sample.shader_hash = shader_hash;
-        }
-        if (sample.dispatch_id == 0) {
-            sample.dispatch_id = command_tick;
-        }
-        if (sample.command_tick == 0) {
-            sample.command_tick = command_tick;
-        }
-        break;
-    }
-}
-
-void OnSchedulerFlush(u64 submit_tick_end) noexcept {
-    if (!IsActive()) {
-        return;
-    }
-    State* state = g_state.load(std::memory_order_acquire);
-    if (!state || submit_tick_end == 0) {
-        return;
-    }
-    std::scoped_lock lock{state->mutex};
-    for (auto& sample : state->ring) {
-        if (!sample.open || sample.sealed) {
-            continue;
-        }
-        sample.submit_tick_end = std::max(sample.submit_tick_end, submit_tick_end);
-        if (sample.command_tick != 0 && submit_tick_end > sample.command_tick) {
-            const u64 gap = submit_tick_end - sample.command_tick;
-            sample.tail_commands_after_producer =
-                static_cast<u32>(std::min<u64>(gap, 0xffffffffu));
-        }
-    }
-}
-
-void OnGpuEndObserved(u64 window_start, u64 window_end, u64 gpu_end_qpc) noexcept {
-    if (!IsActive() || gpu_end_qpc == 0) {
+void OnGpuEndObserved(u64 copy_id, u64 gpu_end_qpc) noexcept {
+    if (!IsActive() || copy_id == 0 || gpu_end_qpc == 0) {
         return;
     }
     State* state = g_state.load(std::memory_order_acquire);
@@ -331,50 +210,15 @@ void OnGpuEndObserved(u64 window_start, u64 window_end, u64 gpu_end_qpc) noexcep
         return;
     }
     std::scoped_lock lock{state->mutex};
-    if (Sample* sample = FindOpen(*state, window_start, window_end)) {
-        ApplyGpuEnd(*sample, gpu_end_qpc);
-    }
-}
-
-void OnGpuEndObservedTick(u64 demand_addr, u64 tick, u64 gpu_end_qpc) noexcept {
-    if (!IsActive() || gpu_end_qpc == 0 || tick == 0) {
-        return;
-    }
-    State* state = g_state.load(std::memory_order_acquire);
-    if (!state) {
-        return;
-    }
-    std::scoped_lock lock{state->mutex};
-    bool matched_tick = false;
     for (auto& sample : state->ring) {
-        if (!sample.open || sample.sealed) {
-            continue;
-        }
-        if (sample.command_tick == tick) {
-            ApplyGpuEnd(sample, gpu_end_qpc);
-            matched_tick = true;
-        }
-    }
-    if (matched_tick || demand_addr == 0) {
-        return;
-    }
-    // No sample stored this wait tick (PathTrace-off ids, or prefetch reuse):
-    // fall back to the open window that contains the demand address.
-    for (auto& sample : state->ring) {
-        if (!sample.open || sample.sealed) {
-            continue;
-        }
-        if (RangesOverlap(demand_addr, 1, sample.window_start, sample.window_end) ||
-            RangesOverlap(demand_addr, 1, sample.demand_addr,
-                          sample.demand_addr + sample.demand_size)) {
+        if (sample.open && !sample.sealed && sample.copy_id == copy_id) {
             ApplyGpuEnd(sample, gpu_end_qpc);
         }
     }
 }
 
-void OnFinishReadback(u64 window_start, u64 window_end, u64 finish_qpc, u64 wake_qpc,
-                      u64 cpu_wait_ms, u64 gpu_end_qpc) noexcept {
-    if (!IsActive()) {
+void OnFinishReadback(u64 copy_id, u64 finish_qpc) noexcept {
+    if (!IsActive() || copy_id == 0) {
         return;
     }
     State* state = g_state.load(std::memory_order_acquire);
@@ -382,18 +226,16 @@ void OnFinishReadback(u64 window_start, u64 window_end, u64 finish_qpc, u64 wake
         return;
     }
     std::scoped_lock lock{state->mutex};
-    Sample* sample = FindOpen(*state, window_start, window_end);
-    if (!sample) {
-        return;
+    for (auto& sample : state->ring) {
+        if (!sample.open || sample.sealed || sample.copy_id != copy_id) {
+            continue;
+        }
+        sample.finish_readback_qpc = finish_qpc;
+        sample.label = Classify(sample);
+        sample.open = false;
+        sample.sealed = true;
+        ++state->sealed_count;
     }
-    sample->finish_readback_qpc = finish_qpc;
-    sample->wake_qpc = wake_qpc ? wake_qpc : finish_qpc;
-    sample->cpu_wait_ms_attr = cpu_wait_ms;
-    ApplyGpuEnd(*sample, gpu_end_qpc);
-    sample->label = Classify(*sample);
-    sample->open = false;
-    sample->sealed = true;
-    ++state->sealed_count;
 }
 
 Label Classify(const Sample& sample) noexcept {
@@ -405,35 +247,14 @@ Label Classify(const Sample& sample) noexcept {
         return Label::Inconclusive;
     }
 
-    // doc/149 §10.2: never promote O01 from coarse ReadbackProducer* counters alone when
-    // GPU-end timeline is missing.
-    if (missing_gpu_end) {
-        if (sample.grouped_max_tick != 0 && sample.tick_max != 0 &&
-            sample.grouped_max_tick > sample.tick_max) {
-            return Label::O08Candidate;
-        }
-        if (sample.finish_readback_qpc != 0 && sample.wake_qpc > sample.finish_readback_qpc) {
-            return Label::PublishWake;
-        }
-        // Independent batch-tail evidence without producer GPU end is still insufficient for O01.
-        return Label::Inconclusive;
+    if (sample.prefetch_extra_dependency) {
+        return Label::O08Candidate;
     }
-
-    if (sample.gpu_end_qpc_or_ts != 0 && sample.submit_tick_end != 0 &&
-        sample.command_tick != 0 && sample.submit_tick_end > sample.command_tick &&
-        sample.tail_commands_after_producer != 0) {
-        return Label::O01Candidate;
+    if (missing_gpu_end) {
+        return Label::Inconclusive;
     }
     if ((sample.flags & FlagFallback) != 0 || (sample.flags & FlagReduction) != 0) {
         return Label::O02Candidate;
-    }
-    if (sample.grouped_max_tick != 0 && sample.tick_max != 0 &&
-        sample.grouped_max_tick > sample.tick_max) {
-        return Label::O08Candidate;
-    }
-    if (sample.done && sample.current == 0 && sample.submitted == 0 &&
-        sample.finish_readback_qpc != 0 && sample.wake_qpc > sample.finish_readback_qpc) {
-        return Label::PublishWake;
     }
     if (sample.current && sample.done == 0) {
         return Label::O03Redirect;
@@ -450,30 +271,29 @@ void ExportJsonl(const std::filesystem::path& path) noexcept {
         return;
     }
 
-    std::vector<Sample> sealed;
-    std::filesystem::path out;
-    {
-        std::scoped_lock lock{state->mutex};
-        out = path.empty() ? state->export_path : path;
-        if (out.empty() || state->sealed_count == 0) {
-            return;
-        }
-        sealed.reserve(state->sealed_count);
-        for (const auto& sample : state->ring) {
-            if (sample.sealed) {
-                sealed.push_back(sample);
+    try {
+        std::vector<Sample> sealed;
+        std::filesystem::path out;
+        {
+            std::scoped_lock lock{state->mutex};
+            out = path.empty() ? state->export_path : path;
+            if (out.empty() || state->sealed_count == 0) {
+                return;
+            }
+            sealed.reserve(state->sealed_count);
+            for (const auto& sample : state->ring) {
+                if (sample.sealed) {
+                    sealed.push_back(sample);
+                }
             }
         }
-    }
-
-    try {
         std::filesystem::create_directories(out.parent_path());
         std::ofstream file{out, std::ios::out | std::ios::trunc};
         if (!file) {
             return;
         }
         for (const auto& sample : sealed) {
-            char line[768];
+            char line[1024];
             const int n = std::snprintf(
                 line, sizeof(line),
                 "{\"schema\":%u,\"trace_id\":%llu,\"fault_id\":%llu,"
@@ -485,7 +305,7 @@ void ExportJsonl(const std::filesystem::path& path) noexcept {
                 "\"dispatch_id\":%llu,\"shader_hash\":%llu,\"command_tick\":%llu,"
                 "\"gpu_end_qpc_or_ts\":%llu,\"submit_tick_end\":%llu,"
                 "\"tail_commands_after_producer\":%u,"
-                "\"prefetch_job_id\":%llu,\"grouped_max_tick\":%llu,"
+                "\"copy_id\":%llu,\"prefetch_job_id\":%llu,\"grouped_max_tick\":%llu,"
                 "\"finish_readback_qpc\":%llu,\"wake_qpc\":%llu,"
                 "\"cpu_wait_ms_attr\":%llu,\"flags\":%u,\"label\":\"%s\","
                 "\"missing_gpu_end\":%s}\n",
@@ -508,6 +328,7 @@ void ExportJsonl(const std::filesystem::path& path) noexcept {
                 static_cast<unsigned long long>(sample.gpu_end_qpc_or_ts),
                 static_cast<unsigned long long>(sample.submit_tick_end),
                 sample.tail_commands_after_producer,
+                static_cast<unsigned long long>(sample.copy_id),
                 static_cast<unsigned long long>(sample.prefetch_job_id),
                 static_cast<unsigned long long>(sample.grouped_max_tick),
                 static_cast<unsigned long long>(sample.finish_readback_qpc),

@@ -12,6 +12,7 @@
 #include "common/interval_set.h"
 #include "common/types.h"
 #include "video_core/buffer_cache/buffer.h"
+#include "video_core/buffer_cache/feedback_link_sample.h"
 #include "video_core/buffer_cache/writer_footprint.h"
 #include "video_core/buffer_cache/fault_manager.h"
 #include "video_core/buffer_cache/range_set.h"
@@ -239,6 +240,8 @@ private:
         u64 tick{};
         u64 record_seq{}; ///< GPU writes numbered above it came after the download was recorded.
         u64 trace_id{}; ///< Diagnostic only; zero in ordinary runs.
+        FeedbackLink::CopyInfo feedback;
+        std::array<u64, 2> feedback_writer_ticks{};
         Vulkan::StagingBufferRef download{};
         boost::container::small_vector<vk::BufferCopy, 8> copies;
         VAddr arena_base{};
@@ -356,7 +359,7 @@ private:
     /// tick to wait for on wait_semaphore before calling CompleteReadbacks, or 0 when there is
     /// nothing to wait for.
     u64 BeginReadback(VAddr device_addr, u64 size, bool is_write,
-                      Vulkan::Semaphore*& wait_semaphore, u64 trace_id = 0);
+                      Vulkan::Semaphore*& wait_semaphore, u64& feedback_copy_id, u64 trace_id);
 
     /// Writes the pending readbacks the GPU has finished to guest memory: in any order, except
     /// after an unfinished earlier readback of the same window. With wait, waits for all of them
@@ -368,7 +371,7 @@ private:
 
     /// Guest thread: waits for a readback tick (reported if it takes seconds).
     void WaitReadback(VAddr device_addr, Vulkan::Semaphore* semaphore, u64 tick,
-                      u64 trace_id = 0, u32 round = 0);
+                      u64 trace_id, u32 round, u64 feedback_copy_id = 0);
 
     /// Command processor: the in flight readback to wait for before the range can be written,
     /// nullptr if none (see CompleteReadbacks).

@@ -24,7 +24,6 @@
 #include "imgui/renderer/texture_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
-#include "video_core/buffer_cache/feedback_link_sample.h"
 
 namespace Vulkan {
 
@@ -738,9 +737,6 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     if (stream_session) {
         // Threaded recording: the recording thread submits the session after recording it.
         const u64 signal_value = work_semaphore.NextTick();
-        if (VideoCore::FeedbackLink::IsActive()) [[unlikely]] {
-            VideoCore::FeedbackLink::OnSchedulerFlush(signal_value);
-        }
         {
             std::scoped_lock lk{submit_mutex};
             if (on_submit) {
@@ -795,9 +791,6 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
 
     std::scoped_lock lk{submit_mutex};
     const u64 signal_value = work_semaphore.NextTick();
-    if (VideoCore::FeedbackLink::IsActive()) [[unlikely]] {
-        VideoCore::FeedbackLink::OnSchedulerFlush(signal_value);
-    }
 
 #if TRACY_GPU_ENABLED
     auto* profiler_ctx = instance.GetProfilerContext();

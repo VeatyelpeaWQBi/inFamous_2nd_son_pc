@@ -46,10 +46,15 @@ int main() {
                                      false, false),
             "missing flatbuf dword must fall back");
 
-    proven = EvaluateWriterFootprint(1, bind - 2, bind + 8, 0, flat, base,
-                                     bind, false, false);
-    Require(proven && proven->address == base + bind - 2 && proven->size == 2,
-            "range overlapping the V# end is clamped");
+    Require(!EvaluateWriterFootprint(1, bind - 2, bind + 8, 0, flat, base,
+                                     bind, false, false),
+            "range crossing the V# end must fall back");
+    const std::vector<u32> unaligned{3};
+    Require(!EvaluateWriterFootprint(2, 0, 4, 0, unaligned, base, bind, false, false),
+            "unaligned scalar offset must fall back");
+    Require(!EvaluateWriterFootprint(1, 8, 12, 0, flat, std::numeric_limits<u64>::max() - 10,
+                                     bind, false, false),
+            "absolute end overflow must fall back");
 
     Require(!EvaluateWriterFootprint(1, bind, bind + 4, 0, flat, base,
                                      bind, false, false),

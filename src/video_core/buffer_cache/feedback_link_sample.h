@@ -29,6 +29,13 @@ enum class Label : u32 {
     PublishWake,
 };
 
+struct CopyInfo {
+    u64 id{};
+    u64 prefetch_batch_tick{};
+    u64 grouped_max_tick{}; // Display only; queue-domain values are compared separately.
+    bool has_extra_dependency{};
+};
+
 struct Sample {
     u32 schema{kSchema};
     u64 trace_id{};
@@ -53,6 +60,8 @@ struct Sample {
     u32 tail_commands_after_producer{};
     u64 prefetch_job_id{};
     u64 grouped_max_tick{};
+    u64 copy_id{};
+    bool prefetch_extra_dependency{};
     u64 finish_readback_qpc{};
     u64 wake_qpc{};
     u64 cpu_wait_ms_attr{};
@@ -68,20 +77,14 @@ struct Sample {
 /// Remember session root for the fixed diagnostics jsonl path. No file created until export.
 void Configure(const std::filesystem::path& session_root) noexcept;
 
+[[nodiscard]] u64 NextCopyId() noexcept;
 void OnBeginReadback(u64 demand_addr, u64 demand_size, u64 window_start, u64 window_end,
                      u64 copy_bytes, u64 tick0, u64 tick1, bool submitted, bool done, bool current,
-                     u64 wait_tick, u64 trace_id) noexcept;
-void OnPrefetchBatch(u64 job_id, u64 grouped_max_tick, u64 window_start,
-                     u64 window_end) noexcept;
+                     u64 wait_tick, u64 trace_id, const CopyInfo& copy) noexcept;
 void OnWriteTickSample(u64 address, u64 size, u64 tick, u32 queue, u64 shader_hash) noexcept;
-void OnDispatchOrBind(u64 shader_hash, u64 command_tick, u64 address, u64 size) noexcept;
-void OnSchedulerFlush(u64 submit_tick_end) noexcept;
-/// CPU observation that a timeline tick or readback window is GPU-complete.
-/// Keeps the earliest qpc and clears FlagMissingGpuEnd when qpc != 0.
-void OnGpuEndObserved(u64 window_start, u64 window_end, u64 gpu_end_qpc) noexcept;
-void OnGpuEndObservedTick(u64 demand_addr, u64 tick, u64 gpu_end_qpc) noexcept;
-void OnFinishReadback(u64 window_start, u64 window_end, u64 finish_qpc, u64 wake_qpc,
-                      u64 cpu_wait_ms, u64 gpu_end_qpc = 0) noexcept;
+/// CPU observation that this exact copy has completed on its timeline.
+void OnGpuEndObserved(u64 copy_id, u64 gpu_end_qpc) noexcept;
+void OnFinishReadback(u64 copy_id, u64 finish_qpc) noexcept;
 
 /// Cold path: writes sealed in-memory samples to path, or to the configured
 /// state/sessions/<id>/diagnostics/feedback-link-samples.jsonl when path is empty.

@@ -19,7 +19,7 @@ static constexpr u32 ShaderBinaryVersion =
     9u; // 7: legacy multiply-add (v_mac_legacy_f32),
         // 8: upstream ADDC/ALIGNBIT/CVT_PK_U8/thread id fixes
         // 9: optional NV raw access chains
-static constexpr u32 ShaderMetaVersion = 7u; // 7: BufferResource write-footprint plan
+static constexpr u32 ShaderMetaVersion = 8u; // 8: conservative write-footprint proofs
 static constexpr u32 PipelineKeyVersion = 4u; // Includes auxiliary discard-fragment SPIR-V.
 
 /// Shaders compiled with a different recompiler variant use another binary version so cached

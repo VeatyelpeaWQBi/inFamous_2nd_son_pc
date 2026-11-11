@@ -21,7 +21,6 @@
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
-#include "video_core/buffer_cache/feedback_link_sample.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -1116,9 +1115,6 @@ void Rasterizer::DispatchDirect() {
     if (!BindResources(pipeline)) {
         return;
     }
-    if (VideoCore::FeedbackLink::IsActive()) [[unlikely]] {
-        VideoCore::FeedbackLink::OnDispatchOrBind(cs.pgm_hash, Sched().CurrentTick(), 0, 0);
-    }
     if (g_dump.frames_left != 0) [[unlikely]] {
         DumpCommand("dispatch", pipeline,
                     fmt::format("g{}x{}x{}{}", cs_program.dim_x, cs_program.dim_y,
@@ -1856,9 +1852,6 @@ void Rasterizer::TraceShaderResources(const Shader::Info& stage) {
 void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Bindings& binding,
                              Shader::PushData& push_data) {
     const u64 alignment = instance.StorageMinAlignment();
-    if (VideoCore::FeedbackLink::IsActive()) [[unlikely]] {
-        VideoCore::FeedbackLink::OnDispatchOrBind(stage.pgm_hash, Sched().CurrentTick(), 0, 0);
-    }
     for (const auto& trace : Common::Perf::GetTuning().trace_shaders) {
         const u64 hash = trace.load(std::memory_order_relaxed);
         if (hash == 0) {

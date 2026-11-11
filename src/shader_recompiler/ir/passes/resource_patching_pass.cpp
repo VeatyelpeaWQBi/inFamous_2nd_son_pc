@@ -57,7 +57,6 @@ u32 StoreWriteSize(const IR::Inst& inst) {
         return 12;
     case IR::Opcode::StoreBufferU32x4:
     case IR::Opcode::StoreBufferF32x4:
-    case IR::Opcode::StoreBufferFormatF32:
         return 16;
     default:
         return 0;
@@ -76,7 +75,7 @@ ResolvedSoffset ResolveSoffset(IR::Value value, int depth = 0) {
     if (depth > 8) {
         return fail;
     }
-    if (value.Type() == IR::Type::U32) {
+    if (value.IsImmediate() && value.Type() == IR::Type::U32) {
         return ResolvedSoffset{true, WriteFootprintMode::Immediate, value.U32(), 0};
     }
     if (value.IsImmediate()) {
@@ -93,13 +92,6 @@ ResolvedSoffset ResolveSoffset(IR::Value value, int depth = 0) {
             return fail;
         }
         return ResolvedSoffset{true, WriteFootprintMode::SoffsetUserData, 0, static_cast<u16>(reg)};
-    }
-    case IR::Opcode::ReadConstBuffer: {
-        const u32 dw = inst->Flags<IR::BufferInstInfo>().flatbuf_off_dw.Value();
-        if (dw > 0xffff) {
-            return fail;
-        }
-        return ResolvedSoffset{true, WriteFootprintMode::SoffsetUserData, 0, static_cast<u16>(dw)};
     }
     case IR::Opcode::IAdd32: {
         const auto a = ResolveSoffset(inst->Arg(0), depth + 1);
@@ -133,21 +125,20 @@ ResolvedSoffset ResolveSoffset(IR::Value value, int depth = 0) {
 }
 
 void MergeWriteFootprint(BufferResource& dst, const BufferResource& src) {
-    if (!src.is_written || src.write_footprint == WriteFootprintMode::Unknown) {
-        if (src.is_written) {
-            dst.write_footprint = WriteFootprintMode::Unknown;
-            dst.write_end = 0;
-        }
+    if (!src.is_written) {
         return;
     }
-    if (dst.write_end == 0 && dst.write_footprint == WriteFootprintMode::Unknown) {
+    if (!dst.is_written) {
         dst.write_footprint = src.write_footprint;
         dst.write_soffset_dw = src.write_soffset_dw;
         dst.write_imm_offset = src.write_imm_offset;
         dst.write_end = src.write_end;
         return;
     }
-    if (dst.write_footprint != src.write_footprint || dst.write_soffset_dw != src.write_soffset_dw) {
+    // Once a written binding has an unproven store, subsequent known stores cannot
+    // restore a valid whole-binding write plan.
+    if (dst.write_footprint == WriteFootprintMode::Unknown ||
+        dst.write_footprint != src.write_footprint || dst.write_soffset_dw != src.write_soffset_dw) {
         dst.write_footprint = WriteFootprintMode::Unknown;
         dst.write_end = 0;
         return;
@@ -155,6 +146,8 @@ void MergeWriteFootprint(BufferResource& dst, const BufferResource& src) {
     dst.write_imm_offset = std::min(dst.write_imm_offset, src.write_imm_offset);
     dst.write_end = std::max(dst.write_end, src.write_end);
 }
+
+u32 BufferAddressShift(const IR::Inst& inst, AmdGpu::DataFormat data_format);
 
 void AnnotateWriteFootprint(BufferResource& desc, const IR::Inst& inst) {
     desc.write_footprint = WriteFootprintMode::Unknown;
@@ -178,7 +171,10 @@ void AnnotateWriteFootprint(BufferResource& desc, const IR::Inst& inst) {
     }
     const u64 start = u64{soffset.imm} + inst_info.inst_offset.Value();
     const u64 end = start + size;
-    if (end > std::numeric_limits<u32>::max() || end <= start) {
+    // The lowered buffer index drops low bits for word accesses. Only claim
+    // the original byte offset when that conversion is exact.
+    const u32 alignment = 1u << BufferAddressShift(inst, AmdGpu::DataFormat{});
+    if (end > std::numeric_limits<u32>::max() || start % alignment != 0) {
         return;
     }
     desc.write_footprint = soffset.mode;

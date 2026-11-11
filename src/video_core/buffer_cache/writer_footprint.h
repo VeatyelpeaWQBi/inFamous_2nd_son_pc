@@ -35,23 +35,22 @@ struct WrittenRange {
             return std::nullopt;
         }
         const u64 scalar = flatbuf[soffset_dw];
+        // A shared scalar term must preserve alignment for each contributing
+        // store, including 64-bit stores.
+        if (scalar % 8 != 0) {
+            return std::nullopt;
+        }
         rel0 += scalar;
         rel1 += scalar;
     } else if (mode != 1) {
         return std::nullopt;
     }
-    if (rel0 >= bind_size || rel1 <= rel0) {
+    if (rel0 >= bind_size || rel1 > bind_size ||
+        static_cast<u64>(base) > std::numeric_limits<u64>::max() - rel1) {
         return std::nullopt;
     }
-    if (rel1 > bind_size) {
-        rel1 = bind_size;
-    }
-    const u64 address = static_cast<u64>(base) + rel0;
-    const u64 size = rel1 - rel0;
-    if (address < static_cast<u64>(base) || size > std::numeric_limits<u32>::max()) {
-        return std::nullopt;
-    }
-    return WrittenRange{static_cast<VAddr>(address), static_cast<u32>(size)};
+    return WrittenRange{static_cast<VAddr>(static_cast<u64>(base) + rel0),
+                        static_cast<u32>(rel1 - rel0)};
 }
 
 } // namespace VideoCore

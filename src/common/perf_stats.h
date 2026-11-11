@@ -374,8 +374,25 @@ inline ThreadCounters* LocalCounters(bool& shared) {
     return local;
 }
 
+/// O01 path receipts that must remain visible in lightweight captures (perf_log = 0).
+/// These events are rare (at most once per eligible readback), so they use process-wide
+/// atomics and never take a per-thread counter slot.
+inline bool IsLightweightReceipt(Counter counter) {
+    return counter == ReadbackEarlyCompleteSubmits ||
+           counter == ReadbackEarlyCompleteFallbacks;
+}
+
+inline std::atomic<u64>& LightweightReceipt(Counter counter) {
+    static std::atomic<u64> submits{0};
+    static std::atomic<u64> fallbacks{0};
+    return counter == ReadbackEarlyCompleteSubmits ? submits : fallbacks;
+}
+
 /// Sum of the counter over all threads.
 inline u64 Total(Counter counter) {
+    if (IsLightweightReceipt(counter)) {
+        return LightweightReceipt(counter).load(std::memory_order_relaxed);
+    }
     auto& registry = Registry();
     const size_t num_threads =
         std::min(registry.num_threads.load(std::memory_order_acquire), MaxCounterThreads);
@@ -653,6 +670,10 @@ inline std::atomic<u32>& GpuThreadCpu() {
 }
 
 inline void Add(Counter counter, u64 value = 1) {
+    if (IsLightweightReceipt(counter)) {
+        LightweightReceipt(counter).fetch_add(value, std::memory_order_relaxed);
+        return;
+    }
     // These totals are only consumed by OnFlip's diagnostics. Ordinary rendering must not
     // allocate a per-thread counter block or update it for every draw, bind and page fault.
     if (!GetTuning().perf_log.load(std::memory_order_relaxed)) {

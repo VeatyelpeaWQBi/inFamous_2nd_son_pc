@@ -74,7 +74,6 @@ void ApplyGameProfile(std::string_view serial) {
     t.readback_feedback_checkpoint.store(false, relaxed);
     t.readback_feedback_writers.store(false, relaxed);
     t.readback_word_load.store(false, relaxed);
-    t.readback_early_complete.store(false, relaxed);
     t.readback_writer_footprint.store(false, relaxed);
     t.gds_counter_scope.store(false, relaxed);
     t.compute_threaded_recording.store(false, relaxed);
@@ -185,8 +184,6 @@ void PollTuning() {
             tuning.readback_word_page_cluster.store(value != "0", std::memory_order_relaxed);
         } else if (key == "readback_word_load") {
             tuning.readback_word_load.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "readback_early_complete") {
-            tuning.readback_early_complete.store(value != "0", std::memory_order_relaxed);
         } else if (key == "readback_writer_footprint") {
             tuning.readback_writer_footprint.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gds_counter_scope") {

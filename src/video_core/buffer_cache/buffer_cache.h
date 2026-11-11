@@ -340,11 +340,7 @@ private:
     /// Precise mode always refines known copied-range dependencies; missing evidence keeps
     /// the original whole-window waits and queue selection.
     bool PrepareReadback(const Buffer* arena, PendingReadback& readback, WindowWriters& writers,
-                         bool queue_enabled, bool& on_queue, bool small_cpu_read = false,
-                         bool record_if_graphics = true);
-
-    bool SubmitEarlyComplete(const Buffer* arena, PendingReadback& readback, WindowWriters& writers,
-                             bool queue_enabled, Vulkan::Semaphore*& wait_semaphore);
+                         bool queue_enabled, bool& on_queue, bool small_cpu_read = false);
 
     /// Collects the window and records its copies in the graphics command buffer.
     bool RecordReadback(const Buffer* arena, PendingReadback& readback);

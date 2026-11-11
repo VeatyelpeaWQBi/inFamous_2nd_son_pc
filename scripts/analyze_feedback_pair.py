@@ -5,6 +5,13 @@ from pathlib import Path
 
 from analyze_super_batch import analyze, load
 
+RECENT_CANDIDATES = {
+    "early-complete": ("readback_early_complete", "feedback_early_complete_submits",
+                       "feedback_early_complete_fallbacks"),
+    "writer-footprint": ("readback_writer_footprint", "writer_footprint_narrowed",
+                         "writer_footprint_proven", "writer_footprint_fallbacks"),
+}
+
 
 def baseline_order(index):
     records = index.get("sessions", [])
@@ -48,6 +55,9 @@ def qualify(a, b, candidate, profile, performance_core_mask=None, normal_renderi
             issues.append(f'Trial {ordinal}: external load observation did not qualify.')
         expected = dict(command_buffer_sharps=0, compute_barrier_scope=int(bool(normal_rendering)),
                         readback_feedback_checkpoint=0, readback_feedback_writers=0)
+        for tuning_key, *_ in RECENT_CANDIDATES.values():
+            if tuning_key in t.get("requested_tuning", {}):
+                expected[tuning_key] = 0
         # Preserve old four-flag historical captures, while explicitly isolating the new flag
         # whenever it exists in the request or this is its own experiment.
         if candidate == "feedback-word" or "readback_word_load" in t.get("requested_tuning", {}):
@@ -61,7 +71,9 @@ def qualify(a, b, candidate, profile, performance_core_mask=None, normal_renderi
         key = {"feedback-checkpoint": "readback_feedback_checkpoint",
                "feedback-writers": "readback_feedback_writers", "feedback-word": "readback_word_load",
                "feedback-async": "asc_queue", "gds-counter": "gds_counter_scope"}.get(candidate)
-        if candidate == "cpu-placement":
+        if candidate in RECENT_CANDIDATES:
+            expected[RECENT_CANDIDATES[candidate][0]] = ordinal
+        elif candidate == "cpu-placement":
             if not performance_core_mask or not 0 < performance_core_mask < 2**64-1:
                 issues.append("Missing valid enumerated performance-core mask.")
             expected.update(gpu_threads_affinity="auto" if ordinal == 0 else performance_core_mask,
@@ -196,9 +208,15 @@ def qualify(a, b, candidate, profile, performance_core_mask=None, normal_renderi
             expected[key] = ordinal
         if t.get("requested_tuning") != expected or not t.get("tuning_verified"):
             issues.append(f"Trial {ordinal}: requested/observed tuning mismatch.")
-        if (t.get("status") != "collected" or not t.get("warm") or
-                not t.get("meter_consumed") or any(t.get("compile_delta", {}).values())):
-            issues.append(f"Trial {ordinal}: incomplete, cold or no observed meter consumption.")
+        compile_delta = t.get("compile_delta", {})
+        if any(compile_delta.values()):
+            issues.append(f"Trial {ordinal}: shader/pipeline compilation occurred: {compile_delta}.")
+        elif not t.get("warm") or t.get("status") == "captured-new-compilation":
+            issues.append(f"Trial {ordinal}: warm status was not verified.")
+        if t.get("status") not in ("collected", "captured-new-compilation"):
+            issues.append(f"Trial {ordinal}: capture status is {t.get('status')!r}.")
+        if not t.get("meter_consumed"):
+            issues.append(f"Trial {ordinal}: super-meter consumption was not observed.")
         if t.get("profile") != profile:
             issues.append(f"Trial {ordinal}: profile differs from pair index.")
         if candidate == "compute-recorder":
@@ -218,6 +236,8 @@ def qualify(a, b, candidate, profile, performance_core_mask=None, normal_renderi
         if not all(t.get("windows", {}).get(k, {}).get("n", 0) > 0
                    for k in ("baseline", "early", "peak", "late", "recovery")):
             issues.append(f"Trial {ordinal}: required frame windows missing.")
+        if candidate in RECENT_CANDIDATES and not t.get("windows", {}).get("super_0_12", {}).get("n"):
+            issues.append(f"Trial {ordinal}: combined super frame window missing.")
     drift = {}
     windows = {}
     mechanism = {}
@@ -247,8 +267,20 @@ def qualify(a, b, candidate, profile, performance_core_mask=None, normal_renderi
                             "texture-binding-reuse": (None, None),
                             "feedback-arena-group": (None, None),
                             "feedback-arena-pool": (None, None),
-                            "feedback-arena-tiled": (None, None), "runtime-context": (None, None)}[candidate]
-        if candidate == "buffer-prep-union":
+                            "feedback-arena-tiled": (None, None), "runtime-context": (None, None),
+                            "early-complete": (None, None), "writer-footprint": (None, None)}[candidate]
+        if candidate in RECENT_CANDIDATES:
+            _, active_counter, *other_counters = RECENT_CANDIDATES[candidate]
+            counters = (active_counter, *other_counters)
+            baseline = trials[0].get("mechanism_delta", {})
+            valid = all(type(baseline.get(k)) is int and baseline[k] == 0 and
+                        type(delta.get(k)) is int and delta[k] >= 0 for k in counters)
+            if not valid:
+                issues.append("Missing, negative or active-in-baseline mechanism counters.")
+            mechanism = dict(coverage_observed=valid and delta[active_counter] > 0,
+                             baseline_delta={k: baseline.get(k) for k in counters},
+                             release_delta={k: delta.get(k) for k in counters})
+        elif candidate == "buffer-prep-union":
             used = b.get("access_union_receipt", {}).get("used") is True
             count = delta.get("written_sync_skips")
             mechanism = dict(coverage_observed=used and type(count) is int and count > 0,
@@ -361,7 +393,7 @@ def qualify(a, b, candidate, profile, performance_core_mask=None, normal_renderi
                 drift[key] = 100 * (bv / av - 1)
                 if abs(drift[key]) > 10:
                     issues.append(f"Baseline {key} drift exceeds 10%; scenes not comparable.")
-        for key in ("baseline", "early", "peak", "late", "recovery", "tail"):
+        for key in ("baseline", "super_0_12", "early", "peak", "late", "recovery", "tail"):
             av, bv = (t.get("windows", {}).get(key, {}) for t in trials)
             windows[key] = dict(A=av, B=bv, raw_fps_change_percent=(
                 100 * (bv["fps"] / av["fps"] - 1) if av.get("fps") and bv.get("fps") else None))
@@ -385,7 +417,7 @@ def main():
     args = parser.parse_args()
     index = load(args.index)
     if (index.get("status") != "collected" or index.get("candidate") not in
-            ("feedback-checkpoint", "feedback-writers", "feedback-word", "feedback-word-prefetch", "feedback-word-bulk", "feedback-page-words", "feedback-async", "gds-counter", "cpu-placement", "compute-recorder", "recorder-spin", "reg-dump-fast", "particle-poll-pause", "c73-scan", "written-sync", "image-sync-once", "access-union", "readback-copy-stage", "image-read-transition", "buffer-prep-union", "feedback-arena", "vertex-input-key", "texture-binding-reuse", "feedback-arena-group", "feedback-arena-pool", "feedback-arena-tiled", "runtime-context") or index.get("release_count") != 2 or
+            ("feedback-checkpoint", "feedback-writers", "feedback-word", "feedback-word-prefetch", "feedback-word-bulk", "feedback-page-words", "feedback-async", "gds-counter", "cpu-placement", "compute-recorder", "recorder-spin", "reg-dump-fast", "particle-poll-pause", "c73-scan", "written-sync", "image-sync-once", "access-union", "readback-copy-stage", "image-read-transition", "buffer-prep-union", "feedback-arena", "vertex-input-key", "texture-binding-reuse", "feedback-arena-group", "feedback-arena-pool", "feedback-arena-tiled", "runtime-context", *RECENT_CANDIDATES) or index.get("release_count") != 2 or
             len(index.get("sessions", [])) != 2):
         raise ValueError("Expected one complete independent feedback pair.")
     records = baseline_order(index)

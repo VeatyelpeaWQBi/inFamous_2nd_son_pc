@@ -164,10 +164,11 @@ void OnBeginReadback(u64 demand_addr, u64 demand_size, u64 window_start, u64 win
     const u64 demand_end = demand_addr + demand_size;
     for (const auto& note : state->write_notes) {
         if (note.queue >= 2 || note.tick == 0 || note.tick != sample.tick_components[note.queue] ||
-            note.shader_hash == 0 || !RangesOverlap(note.address, note.size, demand_addr, demand_end)) {
+            !RangesOverlap(note.address, note.size, demand_addr, demand_end)) {
             continue;
         }
-        if (sample.shader_hash != 0 && sample.shader_hash != note.shader_hash) {
+        if (note.shader_hash == 0 ||
+            (sample.shader_hash != 0 && sample.shader_hash != note.shader_hash)) {
             sample.shader_hash = 0;
             break;
         }

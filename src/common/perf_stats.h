@@ -304,8 +304,6 @@ enum Counter : u32 {
     ReadbackDependenciesReduced,
     ReadbackDependencyFallbacks,
     ReadbackQueuePromotions,
-    ReadbackEarlyCompleteSubmits,
-    ReadbackEarlyCompleteFallbacks,
     WriterFootprintProven,
     WriterFootprintFallbacks,
     WriterFootprintNarrowed,
@@ -384,29 +382,21 @@ inline ThreadCounters* LocalCounters(bool& shared) {
     return local;
 }
 
-/// O01/O02 path receipts that must remain visible in lightweight captures (perf_log = 0).
+/// O02 path receipts that must remain visible in lightweight captures (perf_log = 0).
 /// Official lightweight BA/AB needs these in the status JSON even when perf_log is off;
 /// they use process-wide atomics and never take a per-thread counter slot.
 /// Other Perf counters remain gated.
 inline bool IsLightweightReceipt(Counter counter) {
-    return counter == ReadbackEarlyCompleteSubmits ||
-           counter == ReadbackEarlyCompleteFallbacks ||
-           counter == WriterFootprintProven ||
+    return counter == WriterFootprintProven ||
            counter == WriterFootprintFallbacks ||
            counter == WriterFootprintNarrowed;
 }
 
 inline std::atomic<u64>& LightweightReceipt(Counter counter) {
-    static std::atomic<u64> early_complete_submits{0};
-    static std::atomic<u64> early_complete_fallbacks{0};
     static std::atomic<u64> writer_footprint_proven{0};
     static std::atomic<u64> writer_footprint_fallbacks{0};
     static std::atomic<u64> writer_footprint_narrowed{0};
     switch (counter) {
-    case ReadbackEarlyCompleteSubmits:
-        return early_complete_submits;
-    case ReadbackEarlyCompleteFallbacks:
-        return early_complete_fallbacks;
     case WriterFootprintProven:
         return writer_footprint_proven;
     case WriterFootprintFallbacks:
@@ -609,8 +599,6 @@ struct Tuning {
     std::atomic<bool> readback_word_prefetch{false};
     std::atomic<bool> readback_word_prefetch_bulk{false};
     std::atomic<bool> readback_word_page_cluster{false};
-    /// O01 early complete-boundary; default off. No Flush-timing change until the boundary patch.
-    std::atomic<bool> readback_early_complete{false};
     /// O02 writer-footprint switch; default off. No Draft A/B / SetWriteTick semantics until O02_candidate.
     std::atomic<bool> readback_writer_footprint{false};
     /// Only exact module-proven GDS counter footprints; descriptors/queue ownership unchanged.
@@ -709,7 +697,6 @@ struct FeedbackActivity {
     std::atomic<u64> word_cluster_served{};
     std::atomic<u64> written_sync_skips{};
     std::atomic<u64> image_sync_queries_skipped{}, image_sync_copies_skipped{};
-    std::atomic<u64> early_complete_submits{}, early_complete_fallbacks{};
 };
 inline FeedbackActivity& GetFeedbackActivity() {
     static FeedbackActivity activity{};
@@ -1019,13 +1006,11 @@ inline void OnFlip(float draws_per_frame, float dispatches_per_frame) {
         LOG_INFO(Debug,
                  "Perf V1: vertex binds skipped {}/{} index binds skipped {}/{} "
                  "readback dependencies: checked {} reduced {} fallback {} queue promotions {} "
-                 "early-complete {} fallback {} "
                  "writer footprint: proven {} fallback {} narrowed {} "
                  "recorder backlog wait {:.1f} ms",
                  t[VertexBufferBindsSkipped], t[VertexBufferBinds], t[IndexBufferBindsSkipped],
                  t[IndexBufferBinds], t[ReadbackDependencyChecks], t[ReadbackDependenciesReduced],
                  t[ReadbackDependencyFallbacks], t[ReadbackQueuePromotions],
-                 t[ReadbackEarlyCompleteSubmits], t[ReadbackEarlyCompleteFallbacks],
                  t[WriterFootprintProven], t[WriterFootprintFallbacks], t[WriterFootprintNarrowed],
                  ms(t[RecorderQueueWaitNs]));
     }

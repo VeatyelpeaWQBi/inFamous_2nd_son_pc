@@ -61,9 +61,9 @@ function Get-SuperCriticalTraceErrors($Metadata,[switch]$RequireDrawPrep) {
 function Get-SuperFeedbackVariant([string]$Candidate,[switch]$Baseline,[string]$PerformanceCoreMask='',
                                  [switch]$NormalRendering) {
     if($NormalRendering -and $Candidate -ne 'feedback-arena-pool'){throw 'Normal rendering comparison is restricted to the compact pool.'}
-    if($Candidate -notin @('feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter','cpu-placement','compute-recorder','recorder-spin','reg-dump-fast','feedback-word-prefetch','feedback-word-bulk','particle-poll-pause','c73-scan','written-sync','image-sync-once','feedback-page-words','access-union','readback-copy-stage','image-read-transition','buffer-prep-union','feedback-arena','vertex-input-key','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled','early-complete','writer-footprint')){throw 'Unknown feedback candidate.'}
+    if($Candidate -notin @('feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter','cpu-placement','compute-recorder','recorder-spin','reg-dump-fast','feedback-word-prefetch','feedback-word-bulk','particle-poll-pause','c73-scan','written-sync','image-sync-once','feedback-page-words','access-union','readback-copy-stage','image-read-transition','buffer-prep-union','feedback-arena','vertex-input-key','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled','writer-footprint')){throw 'Unknown feedback candidate.'}
     $tuning=@{command_buffer_sharps=0;compute_barrier_scope=0
-        readback_feedback_checkpoint=0;readback_feedback_writers=0;readback_word_load=0;readback_early_complete=0;readback_writer_footprint=0;asc_queue=0;gds_counter_scope=0;compute_threaded_recording=0}
+        readback_feedback_checkpoint=0;readback_feedback_writers=0;readback_word_load=0;readback_writer_footprint=0;asc_queue=0;gds_counter_scope=0;compute_threaded_recording=0}
     if($Candidate -eq 'cpu-placement'){
         if($PerformanceCoreMask -notmatch '^[0-9a-fA-F]{1,16}$'){throw 'CPU placement requires an enumerated performance-core mask.'}
         $mask=[Convert]::ToUInt64($PerformanceCoreMask,16)
@@ -90,8 +90,6 @@ function Get-SuperFeedbackVariant([string]$Candidate,[switch]$Baseline,[string]$
         $tuning.image_sync_once=[int](-not $Baseline)
     }elseif($Candidate -eq 'written-sync'){
         $tuning.written_sync_fastpath=[int](-not $Baseline)
-    }elseif($Candidate -eq 'early-complete'){
-        $tuning.readback_early_complete=[int](-not $Baseline)
     }elseif($Candidate -eq 'writer-footprint'){
         # O02 switch only; default-off. Does not enable feedback-writers or Draft A/B logic.
         $tuning.readback_writer_footprint=[int](-not $Baseline)

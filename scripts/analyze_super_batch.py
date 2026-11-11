@@ -26,6 +26,9 @@ def stats(values):
 
 
 FEEDBACK_ACTIVITY = ("feedback_checkpoint_attempts", "feedback_checkpoint_submits",
+                     "feedback_early_complete_submits", "feedback_early_complete_fallbacks",
+                     "writer_footprint_proven", "writer_footprint_fallbacks",
+                     "writer_footprint_narrowed",
                      "feedback_writer_hits", "feedback_writer_fallbacks", "feedback_writer_reductions",
                      "feedback_word_attempts", "feedback_word_served", "feedback_word_fallbacks",
                      "feedback_word_bulk_queued",
@@ -185,7 +188,8 @@ def analyze(session):
                                     feedback_activity={k: e[k] for k in FEEDBACK_ACTIVITY if k in e})
                               for e in samples]
         trial["windows"] = {}
-        for label, begin, end in [("baseline", -10, 0), ("early", 0, 3), ("peak", 3, 8),
+        for label, begin, end in [("baseline", -10, 0), ("super_0_12", 0, 12),
+                                  ("early", 0, 3), ("peak", 3, 8),
                                   ("late", 8, 12), ("recovery", 12, 25), ("tail", 25, 30)]:
             low, high = bisect_left(timestamps, at+begin*1e9), bisect_left(timestamps, at+end*1e9)
             trial["windows"][label] = stats(intervals[low:high])

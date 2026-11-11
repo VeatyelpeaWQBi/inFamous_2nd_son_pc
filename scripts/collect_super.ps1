@@ -24,7 +24,8 @@ param(
     [ValidatePattern('^(?:[0-9a-fA-F]{1,10})?$')][string]$FeedbackTraceAddress='',
     [ValidatePattern('^(?:[0-9a-fA-F]{1,10})?$')][string]$SecondFeedbackTraceAddress='',
     [switch]$ProbeCandidate,
-    [ValidateSet('none','feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter','cpu-placement','compute-recorder','recorder-spin','reg-dump-fast','feedback-word-prefetch','feedback-word-bulk','particle-poll-pause','c73-scan','written-sync','image-sync-once','feedback-page-words','access-union','readback-copy-stage','image-read-transition','buffer-prep-union','feedback-arena','vertex-input-key','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled','early-complete','writer-footprint')][string]$Candidate='none',
+    [ValidateSet('none','feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter','cpu-placement','compute-recorder','recorder-spin','reg-dump-fast','feedback-word-prefetch','feedback-word-bulk','particle-poll-pause','c73-scan','written-sync','image-sync-once','feedback-page-words','access-union','readback-copy-stage','image-read-transition','buffer-prep-union','feedback-arena','vertex-input-key','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled','writer-footprint')][string]$Candidate='none',
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$TrialId,
     [switch]$CandidateBaseline,
     [switch]$NormalRendering,
     [ValidatePattern('^(?:[0-9a-fA-F]{1,16})?$')][string]$PerformanceCoreMask='',
@@ -506,7 +507,9 @@ try{
     $area=Resolve-ProjectChild $root 'state/super-captures'
     $null=[IO.Directory]::CreateDirectory($area)
     $batchLock=[IO.File]::Open((Join-Path $area 'capture.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
-    $batchPath=Join-Path $area ((Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+$Mode+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8))
+    $batchId=if($TrialId){$TrialId}else{[Guid]::NewGuid().ToString('N').Substring(0,8)}
+    $batchPath=Join-Path $area ((Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+$Mode+'-'+$batchId)
+    if(Test-Path -LiteralPath $batchPath){throw 'Collection batch already exists.'}
     $null=[IO.Directory]::CreateDirectory($batchPath)
     $batchRelative=Get-RelativePath $root $batchPath
     $profiles=if($FullCapture){@('full')}elseif($Profile -eq 'suite'){@('lightweight')}else{@($Profile)}

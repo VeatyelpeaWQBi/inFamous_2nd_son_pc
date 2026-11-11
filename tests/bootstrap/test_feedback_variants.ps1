@@ -2,12 +2,12 @@
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot '../../scripts/super_capture_tools.ps1')
-foreach($candidate in @('feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter')){
+foreach($candidate in @('feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter','writer-footprint')){
     $a=Get-SuperFeedbackVariant $candidate -Baseline
     $b=Get-SuperFeedbackVariant $candidate
-    if($a.tuning.Count -ne 8 -or $b.tuning.Count -ne 8){throw 'Unexpected candidate flags.'}
+    if($a.tuning.Count -ne 9 -or $b.tuning.Count -ne 9){throw 'Unexpected candidate flags.'}
     foreach($key in $a.tuning.Keys){if($a.tuning[$key] -ne 0){throw 'Baseline must disable all experimental candidates.'}}
-    $selected=@{'feedback-checkpoint'='readback_feedback_checkpoint';'feedback-writers'='readback_feedback_writers';'feedback-word'='readback_word_load';'feedback-async'='asc_queue';'gds-counter'='gds_counter_scope'}[$candidate]
+    $selected=@{'feedback-checkpoint'='readback_feedback_checkpoint';'feedback-writers'='readback_feedback_writers';'feedback-word'='readback_word_load';'feedback-async'='asc_queue';'gds-counter'='gds_counter_scope';'writer-footprint'='readback_writer_footprint'}[$candidate]
     foreach($key in $b.tuning.Keys){
         $expected=if($key -eq $selected){1}else{0}
         if($b.tuning[$key] -ne $expected){throw 'Candidate must enable exactly one mechanism.'}
@@ -20,7 +20,7 @@ if(-not $rejected){throw 'Unknown candidate must be rejected.'}
 Write-Host 'Feedback variant isolation checks passed.'
 foreach($baseline in @($true,$false)){
     $variant=Get-SuperFeedbackVariant 'feedback-arena-pool' -Baseline:$baseline
-    if($variant.tuning.Count -ne 14){throw 'Unexpected feedback pool isolation.'}
+    if($variant.tuning.Count -ne 15){throw 'Unexpected feedback pool isolation.'}
     foreach($key in $variant.tuning.Keys){
         $wanted=if($key -eq 'readback_window_kb'){512}else{0}
         if($variant.tuning[$key] -ne $wanted){throw 'Feedback pool changed another renderer setting.'}
@@ -50,7 +50,7 @@ if(-not $rejected){throw 'Feedback pool capacity fallback must exclude the trial
 Write-Host 'Feedback pool isolation and capacity qualification passed.'
 foreach($baseline in @($true,$false)){
     $variant=Get-SuperFeedbackVariant 'feedback-arena-tiled' -Baseline:$baseline
-    if($variant.tuning.Count -ne 14){throw 'Tiled pool changed the renderer baseline.'}
+    if($variant.tuning.Count -ne 15){throw 'Tiled pool changed the renderer baseline.'}
     foreach($key in $variant.tuning.Keys){
         $wanted=if($key -eq 'readback_window_kb'){512}else{0}
         if($variant.tuning[$key] -ne $wanted){throw 'Tiled pool enabled another renderer setting.'}
@@ -70,7 +70,7 @@ if(-not $rejected){throw 'Tiled and compact layouts cannot be confused.'}
 Write-Host 'Tiled pool preserves the active compact reference and verifies group geometry.'
 foreach($baseline in @($true,$false)){
     $variant=Get-SuperFeedbackVariant 'feedback-arena-pool' -Baseline:$baseline -NormalRendering
-    if($variant.tuning.Count -ne 14){throw 'Normal rendering combination changed unrelated settings.'}
+    if($variant.tuning.Count -ne 15){throw 'Normal rendering combination changed unrelated settings.'}
     foreach($key in $variant.tuning.Keys){
         $wanted=if($key -eq 'readback_window_kb'){512}elseif($key -eq 'compute_barrier_scope'){1}else{0}
         if($variant.tuning[$key] -ne $wanted){throw 'Normal rendering must keep the same barrier scope in A and B.'}
@@ -83,7 +83,7 @@ foreach($item in @(@('access-union','-AccessUnionCandidate'),
                    @('image-read-transition','-ImageReadTransitionCandidate'))){
     foreach($baseline in @($true,$false)){
         $variant=Get-SuperFeedbackVariant $item[0] -Baseline:$baseline
-        if($variant.tuning.Count -ne 13){throw 'Unexpected startup candidate flags.'}
+        if($variant.tuning.Count -ne 14){throw 'Unexpected startup candidate flags.'}
         foreach($key in $variant.tuning.Keys){
             $wanted=[int]($item[0] -eq 'buffer-prep-union' -and $key -eq 'written_sync_fastpath' -and -not $baseline)
             if($variant.tuning[$key] -ne $wanted){throw ('Startup candidate flag mismatch: '+$key)}
@@ -95,7 +95,7 @@ foreach($item in @(@('access-union','-AccessUnionCandidate'),
 }
 foreach($baseline in @($true,$false)){
     $variant=Get-SuperFeedbackVariant 'feedback-page-words' -Baseline:$baseline
-    if($variant.tuning.Count -ne 11){throw 'Page words must isolate the three needed flags and keep bulk off.'}
+    if($variant.tuning.Count -ne 12){throw 'Page words must isolate the three needed flags and keep bulk off.'}
     foreach($key in $variant.tuning.Keys){
         $wanted=if($key -in @('readback_word_load','readback_word_prefetch','readback_word_page_cluster')){[int](-not $baseline)}else{0}
         if($variant.tuning[$key] -ne $wanted){throw ('Page words enabled an unrelated setting: '+$key)}
@@ -103,7 +103,7 @@ foreach($baseline in @($true,$false)){
 }
 foreach($baseline in @($true,$false)){
     $variant=Get-SuperFeedbackVariant 'image-sync-once' -Baseline:$baseline
-    if($variant.tuning.Count -ne 10){throw 'Image sync must explicitly disable the written-sync candidate.'}
+    if($variant.tuning.Count -ne 11){throw 'Image sync must explicitly disable the written-sync candidate.'}
     foreach($key in $variant.tuning.Keys){
         $wanted=if($key -eq 'image_sync_once'){[int](-not $baseline)}else{0}
         if($variant.tuning[$key] -ne $wanted){throw ('Image sync enabled an unrelated setting: '+$key)}
@@ -111,7 +111,7 @@ foreach($baseline in @($true,$false)){
 }
 foreach($baseline in @($true,$false)){
     $variant=Get-SuperFeedbackVariant 'written-sync' -Baseline:$baseline
-    if($variant.tuning.Count -ne 9){throw 'Written sync candidate must have one additional isolated flag.'}
+    if($variant.tuning.Count -ne 10){throw 'Written sync candidate must have one additional isolated flag.'}
     foreach($key in $variant.tuning.Keys){
         $wanted=if($key -eq 'written_sync_fastpath'){[int](-not $baseline)}else{0}
         if($variant.tuning[$key] -ne $wanted){throw ('Written sync enabled an unrelated setting: '+$key)}
@@ -119,7 +119,7 @@ foreach($baseline in @($true,$false)){
 }
 foreach($baseline in @($true,$false)){
     $variant=Get-SuperFeedbackVariant 'compute-recorder' -Baseline:$baseline
-    if($variant.tuning.Count -ne 9 -or $variant.tuning.threaded_recording -ne 1){throw 'Unexpected compute recorder isolation.'}
+    if($variant.tuning.Count -ne 10 -or $variant.tuning.threaded_recording -ne 1){throw 'Unexpected compute recorder isolation.'}
     foreach($key in $variant.tuning.Keys){
         $expected=if($key -eq 'threaded_recording'){1}elseif($key -in @('asc_queue','compute_threaded_recording')){[int](-not $baseline)}else{0}
         if($variant.tuning[$key] -ne $expected){throw ('Unexpected recorder flag: '+$key)}
@@ -136,7 +136,7 @@ if($performanceMask -ne 'f'){throw 'Select the actual highest OS class, not logi
 foreach($baseline in @($true,$false)){
     $variant=Get-SuperFeedbackVariant 'cpu-placement' -Baseline:$baseline -PerformanceCoreMask $performanceMask
     $expected=Get-SuperExpectedTuning $variant.tuning
-    if($variant.tuning.Count -ne 11 -or $expected.cpu_affinity -ne 0 -or $expected.other_threads_affinity -ne 0){throw 'CPU candidate must isolate renderer threads.'}
+    if($variant.tuning.Count -ne 12 -or $expected.cpu_affinity -ne 0 -or $expected.other_threads_affinity -ne 0){throw 'CPU candidate must isolate renderer threads.'}
     $affinity=if($baseline){'auto'}else{15}
     if($expected.gpu_threads_affinity -ne $affinity){throw 'INI hex must be normalized to numeric receipt.'}
     foreach($key in @('command_buffer_sharps','compute_barrier_scope','readback_feedback_checkpoint','readback_feedback_writers','readback_word_load','asc_queue','gds_counter_scope')){

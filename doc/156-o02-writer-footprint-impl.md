@@ -1,6 +1,7 @@
 # 156 — O02 精确写者足迹 Draft A（默认关）
 
 - 日期（Asia/Shanghai）：2026-11-10 13:20+08
+- 修订（Asia/Shanghai）：2026-11-11 12:45+08 — 三个路径计数写入 status JSON，并从 perf_log 门解绑
 - 角色：开发-写者足迹 / O02
 - 工作树：`D:\projects\inFamous_2nd_son_pc-wt-o02`，分支 `feat/o02-writer-footprint-impl`（自 `develop@eb52d90`）
 - 真源：`doc/148` §3 草案 A；`doc/152` / `doc/146` 验收语义
@@ -30,6 +31,9 @@
 - 键：`readback_writer_footprint`，`ApplyGameProfile` 重置为 false，INI 可开。
 - 键为 0 时：`BindBuffers` 不计算足迹，`ObtainBuffer` 不走新分支，行为应与今日位级一致。
 - 键为 1 时：上述证明路径才会改写登记与别名失效范围；计数 `WriterFootprintProven` / `Fallbacks` / `Narrowed`。
+
+这三个计数从 `perf_log` 门解绑，走进程级原子量，并进入 status 回执：`writer_footprint_proven` / `writer_footprint_fallbacks` / `writer_footprint_narrowed`。轻量采集（`perf_log=0`）也会在回执里看到实际路径次数，不必开 `-Profile counters`。其它 Perf 计数仍受 `perf_log` 门控。
+
 - 着色器缓存：`ShaderMetaVersion` 6→7（`BufferResource` 增加足迹字段）。
 
 ## 4. 验证

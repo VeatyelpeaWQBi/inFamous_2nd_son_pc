@@ -30,6 +30,8 @@ struct PrefetchNote {
     u64 grouped_max_tick{};
     u64 window_start{};
     u64 window_end{};
+    u64 conservative_start{};
+    u64 conservative_end{};
 };
 
 struct State {
@@ -50,6 +52,17 @@ struct State {
     return a_size != 0 && a < end && start < a + a_size;
 }
 
+[[nodiscard]] bool WindowsOverlap(u64 a0, u64 a1, u64 b0, u64 b1) noexcept {
+    return a1 > a0 && b1 > b0 && a0 < b1 && b0 < a1;
+}
+
+[[nodiscard]] bool NoteOverlapsSample(const PrefetchNote& note, const Sample& sample) noexcept {
+    return WindowsOverlap(note.window_start, note.window_end, sample.window_start,
+                          sample.window_end) ||
+           WindowsOverlap(note.conservative_start, note.conservative_end, sample.window_start,
+                          sample.window_end);
+}
+
 void ApplyWriteNote(Sample& sample, const WriteNote& note) noexcept {
     sample.flags |= FlagWriterHit;
     if (note.queue < sample.tick_components.size()) {
@@ -66,6 +79,11 @@ void ApplyPrefetchNote(Sample& sample, const PrefetchNote& note) noexcept {
         sample.prefetch_job_id = note.job_id;
     }
     sample.grouped_max_tick = std::max(sample.grouped_max_tick, note.grouped_max_tick);
+    if (note.window_end > note.window_start &&
+        sample.prefetch_page_end <= sample.prefetch_page_start) {
+        sample.prefetch_page_start = note.window_start;
+        sample.prefetch_page_end = note.window_end;
+    }
 }
 
 void ApplyGpuEnd(Sample& sample, u64 gpu_end_qpc) noexcept {
@@ -117,13 +135,30 @@ const char* LabelName(Label label) noexcept {
 }
 
 Sample* FindOpen(State& state, u64 window_start, u64 window_end) noexcept {
-    for (auto& sample : state.ring) {
-        if (sample.open && !sample.sealed && sample.window_start == window_start &&
-            sample.window_end == window_end) {
+    Sample* page_exact = nullptr;
+    Sample* overlap = nullptr;
+    for (u32 i = 0; i < kRingCap; ++i) {
+        const u32 idx = (state.next + kRingCap - 1 - i) % kRingCap;
+        Sample& sample = state.ring[idx];
+        if (!sample.open || sample.sealed) {
+            continue;
+        }
+        if (sample.window_start == window_start && sample.window_end == window_end) {
             return &sample;
         }
+        if (!page_exact && sample.prefetch_page_end > sample.prefetch_page_start &&
+            sample.prefetch_page_start == window_start &&
+            sample.prefetch_page_end == window_end) {
+            page_exact = &sample;
+        }
+        if (!overlap && (WindowsOverlap(window_start, window_end, sample.window_start,
+                                       sample.window_end) ||
+                         WindowsOverlap(window_start, window_end, sample.prefetch_page_start,
+                                        sample.prefetch_page_end))) {
+            overlap = &sample;
+        }
     }
-    return nullptr;
+    return page_exact ? page_exact : overlap;
 }
 
 } // namespace
@@ -196,8 +231,7 @@ void OnBeginReadback(u64 demand_addr, u64 demand_size, u64 window_start, u64 win
         }
     }
     for (const auto& note : state->prefetch_notes) {
-        if (note.window_end > note.window_start && note.window_start == sample.window_start &&
-            note.window_end == sample.window_end) {
+        if (NoteOverlapsSample(note, sample)) {
             ApplyPrefetchNote(sample, note);
         }
     }
@@ -207,7 +241,8 @@ void OnBeginReadback(u64 demand_addr, u64 demand_size, u64 window_start, u64 win
 }
 
 void OnPrefetchBatch(u64 job_id, u64 grouped_max_tick, u64 window_start,
-                     u64 window_end) noexcept {
+                     u64 window_end, u64 conservative_start,
+                     u64 conservative_end) noexcept {
     if (!IsActive()) {
         return;
     }
@@ -221,11 +256,15 @@ void OnPrefetchBatch(u64 job_id, u64 grouped_max_tick, u64 window_start,
         .grouped_max_tick = grouped_max_tick,
         .window_start = window_start,
         .window_end = window_end,
+        .conservative_start = conservative_start,
+        .conservative_end = conservative_end,
     };
     state->prefetch_notes[state->prefetch_note_next++ % state->prefetch_notes.size()] = note;
-    if (window_end > window_start) {
-        if (Sample* sample = FindOpen(*state, window_start, window_end)) {
-            ApplyPrefetchNote(*sample, note);
+    if (window_end > window_start || conservative_end > conservative_start) {
+        for (auto& sample : state->ring) {
+            if (sample.open && !sample.sealed && NoteOverlapsSample(note, sample)) {
+                ApplyPrefetchNote(sample, note);
+            }
         }
         return;
     }

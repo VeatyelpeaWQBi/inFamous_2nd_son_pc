@@ -1163,6 +1163,16 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
                 device_addr + size <= overlapping->window_end) {
                 Common::Perf::Add(Common::Perf::ReadbackPagePrefetchHits);
             }
+            if (FeedbackLink::IsActive()) [[unlikely]] {
+                u64 copy_bytes = 0;
+                for (const auto& copy : overlapping->copies) {
+                    copy_bytes += copy.size;
+                }
+                FeedbackLink::OnBeginReadback(device_addr, size, window_start, window_end,
+                                              copy_bytes, writers.ticks[0], writers.ticks[1],
+                                              writers.submitted, writers.done, writers.current,
+                                              overlapping->tick, trace_id);
+            }
         }
         wait_semaphore = overlapping->on_readback_queue ? &readback_queue->Semaphore()
                                                         : scheduler.GetWorkSemaphore();
@@ -1277,6 +1287,7 @@ void BufferCache::PrefetchReadbacks() {
     const bool queue_enabled = UseReadbackQueue();
     const size_t first_queued = pending_readbacks.size();
     std::array<u64, 2> queue_wait_ticks{};
+    std::array<u64, 2> graphics_wait_ticks{};
     bool recorded_on_queue = false;
     bool recorded_on_graphics = false;
     u64 prefetched_bytes = 0;
@@ -1340,6 +1351,8 @@ void BufferCache::PrefetchReadbacks() {
         } else {
             WaitComputeWriter(writers);
             recorded_on_graphics = true;
+            graphics_wait_ticks[0] = std::max(graphics_wait_ticks[0], writers.ticks[0]);
+            graphics_wait_ticks[1] = std::max(graphics_wait_ticks[1], writers.ticks[1]);
         }
         pending_readbacks.push_back(std::move(readback));
         Common::Perf::Add(Common::Perf::ReadbackPrefetches);
@@ -1386,12 +1399,24 @@ void BufferCache::PrefetchReadbacks() {
         }
     }
     if (FeedbackLink::IsActive() && first_queued < pending_readbacks.size()) [[unlikely]] {
-        const u64 grouped = std::max(queue_wait_ticks[0], queue_wait_ticks[1]);
+        const u64 grouped_queue = std::max(queue_wait_ticks[0], queue_wait_ticks[1]);
+        const u64 grouped_graphics = std::max(graphics_wait_ticks[0], graphics_wait_ticks[1]);
         for (size_t i = first_queued; i < pending_readbacks.size(); ++i) {
             const auto& readback = pending_readbacks[i];
-            FeedbackLink::OnPrefetchBatch(readback.tick,
-                                          readback.on_readback_queue ? grouped : 0,
-                                          readback.window_start, readback.window_end);
+            u64 conservative_start = 0;
+            u64 conservative_end = 0;
+            if (const auto* arena = GetArena(readback.window_start >> block_shift,
+                                             (readback.window_end - 1) >> block_shift)) {
+                const auto window = GetReadbackWindow(
+                    arena, readback.window_start, readback.window_end - readback.window_start);
+                conservative_start = window.first;
+                conservative_end = window.second;
+            }
+            FeedbackLink::OnPrefetchBatch(
+                readback.tick,
+                readback.on_readback_queue ? grouped_queue : grouped_graphics,
+                readback.window_start, readback.window_end, conservative_start,
+                conservative_end);
         }
     }
 }

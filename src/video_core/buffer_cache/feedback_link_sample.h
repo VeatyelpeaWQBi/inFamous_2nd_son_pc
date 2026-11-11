@@ -53,6 +53,9 @@ struct Sample {
     u32 tail_commands_after_producer{};
     u64 prefetch_job_id{};
     u64 grouped_max_tick{};
+    // Internal attach identity for demand-page prefetch windows; not exported.
+    u64 prefetch_page_start{};
+    u64 prefetch_page_end{};
     u64 finish_readback_qpc{};
     u64 wake_qpc{};
     u64 cpu_wait_ms_attr{};
@@ -72,7 +75,8 @@ void OnBeginReadback(u64 demand_addr, u64 demand_size, u64 window_start, u64 win
                      u64 copy_bytes, u64 tick0, u64 tick1, bool submitted, bool done, bool current,
                      u64 wait_tick, u64 trace_id) noexcept;
 void OnPrefetchBatch(u64 job_id, u64 grouped_max_tick, u64 window_start,
-                     u64 window_end) noexcept;
+                     u64 window_end, u64 conservative_start = 0,
+                     u64 conservative_end = 0) noexcept;
 void OnWriteTickSample(u64 address, u64 size, u64 tick, u32 queue, u64 shader_hash) noexcept;
 void OnDispatchOrBind(u64 shader_hash, u64 command_tick, u64 address, u64 size) noexcept;
 void OnSchedulerFlush(u64 submit_tick_end) noexcept;

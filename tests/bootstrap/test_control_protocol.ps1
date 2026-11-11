@@ -34,7 +34,7 @@ try{
     Write-JsonUtf8 (Join-Path $testRoot 'launch.json') $launch
     $requests=@(
         @{Action='status'},@{Action='nsight-stop'},@{Action='vtune-detach'},@{Action='screenshot'},@{Action='button';Button='square';DurationMs=200},
-        @{Action='axis';Axis=2;Value=128},@{Action='quit'}
+        @{Action='axis';Axis=2;Value=128},@{Action='button';Button='down';DurationMs=200;MinimumFrames=2},@{Action='quit'}
     )
     $sequence=0
     foreach($parameters in $requests){
@@ -42,7 +42,12 @@ try{
         $command=Read-JsonUtf8 (Join-Path $testRoot 'command.json')
         $sequence++
         if($command.sequence -ne $sequence -or $command.action -ne $parameters.Action){throw 'Control command sequencing failed.'}
-        if($parameters.Action -eq 'button' -and ($command.button -ne 'square' -or $command.duration_ms -ne 200)){throw 'Button payload was lost.'}
+        if($parameters.Action -eq 'button'){
+            if($command.button -ne $parameters.Button -or $command.duration_ms -ne 200){throw 'Button payload was lost.'}
+            if($parameters.ContainsKey('MinimumFrames')){
+                if($command.minimum_frames -ne 2){throw 'Slow Full button lost its minimum guest-frame hold.'}
+            }elseif($command.PSObject.Properties['minimum_frames']){throw 'Ordinary input must retain its original timing.'}
+        }
         if($parameters.Action -eq 'axis' -and ($command.axis -ne 2 -or $command.value -ne 128)){throw 'Axis payload was lost.'}
     }
     $queued=@(Get-ChildItem -LiteralPath (Join-Path $testRoot 'control-queue') -File|Sort-Object Name)

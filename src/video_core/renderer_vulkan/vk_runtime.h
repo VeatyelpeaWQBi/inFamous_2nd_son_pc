@@ -23,7 +23,7 @@ class Scheduler;
 class Runtime {
 public:
     explicit Runtime(const Instance& instance, Scheduler& scheduler);
-    ~Runtime() = default;
+    ~Runtime();
 
     const Instance& GetInstance() const {
         return instance;
@@ -36,7 +36,11 @@ public:
     void TickFrame();
 
     void CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
-                    std::span<const vk::BufferCopy> copies);
+                    std::span<const vk::BufferCopy> copies, u64 trace_copy_id = 0,
+                    bool eligible_demand_read = false);
+
+    bool CopyFeedbackWord(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
+                          const vk::BufferCopy& copy);
 
     void FillBuffer(const VideoCore::Buffer* dst, u64 offset, u64 size, u32 value);
 
@@ -81,10 +85,15 @@ public:
                           bool check_read_access = false);
 
     void FlushBarriers();
+    void FlushComputeBarriers(bool recent_conflict = true);
+    bool ObserveComputeScope() const;
+    bool HasRecentComputeConflict(const VideoCore::Buffer* handle, u64 offset, u64 size,
+                                  bool is_written);
 
 private:
+    struct ReadbackBarrierAudit;
+    struct ComputeScopeAudit;
 
-private:
     const Instance& instance;
     Scheduler& scheduler;
     std::unique_ptr<VideoCore::BlitHelper> blit_helper;
@@ -92,6 +101,14 @@ private:
     VideoCore::BufferAccessTracker<const VideoCore::Buffer*> buffer_access;
     VideoCore::Image::Barriers image_barriers;
     vk::MemoryBarrier2 memory_barrier{};
+    std::unique_ptr<ReadbackBarrierAudit> readback_barrier_audit;
+    std::unique_ptr<ComputeScopeAudit> compute_scope_audit;
+    vk::PipelineStageFlags2 readback_write_stages{};
+    u8 readback_copy_state{1}; // 0 pending title check, 1 original, 2 narrowed.
+    u8 access_union_state{1}; // 0 pending title check, 1 original, 2 exact union.
+    bool access_union_seen{};
+    u8 image_read_transition_state{1}; // 0 pending title check, 1 original, 2 uniform read.
+    bool image_read_transition_seen{};
 };
 
 } // namespace Vulkan

@@ -6,6 +6,7 @@
 #include <deque>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <boost/container/small_vector.hpp>
 #include <boost/container/static_vector.hpp>
 
@@ -15,6 +16,7 @@
 #include "video_core/buffer_cache/feedback_link_sample.h"
 #include "video_core/buffer_cache/writer_footprint.h"
 #include "video_core/buffer_cache/fault_manager.h"
+#include "video_core/buffer_cache/feedback_policy.h"
 #include "video_core/buffer_cache/range_set.h"
 #include "video_core/buffer_cache/region_definitions.h"
 #include "video_core/buffer_cache/upload_worker.h"
@@ -125,7 +127,6 @@ public:
 
     /// Cross queue dependencies (asc_queue): the active queue uploads the range to the GPU copy
     /// in its current command buffer.
-    void NoteQueueUpload(VAddr device_addr, u64 size);
 
     /// Waits for the GPU to finish the work of every queue submitted so far (readbacks on the
     /// command processor thread).
@@ -160,6 +161,14 @@ public:
     /// recently, so its next reads find the data ready instead of waiting for the GPU.
     void PrefetchReadbacks();
 
+    // Optional producer checkpoint. Eligibility is a learned read hint, not a write-footprint
+    // override. Copies still use the original precise readback/version/publication path.
+    bool ShouldCheckpointFeedback(VAddr address, u64 size) const;
+    void CheckpointFeedback(VAddr address, u64 size, u64 shader_hash);
+    // Private value only: never publishes a partial page or changes its protection.
+    bool ReadFaultWord(VAddr address, u32& value);
+    void PrefetchFeedbackWord(u64 shader_hash);
+
     /// Writes the pending readbacks the GPU has finished. Cheap: only checks the GPU tick known
     /// from the last submission or wait.
     void RetireReadbacks();
@@ -177,7 +186,7 @@ public:
     /// Finds a buffer for the specified region.
     [[nodiscard]] std::pair<const Buffer*, u64> ObtainBuffer(
         VAddr device_addr, u32 size, bool is_written, bool is_texel_buffer = false,
-        std::optional<WrittenRange> written = std::nullopt, u64 writer_shader = 0);
+        u64 writer_shader = 0, std::optional<WrittenRange> written = std::nullopt);
 
     /// Attempts to obtain a buffer without modifying the cache contents.
     [[nodiscard]] std::pair<const Buffer*, u64> ObtainBufferForImage(VAddr device_addr, u32 size);
@@ -207,6 +216,8 @@ public:
     void SubmitPendingArenaBinds(Vulkan::SubmitInfo& info);
 
 private:
+    void QueueFeedbackWordHint(VAddr address, bool primary);
+    void PrefetchFeedbackWordAt(VAddr address, bool primary);
     struct ArenaBinds {
         const Buffer* arena;
         boost::container::small_vector<vk::SparseMemoryBind, 32> binds;
@@ -255,6 +266,8 @@ private:
         /// flight (no longer GPU modified): they get the new data too if unchanged since.
         boost::container::small_vector<VAddr, 4> relaxed_pages;
     };
+
+    void TraceReadbackWaitScope(const PendingReadback& wide, VAddr addr, u64 size, u64 trace_id);
 
     /// Copies GPU data to host memory on the second queue of the graphics family. A copy waits
     /// only for the graphics submission that last wrote its data, not for the work recorded
@@ -327,10 +340,9 @@ private:
     /// Precise mode always refines known copied-range dependencies; missing evidence keeps
     /// the original whole-window waits and queue selection.
     bool PrepareReadback(const Buffer* arena, PendingReadback& readback, WindowWriters& writers,
-                         bool queue_enabled, bool& on_queue, bool record_if_graphics = true);
+                         bool queue_enabled, bool& on_queue, bool small_cpu_read = false,
+                         bool record_if_graphics = true);
 
-    /// Submit a qualifying early-complete copy so it is not tied to work already recorded in
-    /// the current graphics session. Returns false to keep the ordinary Flush.
     bool SubmitEarlyComplete(const Buffer* arena, PendingReadback& readback, WindowWriters& writers,
                              bool queue_enabled, Vulkan::Semaphore*& wait_semaphore);
 
@@ -338,7 +350,27 @@ private:
     bool RecordReadback(const Buffer* arena, PendingReadback& readback);
 
     /// Remembers conservative windows and actual fault pages as separate prefetch hints.
-    void NoteHotWindow(VAddr start, VAddr end, bool demand_pages = false);
+    void NoteHotWindow(VAddr start, VAddr end, bool demand_pages = false,
+                       VAddr read_address = 0, u64 read_size = 0);
+    bool PrefetchReadbacksImpl(VAddr only_start = 0, VAddr only_end = 0,
+                               u64* recorded_copy_id = nullptr);
+    std::array<u64, 2> FeedbackWriteTicks(VAddr address, u64 size);
+    void NoteQueueUpload(VAddr device_addr, u64 size, VAddr arena_base,
+                         std::span<const vk::BufferCopy> copies);
+    void TraceFeedbackWrite(VAddr address, u64 size, u64 writer_shader);
+    void NoteFeedbackWrite(VAddr address, u64 size, u64 writer_shader = 0,
+                           bool trace_declaration = true);
+    u32 feedback_trace_writes{};
+    struct TraceBlockWriter {
+        VAddr block{};
+        VAddr start{};
+        u64 size{};
+        u64 shader{};
+        u64 tick{};
+        u64 sequence{};
+        u32 queue{};
+    };
+    std::array<TraceBlockWriter, 2> feedback_trace_block_writers{};
 
     struct HotWindow {
         VAddr start;
@@ -348,6 +380,8 @@ private:
         u64 prefetch_seq;  ///< Write sequence the last prefetch covered (readback_keep_ranges).
         bool prefetch_on_queue; ///< prefetch_tick is on the readback queue.
         bool demand_pages; ///< Observed CPU pages, not the wider normal download window.
+        VAddr read_address{}; ///< Last actual small demand read; never a fabricated shader range.
+        u64 read_size{};
     };
 
     /// Downloads the GPU modified memory around a request and waits for it (command processor).
@@ -359,7 +393,7 @@ private:
     /// tick to wait for on wait_semaphore before calling CompleteReadbacks, or 0 when there is
     /// nothing to wait for.
     u64 BeginReadback(VAddr device_addr, u64 size, bool is_write,
-                      Vulkan::Semaphore*& wait_semaphore, u64& feedback_copy_id, u64 trace_id);
+                      Vulkan::Semaphore*& wait_semaphore, u64& feedback_copy_id, u64 trace_id, bool audit = false);
 
     /// Writes the pending readbacks the GPU has finished to guest memory: in any order, except
     /// after an unfinished earlier readback of the same window. With wait, waits for all of them
@@ -431,6 +465,49 @@ private:
     std::deque<PendingReadback> pending_readbacks;
     std::unique_ptr<ReadbackQueue> readback_queue;
     boost::container::static_vector<HotWindow, 64> hot_windows;
+    FeedbackPageWriters feedback_writers;
+    FeedbackWordWriters feedback_words;
+    struct PrefetchedWord {
+        VAddr address{};
+        FeedbackWordWriters::Token token{};
+        std::array<u64, 2> cpu_versions{};
+        u64 copy_tick{};
+        const Buffer* arena{};
+        Vulkan::StagingBufferRef download{};
+    };
+    std::array<PrefetchedWord, 1024> prefetched_words;
+    std::unordered_map<VAddr, size_t> feedback_word_slot_index;
+    struct RetiredWordCopy {
+        Vulkan::StagingBufferRef download{};
+        u64 tick{};
+    };
+    boost::container::static_vector<RetiredWordCopy, 256> retired_word_copies;
+    std::array<FeedbackWordWindow, 2> feedback_word_windows{};
+    [[nodiscard]] auto PrefetchedWordSlots() noexcept {
+        const size_t count = Common::Perf::GetTuning().readback_word_page_cluster.load(
+                                 std::memory_order_relaxed) ? prefetched_words.size() : 2;
+        return std::span{prefetched_words}.first(count);
+    }
+    [[nodiscard]] PrefetchedWord* FindPrefetchedWord(VAddr address) {
+        for (size_t i = 0; i < 2; ++i)
+            if (prefetched_words[i].address == address) return &prefetched_words[i];
+        if (Common::Perf::GetTuning().readback_word_page_cluster.load(std::memory_order_relaxed)) {
+            const auto found = feedback_word_slot_index.find(address);
+            if (found != feedback_word_slot_index.end()) return &prefetched_words[found->second];
+        }
+        return nullptr;
+    }
+    VAddr feedback_word_hint{};
+    struct FeedbackWordHint {
+        VAddr address{};
+        bool primary{};
+    };
+    boost::container::static_vector<FeedbackWordHint, 128> feedback_word_hints;
+    u32 word_shadow_checks{}; ///< Diagnostic only, reserved on the command processor.
+    u64 word_shadow_next_check_ns{};
+    std::array<u8, 1024> word_slot_shadow_checks{}; ///< Successful reference observations per slot.
+    std::array<u64, 2> feedback_write_frontier{}; ///< Includes uploads/image-to-buffer writes.
+    bool feedback_checkpoint_used{}; ///< At most one extra producer submit per TickFrame.
 
     std::unique_ptr<FaultManager> fault_manager;
     std::unique_ptr<Buffer> bda_pagetable_buffer;

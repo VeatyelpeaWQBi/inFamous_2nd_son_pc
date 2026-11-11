@@ -8,6 +8,7 @@
 #include "common/debug.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
+#include "common/path_trace.h"
 #include "common/slot_vector.h"
 #include "core/address_space.h"
 #include "core/debug_state.h"
@@ -86,8 +87,11 @@ static void ResetSubmissionLock(Platform::InterruptId irq) {
 
 static void WaitGpuIdle() {
     HLE_TRACE;
+    const u64 trace_id = Common::PathTrace::NextId();
+    Common::PathTrace::Emit(Common::PathTrace::Kind::GnmWaitBegin, trace_id);
     std::unique_lock lock{m_wait_idle};
     cv_lock.wait(lock, [] { return submission_lock == 0; });
+    Common::PathTrace::Emit(Common::PathTrace::Kind::GnmWaitEnd, trace_id);
 }
 
 // Write a special ending NOP packet with N DWs data block
@@ -2258,6 +2262,7 @@ s32 PS4_SYSV_ABI sceGnmSubmitAndFlipCommandBuffers(u32 count, u32* dcb_gpu_addrs
 s32 PS4_SYSV_ABI sceGnmSubmitAndFlipCommandBuffersForWorkload(
     u32 workload, u32 count, u32* dcb_gpu_addrs[], u32* dcb_sizes_in_bytes, u32* ccb_gpu_addrs[],
     u32* ccb_sizes_in_bytes, u32 vo_handle, u32 buf_idx, u32 flip_mode, s64 flip_arg) {
+    const Common::PathTrace::GuestSubmitScope submit_scope;
     LOG_DEBUG(Lib_GnmDriver, "called [buf = {}]", buf_idx);
 
     if (count != 0) {
@@ -2313,6 +2318,7 @@ s32 PS4_SYSV_ABI sceGnmSubmitCommandBuffersForWorkload(u32 workload, u32 count,
                                                        u32* dcb_sizes_in_bytes,
                                                        const u32* ccb_gpu_addrs[],
                                                        u32* ccb_sizes_in_bytes) {
+    const Common::PathTrace::GuestSubmitScope submit_scope;
     HLE_TRACE;
     LOG_DEBUG(Lib_GnmDriver, "called");
 
@@ -2353,6 +2359,7 @@ s32 PS4_SYSV_ABI sceGnmSubmitCommandBuffers(u32 count, const u32* dcb_gpu_addrs[
 }
 
 s32 PS4_SYSV_ABI sceGnmSubmitDone() {
+    const Common::PathTrace::GuestSubmitScope submit_scope;
     HLE_TRACE;
     LOG_DEBUG(Lib_GnmDriver, "called");
     std::scoped_lock lk{m_submit_lock};

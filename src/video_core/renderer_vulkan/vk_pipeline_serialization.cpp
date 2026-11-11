@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/assert.h"
+#include <cstdlib>
+#include <fstream>
 #include "common/hash.h"
 #include "common/serdes.h"
 #include "core/emulator_settings.h"
@@ -409,11 +411,35 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage,
         if (!CanPrewarm(spv.size() * sizeof(u32) * 4 + ar.SizeBytes() + slot_bytes +
                         (new_program ? sizeof(Program) : 0)))
             return false;
+        if (program->info.pgm_hash == 0xc73c37c1 && perm_idx == 0 &&
+            program->info.hw_stage == Shader::HwStage::Compute) {
+            if (const char* path = std::getenv("IFSS_C73_SCAN_SPV"); path && *path) {
+                constexpr size_t original_size = 16'460;
+                constexpr size_t replacement_size = 16'392;
+                constexpr u64 original_hash = 0x05d1526c0bc1aa55;
+                constexpr u64 replacement_hash = 0x8dec9bc2b38ece35;
+                std::ifstream file{path, std::ios::binary | std::ios::ate};
+                if (spv.size() * sizeof(u32) == original_size &&
+                    XXH3_64bits(spv.data(), original_size) == original_hash &&
+                    file && file.tellg() == std::streamoff(replacement_size)) {
+                    std::vector<u32> replacement(replacement_size / sizeof(u32));
+                    file.seekg(0);
+                    if (file.read(reinterpret_cast<char*>(replacement.data()), replacement_size) &&
+                        XXH3_64bits(replacement.data(), replacement_size) == replacement_hash) {
+                        spv = std::move(replacement);
+                        LOG_INFO(Render_Vulkan, "C73 scan experiment: verified SPIR-V replacement");
+                    }
+                }
+            }
+        }
         module = CompileSPV(spv, instance.GetDevice());
         if (new_program)
             it_pgm = program_cache.try_emplace(program->info.pgm_hash, std::move(program)).first;
     }
     it_pgm.value()->InsertPermut(module, std::move(spec), perm_idx);
+    // Analyze the module actually loaded. Derived metadata does not alter the cache schema,
+    // SPIR-V, driver binary or persistent warmup. All permutations must agree or fall back.
+    Shader::ObserveGdsCounterPlan(it_pgm.value()->info, spv);
     it_pgm.value()->modules[perm_idx].spec.info = &it_pgm.value()->info;
     prewarmed_stages.emplace(identity, std::pair{it_pgm.value()->info.pgm_hash, perm_idx});
 
@@ -555,6 +581,23 @@ void PipelineCache::Sync() {
 } // namespace Vulkan
 
 namespace Shader {
+
+void ObserveGdsCounterPlan(Info& info, std::span<const u32> spv, bool patched) {
+    std::optional<u32> gds, flat, plan;
+    bool compatible = !patched && info.hw_stage == HwStage::Compute && info.sw_stage == SwStage::Compute;
+    for (u32 i = 0; i < info.buffers.size(); ++i) {
+        const auto& buffer = info.buffers[i];
+        if (buffer.buffer_type == BufferType::GdsBuffer) {
+            compatible &= !gds.has_value() && buffer.is_written;
+            gds = i;
+        } else if (buffer.buffer_type == BufferType::Flatbuf) {
+            compatible &= !flat.has_value() && !buffer.is_written;
+            flat = i;
+        }
+    }
+    if (compatible && gds && flat) plan = AnalyzeGdsCounterPlan(spv, *gds, *flat);
+    info.gds_counter_plan.Observe(plan);
+}
 
 void Info::Serialize(Serialization::Archive& ar) const {
     Serialization::Writer info{ar};

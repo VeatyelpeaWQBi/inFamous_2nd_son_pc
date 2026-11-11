@@ -7,6 +7,62 @@ function Get-DiagnosticCpuTimeRange([DateTime]$CollectionStart,[string]$WindowSt
     $culture=[Globalization.CultureInfo]::InvariantCulture
     return @{begin=$begin;end=$end;filter=($begin.ToString('F6',$culture)+':'+$end.ToString('F6',$culture))}
 }
+function Test-DiagnosticVtuneCrashExit([int]$Code) {
+    # Common NT crash statuses from a broken VTune finalize process.
+    return @(-1073741819,-1073741571,-1073740940,-1073740791) -contains $Code
+}
+function Get-DiagnosticVtuneRawBytes([string]$ResultDir) {
+    $data=Join-Path $ResultDir 'data.0'
+    if(-not(Test-Path -LiteralPath $data)){return [long]0}
+    $sum=(Get-ChildItem -LiteralPath $data -Recurse -File -ErrorAction SilentlyContinue|Measure-Object Length -Sum).Sum
+    if($null -eq $sum){return [long]0}
+    return [long]$sum
+}
+function Reset-DiagnosticVtuneFinalizeCache([string]$ResultDir) {
+    # Keep raw collector samples; drop partial finalize products that can poison a retry.
+    $db=Join-Path $ResultDir 'sqlite-db'
+    if(Test-Path -LiteralPath $db){Remove-Item -LiteralPath $db -Recurse -Force}
+}
+function Get-DiagnosticVtuneFinalizeModes([long]$RawBytes) {
+    # Intel default is "fast" (downsample for post-process). Forced "full" ACCESS_VIOLATION'd
+    # around 57% "Processing profile metrics" on ~1.5 GiB Full memory-access raw data.
+    if($RawBytes -ge 512MB){return @('fast')}
+    return @('full','fast')
+}
+function Invoke-DiagnosticVtuneFinalize([string]$Vtune,[string]$ResultDir,[string]$UserDir,[string]$LogPath,[int]$TimeoutMilliseconds=7200000) {
+    $rawBytes=Get-DiagnosticVtuneRawBytes $ResultDir
+    $modes=@(Get-DiagnosticVtuneFinalizeModes $rawBytes)
+    $dir=Split-Path -Parent $LogPath
+    $attempts=[Collections.Generic.List[object]]::new()
+    $lastError=$null
+    foreach($mode in $modes){
+        foreach($try in @(1,2)){
+            Reset-DiagnosticVtuneFinalizeCache $ResultDir
+            $stepLog=Join-Path $dir ('vtune-finalize-'+$mode+'-try'+$try+'.log')
+            if(Test-Path -LiteralPath $stepLog){Remove-Item -LiteralPath $stepLog -Force}
+            try{
+                Invoke-DiagnosticNative $Vtune @('-finalize','-finalization-mode',$mode,
+                    '-result-dir',$ResultDir,'-user-data-dir',$UserDir) $stepLog $TimeoutMilliseconds
+                Copy-Item -LiteralPath $stepLog -Destination $LogPath -Force
+                return @{mode=$mode;try=$try;raw_bytes=$rawBytes;log=$stepLog;attempts=@($attempts)}
+            }catch{
+                $lastError=$_
+                $code=$null
+                if($_.Exception.Message -match 'Diagnostic tool returned (-?\d+)'){$code=[int]$Matches[1]}
+                $crashed=$false
+                if($null -ne $code){$crashed=Test-DiagnosticVtuneCrashExit $code}
+                $attempts.Add(@{mode=$mode;try=$try;error=$_.Exception.Message;exit_code=$code;log=[IO.Path]::GetFileName($stepLog);crash=$crashed})
+                # Only burn the second try when the process actually crashed; plain CLI errors fall through to the next mode.
+                if(-not $crashed){break}
+            }
+        }
+    }
+    $summary=($attempts|ForEach-Object{$_.mode+'/try'+$_.try+': '+$_.error}) -join ' | '
+    $blob=($attempts|ConvertTo-Json -Depth 5 -Compress)
+    [IO.File]::WriteAllText($LogPath,("VTune finalize exhausted resilient attempts.`r`n"+$summary+"`r`n"+$blob),[Text.UTF8Encoding]::new($false))
+    if($lastError){throw $lastError}
+    throw ('VTune finalize failed after resilient attempts; see '+[IO.Path]::GetFileName($LogPath))
+}
 function Complete-DiagnosticArtifacts([string]$Root,[string]$Session,$Plan,$State) {
     $spec=Get-DiagnosticPlanSpec $Plan;$tools=Get-DiagnosticTools
     $dir=Join-Path $Session 'diagnostics';$validation=@{}
@@ -16,7 +72,7 @@ function Complete-DiagnosticArtifacts([string]$Root,[string]$Session,$Plan,$Stat
             Invoke-DiagnosticNative $tools.xperf @('-i',(Join-Path $dir 'timeline.etl'),'-o',$report,
                 '-a','tracestats','-timespan','actual','-detail') (Join-Path $dir 'wpr-parse.log') 1800000
             if(-not(Test-Path -LiteralPath $report) -or (Get-Item -LiteralPath $report).Length -eq 0){throw 'WPR event parser produced no statistics.'}
-            if($Plan.profile -eq 'full' -and $Plan.cpu_sampling_backend -ne 'vtune-hardware' -and $State.window_started -and $State.window_finished){
+            if($Plan.profile -eq 'full' -and $Plan.cpu_sampling_backend -notin @('vtune-hardware','vtune-software') -and $State.window_started -and $State.window_finished){
                 $text=[IO.File]::ReadAllText($report)
                 $match=[regex]::Match($text,'Start time \(UTC\)\s*:\s*(\d{4}/\d\d/\d\d:\d\d:\d\d:\d\d\.\d{7})')
                 if(-not $match.Success){throw 'WPR trace start time is unavailable.'}
@@ -38,13 +94,12 @@ function Complete-DiagnosticArtifacts([string]$Root,[string]$Session,$Plan,$Stat
     if($spec.VtuneAnalysis -and $State.vtune_started -and $State.vtune_exit_code -eq 0){
         try{
             $result=Join-Path $dir 'vtune';$user=Join-Path $dir 'vtune-user'
-            Invoke-DiagnosticNative $tools.vtune @('-finalize','-finalization-mode','full',
-                '-result-dir',$result,'-user-data-dir',$user) (Join-Path $dir 'vtune-finalize.log') 1800000
+            $finalize=Invoke-DiagnosticVtuneFinalize $tools.vtune $result $user (Join-Path $dir 'vtune-finalize.log') 7200000
             $report=Join-Path $dir 'vtune-summary.csv'
             Invoke-DiagnosticNative $tools.vtune @('-report','summary','-format','csv','-csv-delimiter','comma',
                 '-result-dir',$result,'-user-data-dir',$user,'-report-output',$report) (Join-Path $dir 'vtune-report.log') 1800000
             if(-not(Test-Path -LiteralPath $report) -or (Get-Item -LiteralPath $report).Length -eq 0){throw 'VTune returned no parsed summary.'}
-            if($Plan.profile -eq 'full' -and $Plan.cpu_sampling_backend -eq 'vtune-hardware'){
+            if($Plan.profile -eq 'full' -and $Plan.cpu_sampling_backend -in @('vtune-hardware','vtune-software') -and $State.window_started -and $State.window_finished){
                 $summary=@(Import-Csv -LiteralPath $report)
                 $stamp=($summary|Where-Object {$_.'Metric Name' -eq 'Collection start time'}|Select-Object -First 1).'Metric Value'
                 $style=[Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
@@ -61,8 +116,25 @@ function Complete-DiagnosticArtifacts([string]$Root,[string]$Session,$Plan,$Stat
                     collection_start_utc=$collectionStart.ToString('o');begin_seconds=$begin;end_seconds=$end
                     timestamp_uncertainty_seconds=1;method='vtune-time-filtered-target-hotspots'
                 }
+                # Export each recorded round independently; compilation eligibility
+                # is checked separately against its native counters and warm flag.
+                if($Plan.PSObject.Properties['super_capture']){
+                    foreach($window in @($State.super_qualified_windows)){
+                        $bounds=Get-DiagnosticCpuTimeRange $collectionStart $window.window_started $window.window_finished
+                        $stem='vtune-super-cycle-'+$window.cycle+'-hotspots'
+                        Invoke-DiagnosticNative $tools.vtune @('-report','hotspots','-format','csv','-csv-delimiter','comma',
+                            '-group-by','process,function','-time-filter',$bounds.filter,'-result-dir',$result,'-user-data-dir',$user,
+                            '-report-output',(Join-Path $dir ($stem+'.csv'))) (Join-Path $dir ($stem+'.log')) 1800000
+                        Write-JsonUtf8 (Join-Path $dir ($stem+'.json')) @{
+                            target_pid=$State.target_pid;cycle=$window.cycle;release_sequence=$window.release_sequence
+                            window_started=$window.window_started;window_finished=$window.window_finished
+                            collection_start_utc=$collectionStart.ToString('o');begin_seconds=$bounds.begin;end_seconds=$bounds.end
+                            timestamp_uncertainty_seconds=1;method='vtune-super-round-time-filter'
+                        }
+                    }
+                }
             }
-            $validation['vtune']=@{validated=$true;method='vtune-full-finalization-and-summary';report=(Get-RelativePath $Root $report)}
+            $validation['vtune']=@{validated=$true;method=('vtune-'+$finalize.mode+'-finalization-and-summary');finalization_mode=$finalize.mode;finalization_try=$finalize.try;raw_bytes=$finalize.raw_bytes;report=(Get-RelativePath $Root $report)}
         }catch{$validation['vtune']=@{validated=$false;error=$_.Exception.Message};$State.errors+=('VTune parsing: '+$_.Exception.Message)}
     }
     if($spec.RenderDoc){

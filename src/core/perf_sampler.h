@@ -41,6 +41,8 @@ void ApplyGameProfile(std::string_view serial);
  *                                 the GPU copy, and write merge keeps it
  *   async_readbacks = 1           the faulting thread waits for the GPU, not the command processor
  *   readback_prefetch = 1         download memory read back recently again at fence points
+ *   readback_feedback_checkpoint = 0  opt-in early copy/submit after learned small feedback writes
+ *   readback_feedback_writers = 0     opt-in 4 KiB provenance for observed small-read pages
  *   async_pipelines = 2           0 off, 1 graphics pipelines compiled by worker threads (draws
  *                                 skipped until ready), 2 graphics and compute
  *   async_pipeline_wait_ms = 3    wait for a new pipeline at most this long before skipping

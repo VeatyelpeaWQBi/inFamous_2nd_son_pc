@@ -10,6 +10,7 @@
 #include "common/assert.h"
 #include "common/elf_info.h"
 #include "common/error.h"
+#include "common/path_trace.h"
 #include "common/perf_stats.h"
 #include "core/address_space.h"
 #include "core/emulator_settings.h"
@@ -560,6 +561,8 @@ struct AddressSpace::Impl {
         }
 
         const VAddr virtual_end = virtual_addr + size;
+        const bool audit = Common::PathTrace::PageProtectAuditActive();
+        auto* const compute_audit = Common::PathTrace::ComputeProtectionScope::Current();
         auto it = --regions.upper_bound(virtual_addr);
         ASSERT_MSG(it != regions.end(), "addr {:#x} out of bounds", virtual_addr);
         for (; it->first < virtual_end; it++) {
@@ -570,11 +573,24 @@ struct AddressSpace::Impl {
             const u64 range_addr = std::max(region.base, virtual_addr);
             const u64 range_size = std::min(region.base + region.size, virtual_end) - range_addr;
             DWORD old_flags{};
+            const u64 protect_start = (audit || compute_audit) ? Common::Perf::NowNs() : 0;
             if (!VirtualProtectEx(process, LPVOID(range_addr), range_size, new_flags, &old_flags)) {
                 UNREACHABLE_MSG(
                     "Failed to change virtual memory protection for address {:#x}, size "
                     "{:#x}, error {}",
                     virtual_addr, size, Common::GetLastErrorMsg());
+            }
+            if (audit || compute_audit) {
+                const u64 elapsed = Common::Perf::NowNs() - protect_start;
+                if (audit) {
+                    Common::PathTrace::Emit(Common::PathTrace::Kind::PageProtect,
+                                            Common::PathTrace::NextId(), range_addr, range_size,
+                                            (u64{old_flags} << 32) | new_flags, elapsed);
+                }
+                if (compute_audit) {
+                    compute_audit->Note(range_addr, range_size, region.base,
+                                        new_flags == PAGE_NOACCESS, elapsed);
+                }
             }
         }
     }

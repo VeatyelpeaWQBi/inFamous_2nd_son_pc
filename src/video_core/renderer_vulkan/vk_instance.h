@@ -334,6 +334,8 @@ public:
         return available_extensions;
     }
 
+    bool HasCalibratedTimestamps() const { return calibrated_timestamps; }
+
     /// Returns the device name.
     std::string_view GetModelName() const {
         return properties.deviceName;
@@ -589,6 +591,7 @@ private:
     bool diagnostic_checkpoints{};
     bool device_fault{};
     bool external_memory_host{};
+    bool calibrated_timestamps{};
     bool supports_memory_budget{};
     bool supports_block_texel_view{};
     u64 total_memory_budget{};

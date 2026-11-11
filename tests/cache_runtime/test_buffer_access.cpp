@@ -42,7 +42,9 @@ int main() {
         }
         Check(access.read_ranges.Overlaps(start, end) == expected_read, "read hazard equality");
         Check(access.write_ranges.Overlaps(start, end) == expected_write, "write hazard equality");
-        (write ? access.write_ranges : access.read_ranges).Add(Interval{start, end});
+        auto& ranges = write ? access.write_ranges : access.read_ranges;
+        if (step & 1) ranges.AddUnion(Interval{start, end});
+        else ranges.Add(Interval{start, end});
         auto& expected = write ? writes[slot] : reads[slot];
         for (u32 byte = start; byte < end; ++byte) expected[byte] = true;
     }

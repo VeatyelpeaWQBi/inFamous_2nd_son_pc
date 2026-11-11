@@ -17,6 +17,7 @@
 #include "core/perf_sampler.h"
 #include "core/signals.h"
 #include "video_core/page_manager.h"
+#include "video_core/buffer_cache/feedback_policy.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 
 #ifndef _WIN64
@@ -583,6 +584,25 @@ struct SignalImpl : public PageManager::Impl {
             return handled;
         } else {
             const u64 rip = reinterpret_cast<u64>(Common::GetRip(context));
+#ifdef _WIN64
+            if (!is_gpu_thread && Common::Perf::GetTuning().readback_word_load.load(std::memory_order_relaxed)) {
+                auto* registers = static_cast<EXCEPTION_POINTERS*>(context)->ContextRecord;
+                const auto* instruction = reinterpret_cast<const u8*>(rip);
+                // Exactly MOV EAX,[RAX+4]: no flags or other register is modified. Unknown
+                // instructions use the original full-page handler. The page stays protected.
+                if (IsExactFeedbackMov32({instruction[0], instruction[1], instruction[2]},
+                                        registers->Rax, addr)) {
+                    u32 value{};
+                    if (rasterizer->ReadFaultWord(addr, value)) {
+                        registers->Rax = value; // A 32-bit MOV zero-extends its destination.
+                        registers->Rip += 3;
+                        Common::Perf::Add(Common::Perf::FaultReads);
+                        Core::PerfSampler::RecordReadback(addr, rip);
+                        return true;
+                    }
+                }
+            }
+#endif
             const bool handled = rasterizer->ReadMemory(addr, size, is_gpu_thread, rip);
             if (handled) {
                 Common::Perf::Add(Common::Perf::FaultReads);

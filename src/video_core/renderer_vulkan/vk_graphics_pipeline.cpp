@@ -469,7 +469,37 @@ void GraphicsPipeline::Compile() {
 
 GraphicsPipeline::~GraphicsPipeline() = default;
 
-template <typename Attribute, typename Binding>
+static u32 VertexInputDivisor(Shader::Gcn::VertexAttribute::InstanceIdType rate, u32 step_rate_0,
+                             u32 step_rate_1) {
+    using InstanceIdType = Shader::Gcn::VertexAttribute::InstanceIdType;
+    return rate == InstanceIdType::OverStepRate0
+               ? step_rate_0
+               : (rate == InstanceIdType::OverStepRate1 ? step_rate_1 : 1);
+}
+
+void GraphicsPipeline::ReadVertexInputKey(VertexInputs<u64>& key,
+                                          VertexInputs<AmdGpu::Buffer>& guest_buffers,
+                                          u32 step_rate_0, u32 step_rate_1) const {
+    using InstanceIdType = Shader::Gcn::VertexAttribute::InstanceIdType;
+    if (fetch_shader.Empty() || fetch_shader.attributes.empty()) {
+        return;
+    }
+    const auto& vs_info = GetStage(Shader::SwStage::Vertex);
+    for (const auto& attribute : fetch_shader.attributes) {
+        const auto buffer = attribute.GetSharp(vs_info);
+        const auto rate = attribute.GetStepRate();
+        // Exact input bits of SurfaceFormat, stride and effective instance rate. The
+        // attribute's position in the list determines both its location and its binding.
+        const u64 layout = u64{buffer.stride} | (u64{buffer.data_format} << 14) |
+                           (u64{buffer.num_format} << 18) |
+                           (u64{rate != InstanceIdType::None} << 21);
+        const u64 divisor = VertexInputDivisor(rate, step_rate_0, step_rate_1);
+        key.push_back(layout | (divisor << 32));
+        guest_buffers.push_back(buffer);
+    }
+}
+
+template <typename Attribute, typename Binding, bool UseCurrentSharps>
 void GraphicsPipeline::GetVertexInputs(
     VertexInputs<Attribute>& attributes, VertexInputs<Binding>& bindings,
     VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT>& divisors,
@@ -482,7 +512,7 @@ void GraphicsPipeline::GetVertexInputs(
     for (u32 semantic = 0; semantic < fetch_shader.attributes.size(); ++semantic) {
         const auto& attrib = fetch_shader.attributes[semantic];
         const auto step_rate = attrib.GetStepRate();
-        const auto buffer = attrib.GetSharp(vs_info);
+        const auto buffer = UseCurrentSharps ? guest_buffers[semantic] : attrib.GetSharp(vs_info);
         attributes.push_back(Attribute{
             .location = semantic,
             .binding = semantic,
@@ -495,9 +525,7 @@ void GraphicsPipeline::GetVertexInputs(
             .inputRate = step_rate == InstanceIdType::None ? vk::VertexInputRate::eVertex
                                                            : vk::VertexInputRate::eInstance,
         });
-        const u32 divisor = step_rate == InstanceIdType::OverStepRate0
-                                ? step_rate_0
-                                : (step_rate == InstanceIdType::OverStepRate1 ? step_rate_1 : 1);
+        const u32 divisor = VertexInputDivisor(step_rate, step_rate_0, step_rate_1);
         if constexpr (std::is_same_v<Binding, vk::VertexInputBindingDescription2EXT>) {
             bindings.back().divisor = divisor;
         } else if (step_rate != InstanceIdType::None) {
@@ -506,7 +534,9 @@ void GraphicsPipeline::GetVertexInputs(
                 .divisor = divisor,
             });
         }
-        guest_buffers.emplace_back(buffer);
+        if constexpr (!UseCurrentSharps) {
+            guest_buffers.emplace_back(buffer);
+        }
     }
 }
 
@@ -517,6 +547,12 @@ template void GraphicsPipeline::GetVertexInputs(
     VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT>& divisors,
     VertexInputs<AmdGpu::Buffer>& guest_buffers, u32 step_rate_0, u32 step_rate_1) const;
 template void GraphicsPipeline::GetVertexInputs(
+    VertexInputs<vk::VertexInputAttributeDescription2EXT>& attributes,
+    VertexInputs<vk::VertexInputBindingDescription2EXT>& bindings,
+    VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT>& divisors,
+    VertexInputs<AmdGpu::Buffer>& guest_buffers, u32 step_rate_0, u32 step_rate_1) const;
+template void GraphicsPipeline::GetVertexInputs<vk::VertexInputAttributeDescription2EXT,
+                                                vk::VertexInputBindingDescription2EXT, true>(
     VertexInputs<vk::VertexInputAttributeDescription2EXT>& attributes,
     VertexInputs<vk::VertexInputBindingDescription2EXT>& bindings,
     VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT>& divisors,

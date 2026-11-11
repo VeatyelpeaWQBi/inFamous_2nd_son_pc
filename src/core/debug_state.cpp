@@ -144,6 +144,7 @@ void DebugStateImpl::PushQueueDump(QueueDump dump) {
         }
     }
     frame.queues.push_back(std::move(dump));
+    waiting_reg_dumps_present.store(!waiting_reg_dumps.empty(), std::memory_order_release);
 }
 
 std::optional<RegDump*> DebugStateImpl::GetRegDump(uintptr_t base_addr, uintptr_t header_addr) {
@@ -153,6 +154,9 @@ std::optional<RegDump*> DebugStateImpl::GetRegDump(uintptr_t base_addr, uintptr_
     }
     auto& frame = *it->second;
     waiting_reg_dumps.erase(it);
+    if (waiting_reg_dumps.empty()) {
+        waiting_reg_dumps_present.store(false, std::memory_order_release);
+    }
     waiting_reg_dumps_dbg.erase(waiting_reg_dumps_dbg.find(header_addr));
     return &frame.regs[header_addr - base_addr];
 }

@@ -1,4 +1,4 @@
-# inFAMOUS Second Son PC
+﻿# inFAMOUS Second Son PC
 
 [简体中文](#简体中文) | [English](#english)
 
@@ -134,9 +134,25 @@ main／开发分支先执行 `build.bat`，再执行 `run.bat`。默认编译为
 | 开发入口 | 用途 |
 | --- | --- |
 | `run.bat` | 启动菜单与普通游玩；`run.bat pro4k` 可预选 4K |
+| `run.bat --super-pool` | 人工体验大招控制记录紧凑布局；读档后用 Insert 菜单充能。显式测试开关，不能与 benchmark 合用 |
 | `run.bat --debug` | 等待已有原生调试器附加，使用同次构建的 PDB |
 | `check.bat`／`test.bat` | 配置／补丁预检和离线回归，不启动游戏 |
 | `diagnostics/full.bat` | 同一游戏进程、同次运行的自动采集 |
+| `diagnostics/super.bat` | 大招专项：自动读档、充满并释放两次，优化关闭／开启各一次；仅采集、不自动分析 |
+| `diagnostics/super_feedback.bat` | 新反馈候选：A/B 各启动新进程并读取原始存档，总计两次大招；默认测试提前反馈提交 |
+| `diagnostics/super_full.bat` | 大招 Full 专项：相同自动流程，复用 Full 系统追踪、VTune、GPU 抓帧及完整性校验 |
+
+大招简易专项直接运行 `diagnostics\super.bat`，默认 Pro 4K、单一 lightweight 采集组，总共释放 **2 次**：A 关闭当前计算屏障优化，B 开启优化。复用已有缓存，不追加大招预热、不另外跑计数组，也不因新编译自动重跑。`-Mode 1440p` 改用 2560×1440；仅在主动需要增加对照时使用偶数 `-Rounds`，例如 4 表示 A/B/A/B 共四次。若要保留无对照采集，显式设置 `-Experiment none`；`-Profile counters` 可改用单一计数采集组。结果索引为 `state/super-captures/last-run.json`，原始数据保存在对应 `state/sessions/`。出现新编译时保留数据并标记 `warm=false`、对照不合格，不将冷态变化当作优化收益。采集过程自动读档、充能并按十字键下，不要另行操作人物或菜单。该入口只使用正式存档副本，不回存，不自动分析。
+
+反馈候选先构建后使用 `diagnostics\super_feedback.bat`；默认只测试提前反馈提交，`-Candidate feedback-writers` 单独测试反馈页写者。两次各自重新启动游戏、加载原始存档副本并复用磁盘缓存，不追加大招预热、不自动分析，也不回存。结果保存到 `state/super-captures/last-feedback-pair.json` 及独立配对索引。`-Profile counters` 可收集命中/回退计数；可选 `-CriticalCapture` 使用现有有界原生追踪，不启动 Full。普通 `run` 的既有屏障候选设置保留，新反馈候选默认关闭。原 `super.bat` 保留；其同进程连续释放存在场景/镜头漂移，不能直接用均值差归因。实施与验证入口见 `doc/67-super-feedback-first-implementation.md`。
+
+大招紧凑布局可用 `run.bat 1440p --super-pool` 或 `run.bat pro4k --super-pool` 人工体验。此开关与已测原生候选使用同一份当前构建，只改变进程中的控制记录分配，保留精确回读、全部渲染和原对齐/生命周期；额外原生分配 1.5 MiB。读档后按 Insert，使用已有的“大招充满”测试项，再按十字键下释放。不带开关时使用当前默认布局。2026-11-08 的 4K 日常渲染设置对照中，首 480 间隔平均 36.78→39.07 FPS，8–12 秒 37.01→43.43 FPS；高压段仍约 33 FPS。1440p 两个顺序的整段/尾帧结果不一致，因此尚未默认启用，也不宣称所有异能/存档受益。详细边界见 `doc/135-super-feedback-stable-window-pool.md` 与 `doc/137-super-feedback-normal-rendering.md`。复算使用 `diagnostics\super_feedback.bat -Candidate feedback-arena-pool -NormalRendering`，仅启动 A/B 各一次，不需要 Full。
+
+大招 Full 保持与 `diagnostics/full.bat` 相同的 Memory Access 硬件采集、DRAM 带宽校准和 Full 全样本整理，保留逐轮 CPU 报告；不允许降级为软件采样。此前软件替代方案已撤回，其微型验证不能证明硬件模式已修复。当前 VTune 2026.4 的 57% 整理崩溃仍未解决，不应为了验证而直接重跑长时间 Full；应先在管理员终端执行有界硬件微型测试，见 `doc/57-vtune-stable-cpu-validation.md` 的更正记录。
+
+深度采集直接运行 `diagnostics\super_full.bat`，默认 Pro 4K、自动采集 **1 次**，`-Mode 1440p` 改用 1440p，`-Rounds` 可调整次数。Full 直接复用普通模式的 `state/runtime/cache/`，不再循环释放大招预热，也不因新编译追加轮次；缓存为空时停止并提示先正常游玩。Nsight 控制器保留启动时附加，仅按大招节点触发详细抓帧；WPR／VTune 在读档场景就绪后才启动。每次自动充能、释放，并按实际游戏帧等待采集窗口和恢复后再开始下一次，低 FPS 不会使轮次提前推进。所有正式采集数据均保留，新编译通过 `warm=false` 单独标记，不能混入零编译性能均值。入口自动请求管理员权限，保留 Full 的 WPR／VTune、着色器转储、验证日志及 GPU 后端。默认首个大招推进 300 个 guest flip 后触发 Nsight 的 3 帧详细追踪（`-PeakSeconds` 可调整）；每次另保留逐轮 CPU 时间范围、guest 转储及 compute／graphics 抽样。Full 用于深度定位，不作为普通 FPS 基准。结果为 `state/super-captures/last-full-run.json`，普通版为 `last-native-run.json`。不设总量上限、不自动清理旧会话，剩余磁盘不足 2 GiB 时停止；结束后仍需工具离线导出与完整性校验。两套入口均使用正式存档副本，不回存。
+
+Full 的原启动窗口会等待管理员采集窗口并显示最终结果；启动记录为 `state/super-captures/last-full-entry.json`。参数转发保持参数名与值独立；管理员窗口提前退出、取消提权、没有新批次或旧结果残留均不会报告成功。
 
 专项调试复用已安装的 WPR/WPA、VTune、Nsight Graphics 或 RenderDoc 等工具，部分采集需要管理员权限。full 按设置选择 Nsight 或 RenderDoc，不能宣称互斥工具全部同时开启；结果及缺失项保存在本轮 `diagnostics/coverage.json`、`data-quality.json` 等记录中，必须先检查完整性再分析。
 

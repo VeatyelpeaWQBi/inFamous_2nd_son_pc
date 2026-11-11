@@ -14,6 +14,7 @@
 #include "video_core/amdgpu/scout.h"
 #include "video_core/amdgpu/regs_shader.h"
 #include "video_core/runtime_memo.h"
+#include "video_core/command_buffer_sharps.h"
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/recompiler.h"
 #include "shader_recompiler/specialization.h"
@@ -43,6 +44,8 @@ struct Info;
 }
 
 namespace Vulkan {
+
+using CommandBufferSharps = VideoCore::CommandBufferSharps<AmdGpu::Buffer, Shader::NUM_BUFFERS>;
 
 class Instance;
 class Scheduler;
@@ -193,7 +196,10 @@ public:
 
     const GraphicsPipeline* GetGraphicsPipeline(const DrawIndirectParams params = {});
 
-    const ComputePipeline* GetComputePipeline();
+    const ComputePipeline* GetComputePipeline(CommandBufferSharps* sharps = nullptr);
+    u64 ResourceRefreshSerial() const {
+        return resource_refresh_serial;
+    }
 
     using Result = std::tuple<const Shader::Info*, vk::ShaderModule, u64>;
     Result GetProgram(Shader::HwStage hw_stage, Shader::SwStage sw_stage,
@@ -272,6 +278,9 @@ private:
     bool CanPrewarm(u64 bytes);
 
 private:
+    // Command processor only; never stored in shared shader metadata.
+    CommandBufferSharps* active_buffer_sharps{};
+    u64 resource_refresh_serial{};
     const Instance& instance;
     // Proof follows the exact bytes used to create this module, never a later disk file.
     Scheduler& scheduler;

@@ -2,11 +2,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
+#include <cstring>
+#include "common/elf_info.h"
+#include "common/path_trace.h"
 #include "common/perf_stats.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
+#include "video_core/renderer_vulkan/vk_access_range_policy.h"
+#include "video_core/renderer_vulkan/vk_compute_barrier_policy.h"
+#include "video_core/renderer_vulkan/vk_image_read_transition.h"
+#include "video_core/renderer_vulkan/vk_readback_copy_policy.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
@@ -14,6 +23,87 @@
 #include <vulkan/vulkan_format_traits.hpp>
 
 namespace Vulkan {
+namespace {
+std::atomic<bool> access_union_enabled{}, access_union_used{};
+std::atomic<bool> readback_copy_enabled{};
+std::atomic<u64> readback_copies_narrowed{};
+std::atomic<bool> image_read_transition_enabled{}, image_read_transition_used{};
+}
+AccessRangePolicyStatus GetAccessRangePolicyStatus() noexcept {
+    return {access_union_enabled.load(std::memory_order_acquire),
+            access_union_used.load(std::memory_order_acquire)};
+}
+
+ReadbackCopyPolicyStatus GetReadbackCopyPolicyStatus() noexcept {
+    return {readback_copy_enabled.load(std::memory_order_relaxed),
+            readback_copies_narrowed.load(std::memory_order_relaxed)};
+}
+
+ImageReadTransitionStatus GetImageReadTransitionStatus() noexcept {
+    return {image_read_transition_enabled.load(std::memory_order_acquire),
+            image_read_transition_used.load(std::memory_order_acquire)};
+}
+
+struct Runtime::ReadbackBarrierAudit {
+    struct Write {
+        VAddr start;
+        VAddr end;
+        vk::PipelineStageFlags2 stages;
+    };
+
+    void Reset() {
+        count = 0;
+        write_stages = {};
+        started = false;
+        complete = false;
+        overflow = false;
+    }
+
+    std::array<Write, 512> writes;
+    size_t count{};
+    vk::PipelineStageFlags2 write_stages{};
+    bool started{};
+    bool complete{};
+    bool overflow{};
+};
+
+struct Runtime::ComputeScopeAudit {
+    // Sparse arenas may alias after migration. Compare ranges in the common guest-address
+    // space; keep ordinary buffers separate, as in the runtime's regular tracker.
+    auto& Access(const VideoCore::Buffer* buffer, u64& offset) {
+        if (buffer->mem_type == VideoCore::MemoryType::Sparse) {
+            offset += buffer->CpuAddr();
+            return recent.Get(nullptr);
+        }
+        return recent.Get(buffer);
+    }
+
+    void Record(bool narrowed, bool recent_conflict) {
+        using namespace Common::PathTrace;
+        if (!IsActive()) {
+            return;
+        }
+        if (attempts == 0) {
+            begin_ns = Common::Perf::NowNs();
+        }
+        ++attempts;
+        if (narrowed && after_narrow) {
+            ++comparable;
+            old_only += !recent_conflict;
+        }
+        if (attempts == 256) {
+            Emit(Kind::ComputeScopeAudit, NextId(), begin_ns, attempts, comparable, old_only);
+            attempts = comparable = old_only = 0;
+        }
+        recent.ResetScope();
+        after_narrow = narrowed;
+    }
+
+    VideoCore::BufferAccessTracker<const VideoCore::Buffer*> recent;
+    u64 begin_ns{};
+    u32 attempts{}, comparable{}, old_only{};
+    bool after_narrow{};
+};
 
 static vk::ImageType ConvertImageType(AmdGpu::ImageType type) noexcept {
     switch (type) {
@@ -98,6 +188,20 @@ static u32 BufferImageCopySize(const vk::BufferImageCopy& copy, const vk::Format
 
 Runtime::Runtime(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_}, staging_pool{instance_, scheduler_} {
+    const char* experiment = std::getenv("IFSS_EXPERIMENT_ACCESS_UNION");
+    if (experiment && std::strcmp(experiment, "1") == 0) access_union_state = 0;
+    const char* audit = std::getenv("IFSS_READBACK_BARRIER_AUDIT");
+    if (audit && std::strcmp(audit, "1") == 0) {
+        readback_barrier_audit = std::make_unique<ReadbackBarrierAudit>();
+    }
+    const char* scope_audit = std::getenv("IFSS_COMPUTE_SCOPE_AUDIT");
+    if (scope_audit && std::strcmp(scope_audit, "1") == 0) {
+        compute_scope_audit = std::make_unique<ComputeScopeAudit>();
+    }
+    const char* readback = std::getenv("IFSS_READBACK_COPY_STAGE");
+    if (readback && std::strcmp(readback, "1") == 0) readback_copy_state = 0;
+    const char* image_read = std::getenv("IFSS_IMAGE_READ_TRANSITION");
+    if (image_read && std::strcmp(image_read, "1") == 0) image_read_transition_state = 0;
     blit_helper = std::make_unique<VideoCore::BlitHelper>(instance, scheduler);
 
     memory_barrier.dstStageMask = vk::PipelineStageFlagBits2::eAllCommands;
@@ -105,26 +209,81 @@ Runtime::Runtime(const Instance& instance_, Scheduler& scheduler_)
         vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite;
 }
 
+Runtime::~Runtime() = default;
+
 void Runtime::TickFrame() {
     staging_pool.TickFrame();
 }
 
 void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
-                         std::span<const vk::BufferCopy> copies) {
+                         std::span<const vk::BufferCopy> copies, u64 trace_copy_id,
+                         bool eligible_demand_read) {
     scheduler.EndRendering();
 
-    bool needs_flush{};
+    bool source_conflict{};
+    bool destination_conflict{};
     for (const auto& copy : copies) {
-        needs_flush |= IsBufferAccessed(src, copy.srcOffset, copy.size);
-        needs_flush |= IsBufferAccessed(dst, copy.dstOffset, copy.size, true);
+        source_conflict |= IsBufferAccessed(src, copy.srcOffset, copy.size);
+        destination_conflict |= IsBufferAccessed(dst, copy.dstOffset, copy.size, true);
     }
-    if (needs_flush) {
+    if (const auto* audit = readback_barrier_audit.get(); audit && trace_copy_id) [[unlikely]] {
+        const bool complete = audit->complete || !memory_barrier.srcAccessMask;
+        const bool ranges_complete = complete && !audit->overflow &&
+                                     src->mem_type == VideoCore::MemoryType::Sparse;
+        vk::PipelineStageFlags2 intersecting_writes{};
+        if (ranges_complete) {
+            // Sparse arena migration can give the same guest bytes a different VkBuffer.
+            // Match the actual copied guest ranges against recorded sparse write declarations.
+            for (const auto& write : std::span{audit->writes}.first(audit->count)) {
+                if (std::ranges::any_of(copies, [&](const auto& copy) {
+                        const VAddr start = src->CpuAddr() + copy.srcOffset;
+                        return copy.size != 0 && write.start < start + copy.size && start < write.end;
+                    })) {
+                    intersecting_writes |= write.stages;
+                }
+            }
+        }
+        const u64 flags = u64(source_conflict) | (u64(destination_conflict) << 1) |
+                          (u64(!image_barriers.empty()) << 2) | (u64(complete) << 3) |
+                          (u64(ranges_complete) << 4);
+        Common::PathTrace::Emit(Common::PathTrace::Kind::ReadbackBarrierScope, trace_copy_id,
+                                VkPipelineStageFlags2(memory_barrier.srcStageMask),
+                                VkPipelineStageFlags2(audit->write_stages),
+                                VkPipelineStageFlags2(intersecting_writes), flags);
+    }
+    if (eligible_demand_read && readback_copy_state == 0) [[unlikely]] {
+        const auto serial = Common::ElfInfo::Instance().GameSerial();
+        if (!serial.empty()) {
+            readback_copy_state = serial == "CUSA00309" ? 2 : 1;
+            if (readback_copy_state == 2) readback_copy_enabled.store(true, std::memory_order_relaxed);
+        }
+    }
+    bool narrowed = false;
+    if (eligible_demand_read && readback_copy_state == 2 &&
+        src->mem_type == VideoCore::MemoryType::Sparse &&
+        dst->mem_type == VideoCore::MemoryType::HostCached) [[unlikely]] {
+        const auto barrier = NarrowReadbackCopyBarrier(memory_barrier, readback_write_stages,
+                                                       source_conflict, destination_conflict,
+                                                       !image_barriers.empty());
+        if (barrier) {
+            scheduler.Recorder().pipelineBarrier2({
+                .memoryBarrierCount = 1,
+                .pMemoryBarriers = &*barrier,
+            });
+            // Leave both masks and the access tracker pending for the full submit barrier.
+            narrowed = true;
+            readback_copies_narrowed.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    if (!narrowed && (source_conflict || destination_conflict)) {
         Common::Perf::Add(Common::Perf::CopyBarrierFlushes);
         FlushBarriers();
     }
 
+    const bool traced_copy = scheduler.ProfileReadbackBegin(trace_copy_id);
     const auto cmdbuf = scheduler.Recorder();
     cmdbuf.copyBuffer(src->Handle(), dst->Handle(), copies);
+    if (traced_copy) scheduler.ProfileDispatchEnd();
 
     for (const auto& copy : copies) {
         AccessBuffer(src, copy.srcOffset, copy.size, vk::PipelineStageFlagBits2::eCopy,
@@ -132,6 +291,35 @@ void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* 
         AccessBuffer(dst, copy.dstOffset, copy.size, vk::PipelineStageFlagBits2::eCopy,
                      vk::AccessFlagBits2::eTransferWrite);
     }
+}
+
+bool Runtime::CopyFeedbackWord(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
+                               const vk::BufferCopy& copy) {
+    if (!image_barriers.empty() || src == dst) {
+        CopyBuffer(src, dst, std::span{&copy, 1});
+        return false;
+    }
+    scheduler.EndRendering();
+    // Sparse arena migration can alias the same backing through another buffer handle.
+    const vk::MemoryBarrier2 barrier{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eCopy,
+        .dstAccessMask = vk::AccessFlagBits2::eTransferRead |
+                         vk::AccessFlagBits2::eTransferWrite,
+    };
+    const auto cmdbuf = scheduler.Recorder();
+    cmdbuf.pipelineBarrier2({
+        .memoryBarrierCount = 1,
+        .pMemoryBarriers = &barrier,
+    });
+    cmdbuf.copyBuffer(src->Handle(), dst->Handle(), copy);
+    // This dependency serves only the copy. Keep all pending accesses for later consumers.
+    AccessBuffer(src, copy.srcOffset, copy.size, vk::PipelineStageFlagBits2::eCopy,
+                 vk::AccessFlagBits2::eTransferRead);
+    AccessBuffer(dst, copy.dstOffset, copy.size, vk::PipelineStageFlagBits2::eCopy,
+                 vk::AccessFlagBits2::eTransferWrite);
+    return true;
 }
 
 void Runtime::FillBuffer(const VideoCore::Buffer* dst, u64 offset, u64 size, u32 value) {
@@ -199,6 +387,29 @@ void Runtime::WriteOcclusionResults(const VideoCore::Buffer* dst, u64 offset, u3
 bool Runtime::Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
                       vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,
                       std::optional<VideoCore::SubresourceRange> subres_range) {
+    if (image_read_transition_state == 0) [[unlikely]] {
+        const auto serial = Common::ElfInfo::Instance().GameSerial();
+        if (!serial.empty()) {
+            image_read_transition_state = serial == "CUSA00309" ? 2 : 1;
+            if (image_read_transition_state == 2) {
+                image_read_transition_enabled.store(true, std::memory_order_release);
+            }
+        }
+    }
+    if (image_read_transition_state == 2 && image_barriers.empty() &&
+        image->backing->subresource_states.empty()) {
+        auto& state = image->backing->state;
+        if (MergeUniformImageRead(state.layout, state.access_mask, state.pl_stage, dst_layout,
+                                  dst_stage, dst_access)) {
+            Common::Perf::Add(Common::Perf::BarrierCalls);
+            Common::Perf::Add(Common::Perf::BarrierFastPath);
+            if (!image_read_transition_seen) {
+                image_read_transition_seen = true;
+                image_read_transition_used.store(true, std::memory_order_release);
+            }
+            return false;
+        }
+    }
     // A dependency-info array does not order two transitions of the same image.
     // Submit the earlier transition before recording another one against its new state.
     if (std::ranges::any_of(image_barriers, [image](const auto& barrier) {
@@ -734,6 +945,13 @@ bool Runtime::IsBufferAccessed(const VideoCore::Buffer* handle, u64 offset, u64 
 
 void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size,
                            vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access) {
+    if (access_union_state == 0) [[unlikely]] {
+        const auto serial = Common::ElfInfo::Instance().GameSerial();
+        if (!serial.empty()) {
+            access_union_state = serial == "CUSA00309" ? 2 : 1;
+            if (access_union_state == 2) access_union_enabled.store(true, std::memory_order_release);
+        }
+    }
     auto& resource = buffer_access.Get(handle);
 
     const Interval range = {
@@ -753,15 +971,84 @@ void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size
         vk::AccessFlagBits2::eDepthStencilAttachmentWrite | vk::AccessFlagBits2::eTransferWrite |
         vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eTransformFeedbackWriteEXT;
 
-    if (src_access & WRITE_MASK) {
-        resource.write_ranges.Add(range);
-    }
-    if (src_access & READ_MASK) {
-        resource.read_ranges.Add(range);
+    if (access_union_state == 2) {
+        if (!access_union_seen && range.start < range.end && (src_access & (WRITE_MASK | READ_MASK))) {
+            access_union_seen = true;
+            access_union_used.store(true, std::memory_order_release);
+        }
+        if (src_access & WRITE_MASK) resource.write_ranges.AddUnion(range);
+        if (src_access & READ_MASK) resource.read_ranges.AddUnion(range);
+    } else {
+        if (src_access & WRITE_MASK) resource.write_ranges.Add(range);
+        if (src_access & READ_MASK) resource.read_ranges.Add(range);
     }
 
+    if (auto* audit = readback_barrier_audit.get();
+        audit && (src_access & WRITE_MASK) && Common::PathTrace::IsActive()) [[unlikely]] {
+        if (!audit->started) {
+            audit->started = true;
+            // A trace may begin in the middle of a scope. Do not infer missing writes.
+            audit->complete = !memory_barrier.srcAccessMask;
+        }
+        audit->write_stages |= src_stage;
+        if (handle->mem_type == VideoCore::MemoryType::Sparse && size != 0) {
+            if (audit->count < audit->writes.size()) {
+                audit->writes[audit->count++] = {handle->CpuAddr() + range.start,
+                                                 handle->CpuAddr() + range.end, src_stage};
+            } else {
+                audit->overflow = true;
+            }
+        }
+    }
+    if (readback_copy_state != 1 && (src_access & WRITE_MASK)) [[unlikely]] {
+        readback_write_stages |= src_stage;
+    }
+    if (compute_scope_audit && compute_scope_audit->after_narrow) [[unlikely]] {
+        auto& access = compute_scope_audit->Access(handle, offset);
+        const Interval interval{offset, offset + size};
+        if (src_access & READ_MASK) access.read_ranges.AddUnion(interval);
+        if (src_access & WRITE_MASK) access.write_ranges.AddUnion(interval);
+    }
     memory_barrier.srcStageMask |= src_stage;
     memory_barrier.srcAccessMask |= src_access & WRITE_MASK;
+}
+
+bool Runtime::ObserveComputeScope() const {
+    return compute_scope_audit && compute_scope_audit->after_narrow &&
+           CanNarrowComputeBarrier(memory_barrier, !image_barriers.empty());
+}
+
+bool Runtime::HasRecentComputeConflict(const VideoCore::Buffer* handle, u64 offset, u64 size,
+                                      bool is_written) {
+    const auto& access = compute_scope_audit->Access(handle, offset);
+    return access.write_ranges.Overlaps(offset, offset + size) ||
+           (is_written && access.read_ranges.Overlaps(offset, offset + size));
+}
+
+void Runtime::FlushComputeBarriers(bool recent_conflict) {
+    const bool enabled = Common::Perf::GetTuning().compute_barrier_scope.load(std::memory_order_relaxed);
+    const bool narrowed = enabled && CanNarrowComputeBarrier(memory_barrier, !image_barriers.empty());
+    if (compute_scope_audit) [[unlikely]] {
+        compute_scope_audit->Record(narrowed, recent_conflict);
+    }
+    if (narrowed) {
+        const auto barrier = ComputeBarrier(memory_barrier);
+        const vk::DependencyInfo dependency{
+            .memoryBarrierCount = 1,
+            .pMemoryBarriers = &barrier,
+        };
+        scheduler.EndRendering();
+        scheduler.Recorder().pipelineBarrier2(dependency);
+        Common::Perf::Add(Common::Perf::ComputeBarriersNarrowed);
+        Common::Perf::Add(Common::Perf::BufferBarrierFlushes);
+        // Deliberately keep memory_barrier AND buffer_access: later graphics/transfer,
+        // image transitions, and the submit callback still need full visibility.
+        return;
+    }
+    if (enabled) {
+        Common::Perf::Add(Common::Perf::ComputeBarriersFallback);
+    }
+    FlushBarriers();
 }
 
 void Runtime::FlushBarriers() {
@@ -792,6 +1079,14 @@ void Runtime::FlushBarriers() {
 
     image_barriers.clear();
     buffer_access.ResetScope();
+    readback_write_stages = {};
+    if (readback_barrier_audit) [[unlikely]] {
+        readback_barrier_audit->Reset();
+    }
+    if (compute_scope_audit) [[unlikely]] {
+        compute_scope_audit->recent.ResetScope();
+        compute_scope_audit->after_narrow = false;
+    }
 }
 
 } // namespace Vulkan

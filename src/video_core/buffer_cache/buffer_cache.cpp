@@ -74,6 +74,17 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
       gds_buffer{instance, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
     graphics_queue.stream_buffer = &stream_buffer;
+    VkMemoryPropertyFlags gds_properties{};
+    VmaAllocationInfo gds_allocation{};
+    vmaGetAllocationMemoryProperties(instance.GetAllocator(), gds_buffer.buffer.allocation,
+                                     &gds_properties);
+    vmaGetAllocationInfo(instance.GetAllocator(), gds_buffer.buffer.allocation, &gds_allocation);
+    LOG_INFO(Render_Vulkan, "GDS allocation: memory_type={} properties={:#x} device_local={} "
+                           "host_visible={} host_cached={} bytes={}",
+             gds_allocation.memoryType, gds_properties,
+             bool(gds_properties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+             bool(gds_properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+             bool(gds_properties & VK_MEMORY_PROPERTY_HOST_CACHED_BIT), GDS_BUFFER_SIZE);
     const vk::BufferCreateInfo probe_ci = {
         .flags =
             vk::BufferCreateFlagBits::eSparseBinding | vk::BufferCreateFlagBits::eSparseResidency,
@@ -114,6 +125,14 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
 }
 
 BufferCache::~BufferCache() {
+    for (auto& word : prefetched_words) {
+        if (word.copy_tick) {
+            staging_pool.FreeDeferred(word.download);
+        }
+    }
+    for (auto& copy : retired_word_copies) {
+        staging_pool.FreeDeferred(copy.download);
+    }
     scheduler.SetSubmitDependency({});
 }
 
@@ -518,6 +537,7 @@ void NextUploadEpoch() noexcept {
 }
 
 void BufferCache::TickFrame() {
+    feedback_checkpoint_used = false;
     if (std::exchange(fault_process_pending, false)) {
         fault_manager->ProcessFaultBuffer();
     }
@@ -683,7 +703,8 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
     const auto& trace_tuning = Common::Perf::GetTuning();
     const u64 trace_lo = trace_tuning.trace_reads_lo.load(std::memory_order_relaxed);
     const bool traced = trace_lo != 0 && device_addr + size > trace_lo &&
-                        device_addr < trace_tuning.trace_reads_hi.load(std::memory_order_relaxed);
+                        device_addr < trace_tuning.trace_reads_hi.load(std::memory_order_relaxed) &&
+                        !Common::PathTrace::ReadbackWaitScopeAuditActive();
     bool trace_retry = false;
     bool trace_nothing = false;
     SCOPE_EXIT {
@@ -735,8 +756,15 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
         liverpool->SendCommand<true>([&] {
             Common::Perf::Add(Common::Perf::ReadbackQueueNs, Common::Perf::NowNs() - request_ns);
             Emit(Kind::ReadCpBegin, path_id, 0);
+            bool audit = false;
+            if (path_id && !is_write && Common::PathTrace::ReadbackWaitScopeAuditActive())
+                [[unlikely]] {
+                constexpr u64 FeedbackReadRva = 0x3f3eff;
+                const u64 base = MemoryPatcher::g_eboot_address;
+                audit = base && guest_rip == base + FeedbackReadRva;
+            }
             wait_tick = BeginReadback(device_addr, size, is_write, wait_semaphore, feedback_copy_id,
-                                      path_id);
+                                      path_id, audit);
             Emit(Kind::ReadCpEnd, path_id, 0, 0, wait_tick);
         });
         if (wait_tick == 0) {
@@ -955,7 +983,7 @@ bool BufferCache::CollectReadback(const Buffer* arena, PendingReadback& readback
 
 bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback,
                                    WindowWriters& writers, bool queue_enabled, bool& on_queue,
-                                   bool record_if_graphics) {
+                                   bool small_cpu_read, bool record_if_graphics) {
     on_queue = queue_enabled && writers.submitted;
     // Precise downloads always refine the conservative window dependency using actual
     // copied ranges. Unknown writers or a changed version still keep whole-window waits.
@@ -969,7 +997,7 @@ bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback
         const auto ticks = SelectReadbackDependencies(
             readback.arena_base, readback.window_start, readback.window_end, readback.copies,
             writers.ticks, sequence, BYTES_PER_WORD,
-            [this](u64 start, u64 size) { return memory_tracker->GetWriteTicks(start, size); },
+            [this](u64 start, u64 size) { return FeedbackWriteTicks(start, size); },
             [this] { return memory_tracker->CurrentWriteSeq(); });
         if (ticks) {
             if (*ticks != writers.ticks) {
@@ -995,16 +1023,438 @@ bool BufferCache::PrepareReadback(const Buffer* arena, PendingReadback& readback
         }
     }
     if (!on_queue && record_if_graphics) {
-        runtime.CopyBuffer(arena, readback.download.buffer, readback.copies);
+        runtime.CopyBuffer(arena, readback.download.buffer, readback.copies,
+                           readback.prefetch ? 0 : readback.trace_id,
+                           small_cpu_read && refine && compute_queue == nullptr);
     }
     return true;
 }
 
-void BufferCache::NoteHotWindow(VAddr start, VAddr end, bool demand_pages) {
+std::array<u64, 2> BufferCache::FeedbackWriteTicks(VAddr address, u64 size) {
+    const auto coarse = memory_tracker->GetWriteTicks(address, size);
+    if (!Common::Perf::GetTuning().readback_feedback_writers.load(std::memory_order_relaxed) ||
+        compute_queue != nullptr) {
+        feedback_writers.Clear();
+        return coarse;
+    }
+    const auto fine = feedback_writers.Query(address, size);
+    // Preserve SelectReadbackDependencies' conservative upper-bound proof. A dependency of
+    // another queue retained by the page table may exceed the current coarse snapshot.
+    if (!fine || (*fine)[0] > coarse[0] || (*fine)[1] > coarse[1]) {
+        Common::Perf::GetFeedbackActivity().writer_fallbacks.fetch_add(1, std::memory_order_relaxed);
+        Common::Perf::Add(Common::Perf::FeedbackWriterFallbacks);
+        return coarse;
+    }
+    Common::Perf::Add(Common::Perf::FeedbackWriterHits);
+    Common::Perf::GetFeedbackActivity().writer_hits.fetch_add(1, std::memory_order_relaxed);
+    if (*fine != coarse) {
+        Common::Perf::GetFeedbackActivity().writer_reductions.fetch_add(1, std::memory_order_relaxed);
+        Common::Perf::Add(Common::Perf::FeedbackWriterReductions);
+    }
+    return *fine;
+}
+
+void BufferCache::TraceFeedbackWrite(VAddr address, u64 size, u64 writer_shader) {
+    const auto& tuning = Common::Perf::GetTuning();
+    const u64 lo = tuning.trace_reads_lo.load(std::memory_order_relaxed);
+    const u64 word = tuning.trace_writer_word.load(std::memory_order_relaxed);
+    if ((lo || word) && Common::PathTrace::ReadbackWaitScopeAuditActive()) [[unlikely]] {
+        const auto overlaps_page = [&](VAddr target) {
+            const VAddr page = Common::AlignDown(target, BYTES_PER_PAGE);
+            return target && address < page + BYTES_PER_PAGE &&
+                   (address >= page || size > page - address);
+        };
+        if (size != 0 && (overlaps_page(lo) || overlaps_page(word))) {
+            using namespace Common::PathTrace;
+            Emit(Kind::ReadbackWaitWriter, NextId(), address, size, writer_shader,
+                 (Sched().CurrentTick() << 1) | active->index);
+        }
+        return;
+    }
+    if (size != 0 && feedback_trace_writes < 8192 &&
+        ((lo != 0 && address < tuning.trace_reads_hi.load(std::memory_order_relaxed) &&
+          (address >= lo || size > lo - address)) ||
+         (word != 0 && address < word + 4 && (address >= word || size > word - address)))) [[unlikely]] {
+        ++feedback_trace_writes;
+        LOG_INFO(Render_Vulkan, "PTRACE writer-declaration {} range {:x}+{} shader {:x} "
+                 "queue {} tick {} sequence {}",
+                 feedback_trace_writes, address, size, writer_shader, active->index,
+                 Sched().CurrentTick(),
+                 memory_tracker->CurrentWriteSeq());
+    }
+}
+
+void BufferCache::NoteFeedbackWrite(VAddr address, u64 size, u64 writer_shader,
+                                    bool trace_declaration) {
+    if (trace_declaration) {
+        TraceFeedbackWrite(address, size, writer_shader);
+    }
+    const u64 tick = Sched().CurrentTick();
+    const auto& tuning = Common::Perf::GetTuning();
+    feedback_write_frontier[active->index] = tick;
+    if (compute_queue == nullptr &&
+        Common::Perf::GetTuning().readback_word_load.load(std::memory_order_relaxed)) {
+        feedback_words.NoteWrite(address, size, tick);
+        if (IsFeedbackWordPrefetchProducer(writer_shader, size,
+                tuning.readback_word_page_cluster.load(std::memory_order_relaxed)) &&
+            tuning.readback_word_prefetch.load(std::memory_order_relaxed)) {
+            feedback_word_hint = address + 4;
+            if (writer_shader == 0xa4edc92b &&
+                tuning.readback_word_page_cluster.load(std::memory_order_relaxed)) {
+                QueueFeedbackWordHint(address + 4, true);
+            }
+        }
+        if (size <= 4096 &&
+            tuning.readback_word_page_cluster.load(std::memory_order_relaxed) &&
+            tuning.readback_word_prefetch.load(std::memory_order_relaxed)) {
+            if (IsFeedbackProducerSeed(address, size, writer_shader, feedback_word_windows)) {
+                // Seed at the actual producer, before the first CPU fault. Its conservative
+                // dependency includes this write and every prior write; subsequent exact
+                // overlap declarations keep advancing the token, even for unknown shaders.
+                const auto coarse = memory_tracker->GetWriteTicks(address + 4, 4);
+                feedback_words.Learn(address + 4,
+                    std::max(coarse[0], feedback_write_frontier[0]),
+                    FeedbackWordWriters::Capacity, false);
+            }
+            // The dispatch can have multiple written bindings and multiple actual readers
+            // within a binding. Queue every learned overlapping word, not only base+4 of
+            // the last descriptor. Eligibility is never a freshness or execution proof.
+            feedback_words.VisitOverlaps(address, size, [&](VAddr word) {
+                if (IsFeedbackWindowWord(word, feedback_word_windows)) {
+                    QueueFeedbackWordHint(word, false);
+                }
+            });
+        }
+    } else {
+        feedback_words.Clear();
+        feedback_word_hints.clear();
+    }
+    if (compute_queue == nullptr &&
+        Common::Perf::GetTuning().readback_feedback_writers.load(std::memory_order_relaxed)) {
+        feedback_writers.NoteWrite(address, size, tick, active->index);
+    } else {
+        // No disabled interval can leave apparently complete but stale provenance behind.
+        feedback_writers.Clear();
+    }
+}
+
+void BufferCache::QueueFeedbackWordHint(VAddr address, bool primary) {
+    const auto old = std::ranges::find(feedback_word_hints, address, &FeedbackWordHint::address);
+    if (old != feedback_word_hints.end()) {
+        old->primary |= primary;
+    } else if (feedback_word_hints.size() < feedback_word_hints.capacity()) {
+        feedback_word_hints.push_back({address, primary});
+    }
+}
+
+void BufferCache::PrefetchFeedbackWord(u64 shader_hash) {
+    const auto& tuning = Common::Perf::GetTuning();
+    if (tuning.readback_word_page_cluster.load(std::memory_order_relaxed)) {
+        for (const auto& hint : feedback_word_hints) {
+            PrefetchFeedbackWordAt(hint.address, hint.primary);
+        }
+        feedback_word_hints.clear();
+        feedback_word_hint = 0;
+        return;
+    }
+    if (!IsFeedbackWordPrefetchProducer(shader_hash, 48, false)) {
+        return;
+    }
+    const VAddr address = std::exchange(feedback_word_hint, 0);
+    PrefetchFeedbackWordAt(address, true);
+}
+
+void BufferCache::PrefetchFeedbackWordAt(VAddr address, bool primary) {
+    const auto& tuning = Common::Perf::GetTuning();
+    if (!address || (address & 3) || compute_queue || !pending_binds.empty() ||
+        !tuning.readback_word_prefetch.load(std::memory_order_relaxed) ||
+        !tuning.readback_word_load.load(std::memory_order_relaxed) ||
+        EmulatorSettings.GetReadbacksMode() != GpuReadbacksMode::Precise) {
+        return;
+    }
+    const auto token = feedback_words.Query(address);
+    if (!token || token->tick != scheduler.CurrentTick() ||
+        texture_cache.FindImageFromRange(address, 4)) {
+        return;
+    }
+    const auto slots = PrefetchedWordSlots();
+    auto* slot = FindPrefetchedWord(address);
+    if (!slot) {
+        // Keep the original producer's two discovery slots; a later producer must not
+        // replace the second page's initial word before that page has been observed.
+        const auto available = std::ranges::find_if(slots, [&](const PrefetchedWord& entry) {
+            return entry.address == 0 && (primary || &entry >= slots.data() + 2);
+        });
+        if (available != slots.end()) slot = &*available;
+    }
+    if (!slot || (slot->copy_tick && slot->token == *token)) {
+        return;
+    }
+    if (slot - slots.data() >= 2 &&
+        !IsFeedbackWindowWord(address, feedback_word_windows)) {
+        // Use the actual conservative download windows, clipped to their arenas. This is
+        // only eligibility: copies and all freshness checks remain exact four-byte operations.
+        return;
+    }
+    std::array<u64, 2> versions{};
+    const auto [arena, offset] = PeekArena(address, 4);
+    if (!arena || !memory_tracker->GetCpuVersions(address, 4, versions)) {
+        return;
+    }
+    if (slot->copy_tick && !scheduler.IsFree(slot->copy_tick)) {
+        if (!tuning.readback_word_page_cluster.load(std::memory_order_relaxed)) return;
+        // The head's IsFree already refreshed the semaphore. Do not query the driver once
+        // per busy pool entry; a later completion can simply be reused on the next call.
+        const auto completed = scheduler.GetWorkSemaphore()->KnownGpuTick();
+        auto spare = std::ranges::find_if(retired_word_copies, [&](const RetiredWordCopy& copy) {
+            return copy.tick <= completed;
+        });
+        if (spare == retired_word_copies.end()) {
+            if (retired_word_copies.size() == retired_word_copies.capacity()) return;
+            retired_word_copies.push_back({
+                staging_pool.Request(64_KB, MemoryType::HostCached, 0, true), 0});
+            spare = retired_word_copies.end() - 1;
+        }
+        // Never overwrite a GPU-owned allocation. The old copy stays pinned until its own
+        // tick is complete. A guest waiting for that tick must revalidate the current head.
+        std::swap(slot->download, spare->download);
+        spare->tick = slot->copy_tick;
+    }
+    if (!slot->copy_tick) {
+        slot->download = staging_pool.Request(64_KB, MemoryType::HostCached, 0, true);
+        if (slot - slots.data() >= 2) {
+            feedback_word_slot_index.emplace(address, slot - slots.data());
+        }
+    }
+    slot->address = address;
+    slot->token = *token;
+    slot->cpu_versions = versions;
+    slot->copy_tick = scheduler.CurrentTick();
+    slot->arena = arena;
+    if (slot - slots.data() < 2 &&
+        tuning.readback_word_page_cluster.load(std::memory_order_relaxed)) {
+        const auto [start, end] = GetReadbackWindow(arena, address, 4);
+        auto& window = feedback_word_windows[slot - slots.data()];
+        const bool changed = window.start != start || window.end != end;
+        window = {start, end};
+        if (changed && feedback_word_windows[0].end && feedback_word_windows[1].end) {
+            feedback_words.RetainInWindows(feedback_word_windows);
+        }
+    }
+    const vk::BufferCopy copy{.srcOffset = offset, .dstOffset = slot->download.offset, .size = 4};
+    const bool scoped = runtime.CopyFeedbackWord(arena, slot->download.buffer, copy);
+    using namespace Common::PathTrace;
+    Emit(Kind::WordPrefetchCopy, NextId(), address, slot->copy_tick, scoped);
+}
+
+bool BufferCache::ReadFaultWord(VAddr address, u32& value) {
+    if ((address & 3) || !Common::Perf::GetTuning().readback_word_load.load(std::memory_order_relaxed) ||
+        EmulatorSettings.GetReadbacksMode() != GpuReadbacksMode::Precise) return false;
+    auto& activity = Common::Perf::GetFeedbackActivity();
+    activity.word_attempts.fetch_add(1, std::memory_order_relaxed);
+    bool queued = false, valid = false;
+    bool shadow_check = false;
+    u64 wait_tick = 0;
+    FeedbackWordWriters::Token token{};
+    u64 prefetched_wait_tick = 0;
+    const u64 trace_id = Common::PathTrace::NextId();
+    const u64 started = trace_id ? Common::Perf::NowNs() : 0;
+    u64 reason = 1;
+    SCOPE_EXIT {
+        Common::PathTrace::Emit(Common::PathTrace::Kind::WordLoadResult, trace_id,
+                                address, token.tick, trace_id ? Common::Perf::NowNs() - started : 0,
+                                reason);
+    };
+    std::array<u64, 2> cpu_versions{};
+    PendingReadback private_copy{};
+    size_t consumed_slot = prefetched_words.size();
+    const auto consume_prefetch = [&](const PrefetchedWord& slot) {
+        if (PeekArena(address, 4).first != slot.arena ||
+            !memory_tracker->GetCpuVersions(address, 4, cpu_versions) ||
+            slot.cpu_versions != cpu_versions) {
+            reason = 15;
+            return;
+        }
+        slot.download.Invalidate();
+        std::memcpy(&value, slot.download.mapped, sizeof(value));
+        valid = true;
+        reason = prefetched_wait_tick ? 17 : 0;
+        consumed_slot = &slot - prefetched_words.data();
+        if (&slot >= prefetched_words.data() + 2 &&
+            Common::Perf::GetTuning().readback_word_page_cluster.load(std::memory_order_relaxed)) {
+            activity.word_cluster_served.fetch_add(1, std::memory_order_relaxed);
+        }
+        const bool new_slot_needs_reference = consumed_slot >= 2 &&
+            word_slot_shadow_checks[consumed_slot] < 2;
+        const bool cluster = Common::Perf::GetTuning().readback_word_page_cluster.load(
+            std::memory_order_relaxed);
+        if (trace_id && word_shadow_checks < 128 &&
+            (!cluster || started >= word_shadow_next_check_ns) &&
+            (new_slot_needs_reference ||
+             (activity.word_served.load(std::memory_order_relaxed) & 127) == 0)) {
+            ++word_shadow_checks;
+            if (cluster) word_shadow_next_check_ns = started + 250'000'000;
+            shadow_check = true;
+        }
+        const auto& tuning = Common::Perf::GetTuning();
+        if (!shadow_check && tuning.readback_word_prefetch_bulk.load(std::memory_order_relaxed) &&
+            tuning.async_readbacks.load(std::memory_order_relaxed) &&
+            memory_tracker->IsRegionGpuModified(address, sizeof(u32)) &&
+            !FirstUnfinishedReadback(address, sizeof(u32))) {
+            // Keep the ordinary page download in flight while the guest consumes the
+            // private word. Only the regular completion path can publish the page.
+            Vulkan::Semaphore* semaphore = nullptr;
+            u64 feedback_copy_id = 0;
+            if (BeginReadback(address, sizeof(u32), false, semaphore, feedback_copy_id, 0)) {
+                activity.word_bulk_queued.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    };
+    liverpool->SendCommand<true>([&] {
+        if (compute_queue != nullptr || !UseReadbackQueue()) { reason = 1; return; }
+        if (texture_cache.FindImageFromRange(address, 4)) { reason = 2; return; }
+        if (!pending_binds.empty()) { reason = 3; return; }
+        if (Common::Perf::GetTuning().readback_word_prefetch.load(std::memory_order_relaxed)) {
+            const bool cluster = Common::Perf::GetTuning().readback_word_page_cluster.load(
+                std::memory_order_relaxed);
+            if (cluster && feedback_word_windows[0].end && feedback_word_windows[1].end &&
+                !IsFeedbackWindowWord(address, feedback_word_windows)) {
+                reason = 19;
+                return;
+            }
+            const auto coarse = memory_tracker->GetWriteTicks(address, 4);
+            if (!feedback_words.Learn(address, std::max(coarse[0], feedback_write_frontier[0]),
+                                      cluster ? FeedbackWordWriters::Capacity : 64)) {
+                reason = 5;
+                return;
+            }
+            token = *feedback_words.Query(address);
+            const auto* slot = FindPrefetchedWord(address);
+            if (!slot) {
+                reason = 12;
+                return;
+            }
+            if (slot->token != token) {
+                reason = 13;
+                return;
+            }
+            if (!scheduler.IsFree(slot->copy_tick)) {
+                reason = 14;
+                if (slot->copy_tick <= scheduler.SubmittedTick()) {
+                    prefetched_wait_tick = slot->copy_tick;
+                }
+                return;
+            }
+            consume_prefetch(*slot);
+            return;
+        }
+        const auto [arena, offset] = ObtainBuffer(address, 4, false, true);
+        if (!pending_binds.empty()) { reason = 3; return; }
+        if (!memory_tracker->GetCpuVersions(address, 4, cpu_versions)) { reason = 4; return; }
+        const auto coarse = memory_tracker->GetWriteTicks(address, 4);
+        const u64 seed = std::max(coarse[0], feedback_write_frontier[0]);
+        if (!feedback_words.Learn(address, seed)) { reason = 5; return; }
+        token = *feedback_words.Query(address);
+        const auto writers = ClassifyWriters({token.tick, 0});
+        // Never wait on a writer not yet submitted to the driver. The original handler
+        // handles that case, and the learned entry can serve a subsequent precise read.
+        if (!writers.submitted) { reason = 6; return; }
+        private_copy.download = staging_pool.Request(64_KB, MemoryType::HostCached, 0, true);
+        const vk::BufferCopy copy{.srcOffset = offset, .dstOffset = private_copy.download.offset, .size = 4};
+        const ReadbackQueue::Job job{.src = arena->Handle(), .dst = private_copy.download.buffer->Handle(),
+                                    .copies = std::span{&copy, 1}};
+        wait_tick = readback_queue->Submit(std::span{&job, 1}, ReadbackWaits(writers));
+        queued = true;
+    });
+    if (prefetched_wait_tick) {
+        // The guest thread waits while CP continues. It retains no slot pointer across the wait.
+        reason = 16;
+        if (scheduler.GetWorkSemaphore()->WaitFor(prefetched_wait_tick, 8'000'000)) {
+            liverpool->SendCommand<true>([&] {
+                const auto& tuning = Common::Perf::GetTuning();
+                const auto* slot = FindPrefetchedWord(address);
+                if (!tuning.readback_word_load.load(std::memory_order_relaxed) ||
+                    !tuning.readback_word_prefetch.load(std::memory_order_relaxed) ||
+                    compute_queue || !pending_binds.empty() ||
+                    !slot || slot->copy_tick != prefetched_wait_tick ||
+                    slot->token != token || feedback_words.Query(address) != token ||
+                    texture_cache.FindImageFromRange(address, 4)) {
+                    reason = 18;
+                    return;
+                }
+                consume_prefetch(*slot);
+            });
+        }
+    }
+    if (queued) {
+        readback_queue->Semaphore().Wait(wait_tick);
+        liverpool->SendCommand<true>([&] {
+            std::array<u64, 2> after_cpu{};
+            if (!Common::Perf::GetTuning().readback_word_load.load(std::memory_order_relaxed) || compute_queue != nullptr) reason = 8;
+            else if (feedback_words.Query(address) != token) reason = 9;
+            else if (!memory_tracker->GetCpuVersions(address, 4, after_cpu) || after_cpu != cpu_versions) reason = 10;
+            else { valid = true; reason = 0; }
+            if (valid) {
+                private_copy.download.Invalidate();
+                std::memcpy(&value, private_copy.download.mapped, sizeof(value));
+                if (trace_id && word_shadow_checks < 64 &&
+                    (activity.word_served.load(std::memory_order_relaxed) & 127) == 0) {
+                    ++word_shadow_checks;
+                    shadow_check = true;
+                }
+            }
+            staging_pool.FreeDeferred(private_copy.download);
+        });
+    }
+    if (valid && shadow_check) {
+        // Diagnostic only: compare with the original handler when no actual word writer or
+        // CPU region modification intervened. Never use these intrusive samples as FPS proof.
+        ReadMemory(address, 4, false, false);
+        u32 reference{};
+        memory->CopySparseMemory(address, reinterpret_cast<u8*>(&reference), sizeof(reference));
+        liverpool->SendCommand<true>([&] {
+            std::array<u64, 2> after_cpu{};
+            if (feedback_words.Query(address) == token &&
+                memory_tracker->GetCpuVersions(address, 4, after_cpu) && after_cpu == cpu_versions) {
+                const bool equal = reference == value;
+                Common::PathTrace::Emit(Common::PathTrace::Kind::WordValueCheck, trace_id,
+                                        address, value, reference, equal);
+                if (consumed_slot < word_slot_shadow_checks.size()) {
+                    ++word_slot_shadow_checks[consumed_slot];
+                }
+                if (!equal) {
+                    valid = false; reason = 11;
+                    Common::Perf::GetTuning().readback_word_load.store(false, std::memory_order_relaxed);
+                    LOG_ERROR(Render_Vulkan, "Private word verification mismatch at {:#x}: {:#x} != {:#x}; candidate disabled",
+                              address, value, reference);
+                }
+            }
+        });
+    }
+    (valid ? activity.word_served : activity.word_fallbacks).fetch_add(1, std::memory_order_relaxed);
+    return valid;
+}
+
+void BufferCache::NoteHotWindow(VAddr start, VAddr end, bool demand_pages,
+                                VAddr read_address, u64 read_size) {
     const u64 now = Common::Perf::NowNs();
+    const bool small_read = demand_pages && read_size != 0 && read_size <= 8;
+    if (small_read && compute_queue == nullptr &&
+        Common::Perf::GetTuning().readback_feedback_writers.load(std::memory_order_relaxed)) {
+        for (VAddr page = start; page < end; page += BYTES_PER_PAGE) {
+            auto seed = memory_tracker->GetWriteTicks(page, BYTES_PER_PAGE);
+            // Learning starts after earlier mutations: include uploads/image aliases which
+            // do not call SetWriteTick. Their conservative frontier is only used at learning;
+            // subsequent unrelated writes cannot continually re-seed a learned page.
+            for (u32 q = 0; q < 2; ++q) seed[q] = std::max(seed[q], feedback_write_frontier[q]);
+            feedback_writers.Learn(page, seed);
+        }
+    }
     for (auto& window : hot_windows) {
         if (window.start == start && window.end == end && window.demand_pages == demand_pages) {
             window.last_read_ns = now;
+            window.read_address = small_read ? read_address : 0;
+            window.read_size = small_read ? read_size : 0;
             return;
         }
     }
@@ -1019,7 +1469,80 @@ void BufferCache::NoteHotWindow(VAddr start, VAddr end, bool demand_pages) {
         .prefetch_seq = 0,
         .prefetch_on_queue = false,
         .demand_pages = demand_pages,
+        .read_address = small_read ? read_address : 0,
+        .read_size = small_read ? read_size : 0,
     });
+}
+
+void BufferCache::TraceReadbackWaitScope(const PendingReadback& wide, VAddr addr, u64 size,
+                                        u64 trace_id) {
+    const VAddr page = Common::AlignDown(addr, BYTES_PER_PAGE);
+    const VAddr end = page + BYTES_PER_PAGE;
+    if (size == 0 || size > end - addr) {
+        return;
+    }
+    const auto touches_page = [&](const PendingReadback& copy) {
+        return std::ranges::any_of(copy.copies, [&](const vk::BufferCopy& region) {
+            const VAddr first = copy.arena_base + region.srcOffset;
+            return first < end && page < first + region.size;
+        });
+    };
+    const PendingReadback* narrow = nullptr;
+    bool later_touches_page = false;
+    for (const auto& copy : pending_readbacks) {
+        if (!touches_page(copy)) {
+            continue;
+        }
+        if (copy.demand_page_prefetch && copy.window_start == page && copy.window_end == end) {
+            narrow = &copy;
+            later_touches_page = false;
+        } else if (narrow) {
+            later_touches_page = true;
+        }
+    }
+    bool earlier_window_blocks = false;
+    if (narrow) {
+        for (const auto& copy : pending_readbacks) {
+            if (&copy == narrow) {
+                break;
+            }
+            earlier_window_blocks |= copy.window_start < end && page < copy.window_end &&
+                (copy.on_readback_queue != narrow->on_readback_queue || copy.tick > narrow->tick);
+        }
+    }
+    const bool different_arena = narrow && (narrow->arena_base != wide.arena_base ||
+                                             narrow->arena_handle != wide.arena_handle);
+    const bool clean = !memory_tracker->IsRegionGpuModified(page, BYTES_PER_PAGE);
+    const u64 flags = u64{earlier_window_blocks} | (u64{later_touches_page} << 1) |
+                      (u64{touches_page(wide)} << 2) |
+                      (u64{narrow && narrow->on_readback_queue} << 3) |
+                      (u64{wide.on_readback_queue} << 4) | (u64{KeepRanges()} << 5) |
+                      (u64{clean} << 6) | (u64{different_arena} << 7);
+    using namespace Common::PathTrace;
+    Emit(Kind::ReadbackWaitScope, trace_id, page, narrow ? narrow->tick : 0, wide.tick, flags);
+    const auto& tuning = Common::Perf::GetTuning();
+    const auto primary = tuning.trace_reads_lo.load(std::memory_order_relaxed);
+    const auto secondary = tuning.trace_writer_word.load(std::memory_order_relaxed);
+    if (!((primary && Common::AlignDown(primary, BYTES_PER_PAGE) == page) ||
+          (secondary && Common::AlignDown(secondary, BYTES_PER_PAGE) == page))) {
+        return;
+    }
+    Emit(Kind::ReadbackWaitLayout, trace_id, addr, narrow ? narrow->trace_id : 0,
+         wide.trace_id);
+    const auto emit_spans = [&](const PendingReadback& copy, bool is_narrow) {
+        for (const auto& region : copy.copies) {
+            const VAddr first = copy.arena_base + region.srcOffset;
+            const VAddr lo = std::max(first, page);
+            const VAddr hi = std::min(first + region.size, end);
+            if (lo < hi) {
+                Emit(Kind::ReadbackWaitSpan, trace_id, addr, lo - page, hi - lo, is_narrow);
+            }
+        }
+    };
+    emit_spans(wide, false);
+    if (narrow) {
+        emit_spans(*narrow, true);
+    }
 }
 
 bool BufferCache::SubmitEarlyComplete(const Buffer* arena, PendingReadback& readback,
@@ -1082,7 +1605,7 @@ bool BufferCache::SubmitEarlyComplete(const Buffer* arena, PendingReadback& read
 
 u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
                                Vulkan::Semaphore*& wait_semaphore, u64& feedback_copy_id,
-                               u64 trace_id) {
+                               u64 trace_id, bool audit) {
     // Readbacks the GPU has finished are written first, the requested data may be among them.
     CompleteReadbacks(false);
 
@@ -1097,7 +1620,7 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
         if (EmulatorSettings.GetReadbacksMode() == GpuReadbacksMode::Precise) {
             if (const auto pages = DemandReadbackPages(device_addr, size, arena->cpu_addr,
                                                        arena->size_bytes, BYTES_PER_PAGE)) {
-                NoteHotWindow(pages->first, pages->second, true);
+                NoteHotWindow(pages->first, pages->second, true, device_addr, size);
             }
         }
     }
@@ -1151,7 +1674,7 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
         memory_tracker->AddPendingReadback(window_start, window_end);
     } else {
         recorded = PrepareReadback(arena, readback, writers, queue_enabled, use_queue,
-                                   !try_early_complete);
+                                   !is_write && size <= BYTES_PER_PAGE, !try_early_complete);
     }
     if (!recorded) {
         // Nothing left to download in the window.
@@ -1188,6 +1711,28 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
         feedback_copy_id = overlapping->feedback.id;
         return overlapping->tick;
     }
+    if (trace_id && !is_write) [[unlikely]] {
+        const auto& tuning = Common::Perf::GetTuning();
+        const u64 primary = tuning.trace_reads_lo.load(std::memory_order_relaxed);
+        const u64 secondary = tuning.trace_writer_word.load(std::memory_order_relaxed);
+        if (device_addr != 0 && (device_addr == primary || device_addr == secondary)) {
+            // This measures the tracker's address-local dependency, which still has
+            // coarse granularity. Keep it separate from the selected copy dependency.
+            const auto local = memory_tracker->GetWriteTicks(device_addr, sizeof(u32));
+            Common::PathTrace::Emit(Common::PathTrace::Kind::ReadTargetTicks, trace_id,
+                                    local[0], local[1], readback.record_seq, device_addr);
+            const auto& source = feedback_trace_block_writers[device_addr == primary ? 0 : 1];
+            if (source.size && source.block == Common::AlignDown(device_addr, BYTES_PER_WORD) &&
+                source.queue < local.size() && local[source.queue] == source.tick &&
+                memory_tracker->GetWriteSeq(device_addr, sizeof(u32)) == source.sequence) {
+                LOG_INFO(Render_Vulkan,
+                         "PTRACE target-block-writer request {} address {:x} range {:x}+{} "
+                         "shader {:x} queue {} tick {} sequence {}",
+                         trace_id, device_addr, source.start, source.size, source.shader,
+                         source.queue, source.tick, source.sequence);
+            }
+        }
+    }
     Common::PathTrace::Emit(Common::PathTrace::Kind::ReadDependencies, trace_id,
                             writers.ticks[0], writers.ticks[1], readback.record_seq,
                             (writers.done ? 1 : 0) | (writers.submitted ? 2 : 0) |
@@ -1212,7 +1757,10 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     } else {
         if (try_early_complete) {
             Common::Perf::Add(Common::Perf::ReadbackEarlyCompleteFallbacks);
-            runtime.CopyBuffer(arena, readback.download.buffer, readback.copies);
+            runtime.CopyBuffer(
+                arena, readback.download.buffer, readback.copies, readback.trace_id,
+                !is_write && size <= BYTES_PER_PAGE && compute_queue == nullptr &&
+                    EmulatorSettings.GetReadbacksMode() == GpuReadbacksMode::Precise);
         }
         WaitComputeWriter(writers);
         readback.tick = scheduler.CurrentTick();
@@ -1221,6 +1769,9 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
         wait_semaphore = scheduler.GetWorkSemaphore();
     }
     Common::Perf::Add(Common::Perf::ReadbackSyncNs, Common::Perf::NowNs() - submit_start);
+    if (audit) [[unlikely]] {
+        TraceReadbackWaitScope(readback, device_addr, size, trace_id);
+    }
     const u64 wait_tick = readback.tick;
     Common::PathTrace::Emit(Common::PathTrace::Kind::ReadCopy, trace_id, wait_tick,
                             readback.on_readback_queue, readback.record_seq, readback.trace_id);
@@ -1270,16 +1821,67 @@ void BufferCache::RetireReadbacks() {
     }
 }
 
-void BufferCache::PrefetchReadbacks() {
-    if (hot_windows.empty()) {
+bool BufferCache::ShouldCheckpointFeedback(VAddr address, u64 size) const {
+    if (feedback_checkpoint_used || compute_queue != nullptr || OnComputeQueue() ||
+        !Common::Perf::GetTuning().readback_feedback_checkpoint.load(std::memory_order_relaxed) ||
+        EmulatorSettings.GetReadbacksMode() != GpuReadbacksMode::Precise ||
+        size == 0 || size > 64) {
+        return false;
+    }
+    const u64 now = Common::Perf::NowNs();
+    return std::ranges::any_of(hot_windows, [&](const HotWindow& window) {
+        return window.demand_pages && now - window.last_read_ns <= 1'000'000'000ULL &&
+               IsFeedbackCheckpointWrite(address, size, window.read_address, window.read_size);
+    });
+}
+
+void BufferCache::CheckpointFeedback(VAddr address, u64 size, u64 shader_hash) {
+    if (!ShouldCheckpointFeedback(address, size)) {
         return;
+    }
+    // Save values before the prefetch retirement path can update its containers. A checkpoint
+    // only copies the observed page window, not all hot windows or the entire descriptor.
+    VAddr start = 0, end = 0;
+    const u64 now = Common::Perf::NowNs();
+    for (const auto& window : hot_windows) {
+        if (window.demand_pages && now - window.last_read_ns <= 1'000'000'000ULL &&
+            IsFeedbackCheckpointWrite(address, size, window.read_address, window.read_size)) {
+            start = window.start;
+            end = window.end;
+            break;
+        }
+    }
+    if (start == end) {
+        return;
+    }
+    Common::Perf::Add(Common::Perf::FeedbackCheckpointAttempts);
+    Common::Perf::GetFeedbackActivity().checkpoint_attempts.fetch_add(1, std::memory_order_relaxed);
+    const u64 producer_tick = scheduler.CurrentTick();
+    u64 copy_id = 0;
+    if (PrefetchReadbacksImpl(start, end, &copy_id)) {
+        feedback_checkpoint_used = true;
+        Common::Perf::Add(Common::Perf::FeedbackCheckpointSubmits);
+        Common::Perf::GetFeedbackActivity().checkpoint_submits.fetch_add(1, std::memory_order_relaxed);
+        Common::PathTrace::Emit(Common::PathTrace::Kind::FeedbackCheckpoint,
+                                copy_id, shader_hash, address, size,
+                                producer_tick);
+    }
+}
+
+void BufferCache::PrefetchReadbacks() {
+    PrefetchReadbacksImpl();
+}
+
+bool BufferCache::PrefetchReadbacksImpl(VAddr only_start, VAddr only_end, u64* recorded_copy_id) {
+    if (hot_windows.empty()) {
+        return false;
     }
     const auto& tuning = Common::Perf::GetTuning();
     // Only precise readbacks keep the pages protected until the data is written.
     if (!tuning.async_readbacks.load(std::memory_order_relaxed) ||
         !tuning.readback_prefetch.load(std::memory_order_relaxed) ||
         EmulatorSettings.GetReadbacksMode() != GpuReadbacksMode::Precise) {
-        return;
+        return false;
     }
     RetireReadbacks();
 
@@ -1296,6 +1898,11 @@ void BufferCache::PrefetchReadbacks() {
     const bool queue_enabled = UseReadbackQueue();
     const size_t first_queued = pending_readbacks.size();
     std::array<u64, 2> queue_wait_ticks{};
+    struct PrefetchTraceJob {
+        u64 copy_id;
+        std::array<u64, 2> writer_ticks;
+    };
+    boost::container::small_vector<PrefetchTraceJob, 16> traced_jobs;
     bool recorded_on_queue = false;
     bool recorded_on_graphics = false;
     u64 prefetched_bytes = 0;
@@ -1309,6 +1916,9 @@ void BufferCache::PrefetchReadbacks() {
         }
         HotWindow& window = *it;
         ++it;
+        if (only_start != only_end && (window.start != only_start || window.end != only_end)) {
+            continue;
+        }
         if (!window.demand_pages) {
             // A conservative/relaxed-site hint never stands in for an observed fault page.
             continue;
@@ -1358,12 +1968,18 @@ void BufferCache::PrefetchReadbacks() {
             if (readback.feedback.id != 0) [[unlikely]] {
                 readback.feedback_writer_ticks = writers.ticks;
             }
+            if (readback.trace_id != 0) [[unlikely]] {
+                traced_jobs.push_back({readback.trace_id, writers.ticks});
+            }
             recorded_on_queue = true;
         } else {
             WaitComputeWriter(writers);
             recorded_on_graphics = true;
         }
         pending_readbacks.push_back(std::move(readback));
+        if (recorded_copy_id) {
+            *recorded_copy_id = pending_readbacks.back().trace_id;
+        }
         Common::Perf::Add(Common::Perf::ReadbackPrefetches);
         Common::Perf::Add(Common::Perf::ReadbackPagePrefetches);
         for (const auto& copy : pending_readbacks.back().copies) {
@@ -1392,7 +2008,26 @@ void BufferCache::PrefetchReadbacks() {
         }
         WindowWriters queue_writers;
         queue_writers.ticks = queue_wait_ticks;
+        std::array<u64, 2> known_writer_ticks{};
+        if (!traced_jobs.empty()) [[unlikely]] {
+            known_writer_ticks[0] = scheduler.GetWorkSemaphore()->KnownGpuTick();
+            if (compute_queue != nullptr) {
+                known_writer_ticks[1] =
+                    compute_queue->scheduler->GetWorkSemaphore()->KnownGpuTick();
+            }
+        }
         const u64 queue_tick = readback_queue->Submit(jobs, ReadbackWaits(queue_writers));
+        if (!traced_jobs.empty()) [[unlikely]] {
+            using Common::PathTrace::Emit;
+            using Common::PathTrace::Kind;
+            // Batch ID is the readback timeline tick, separate from both writer timelines.
+            Emit(Kind::ReadPrefetchBatch, queue_tick, queue_wait_ticks[0], queue_wait_ticks[1],
+                 known_writer_ticks[0], known_writer_ticks[1]);
+            for (const auto& trace : traced_jobs) {
+                Emit(Kind::ReadPrefetchJob, trace.copy_id, queue_tick, trace.writer_ticks[0],
+                     trace.writer_ticks[1]);
+            }
+        }
         for (size_t i = first_queued; i < pending_readbacks.size(); ++i) {
             auto& readback = pending_readbacks[i];
             if (!readback.on_readback_queue) {
@@ -1415,6 +2050,7 @@ void BufferCache::PrefetchReadbacks() {
             }
         }
     }
+    return recorded_on_queue || recorded_on_graphics;
 }
 
 void BufferCache::CompleteReadbacks(bool wait) {
@@ -1703,8 +2339,8 @@ void BufferCache::PrefetchStreamSource(VAddr device_addr, u64 size) noexcept {
 
 std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 size,
                                                         bool is_written, bool is_texel_buffer,
-                                                        std::optional<WrittenRange> written,
-                                                        u64 writer_shader) {
+                                                        u64 writer_shader,
+                                                        std::optional<WrittenRange> written) {
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
     if (!is_written && size <= STREAM_THRESHOLD && !HasGpuData(device_addr, size)) {
         const auto& tuning = Common::Perf::GetTuning();
@@ -1805,48 +2441,81 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     const u64 last_block = (device_addr + size - 1) >> block_shift;
     const auto* arena = GetArena(first_block, last_block);
     EnsureResident(arena, first_block, last_block);
-    const bool narrow_write =
+    const bool use_footprint =
         is_written && written.has_value() &&
-        Common::Perf::GetTuning().readback_writer_footprint.load(std::memory_order_relaxed) &&
+        tuning.readback_writer_footprint.load(std::memory_order_relaxed) &&
         written->size != 0 && written->address >= device_addr &&
-        static_cast<u64>(written->address) - device_addr + written->size <= size;
-    if (narrow_write) {
-        const VAddr write_addr = written->address;
-        const u32 write_size = written->size;
-        // Full descriptor stays synchronized for the bind; only the proven subrange is
-        // registered as a GPU write (SetWriteTick / gpu-modified / cross-queue write).
-        SynchronizeMemory(arena, device_addr, size, false, is_texel_buffer);
-        SynchronizeMemory(arena, write_addr, write_size, true, false);
+        static_cast<u64>(written->address) - device_addr + written->size <= size &&
+        (is_texel_buffer || written->size < size);
+    const VAddr write_addr = use_footprint ? written->address : device_addr;
+    const u32 write_size = use_footprint ? written->size : size;
+    if (use_footprint) {
+        // Identical page coverage needs one upload/protection pass. The byte-level
+        // write range below still drives dependency tracking and invalidation.
+        const bool same_pages =
+            !is_texel_buffer && device_addr / BYTES_PER_PAGE == write_addr / BYTES_PER_PAGE &&
+            (device_addr + size - 1) / BYTES_PER_PAGE ==
+                (write_addr + write_size - 1) / BYTES_PER_PAGE;
+        if (same_pages) {
+            SynchronizeMemory(arena, device_addr, size, true, false);
+        } else {
+            SynchronizeMemory(arena, device_addr, size, false, is_texel_buffer);
+            SynchronizeMemory(arena, write_addr, write_size, true, false);
+        }
         if (is_texel_buffer && !OnComputeQueue()) {
             SynchronizeMemoryFromImage(arena, device_addr, size);
         }
         NoteQueueAccess(device_addr, size, false);
         NoteQueueAccess(write_addr, write_size, true);
-        gpu_modified_ranges.Add(write_addr, write_size);
-        memory_tracker->SetWriteTick(write_addr, write_size, Sched().CurrentTick(), active->index);
-        if (FeedbackLink::IsActive()) [[unlikely]] {
-            FeedbackLink::OnWriteTickSample(write_addr, write_size, Sched().CurrentTick(),
-                                            active->index, writer_shader);
-        }
         Common::Perf::Add(Common::Perf::WriterFootprintNarrowed);
     } else {
-        SynchronizeMemory(arena, device_addr, size, is_written, is_texel_buffer);
+        bool synced_from_image = false;
+        if (is_written && tuning.written_sync_fastpath.load(std::memory_order_relaxed) &&
+            memory_tracker->AreWrittenPagesCurrent(device_addr, size)) {
+            Common::Perf::GetFeedbackActivity().written_sync_skips.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            synced_from_image = SynchronizeMemory(arena, device_addr, size, is_written, is_texel_buffer);
+        }
         if (is_texel_buffer && !is_written && !OnComputeQueue()) {
-            SynchronizeMemoryFromImage(arena, device_addr, size);
+            if (tuning.image_sync_once.load(std::memory_order_relaxed)) {
+                // SynchronizeMemory's tail already made this same call with these arguments.
+                // Retain that first conversion, including barriers, and remove only the duplicate.
+                auto& activity = Common::Perf::GetFeedbackActivity();
+                activity.image_sync_queries_skipped.fetch_add(1, std::memory_order_relaxed);
+                if (synced_from_image) {
+                    activity.image_sync_copies_skipped.fetch_add(1, std::memory_order_relaxed);
+                }
+            } else {
+                SynchronizeMemoryFromImage(arena, device_addr, size);
+            }
         }
         // Cross queue dependencies before the write tick of this access is recorded.
         NoteQueueAccess(device_addr, size, is_written);
-        if (is_written) {
-            gpu_modified_ranges.Add(device_addr, size);
-            // The command buffer being recorded writes the range (readback queue waits for it).
-            memory_tracker->SetWriteTick(device_addr, size, Sched().CurrentTick(), active->index);
-            if (FeedbackLink::IsActive()) [[unlikely]] {
-                FeedbackLink::OnWriteTickSample(device_addr, size, Sched().CurrentTick(),
-                                                active->index, writer_shader);
+    }
+    if (is_written) {
+        gpu_modified_ranges.Add(write_addr, write_size);
+        // The command buffer being recorded writes the range (readback queue waits for it).
+        memory_tracker->SetWriteTick(write_addr, write_size, Sched().CurrentTick(), active->index);
+        if (FeedbackLink::IsActive()) [[unlikely]] {
+            FeedbackLink::OnWriteTickSample(write_addr, write_size, Sched().CurrentTick(), active->index, writer_shader);
+        }
+        const auto& trace_tuning = Common::Perf::GetTuning();
+        const std::array targets{trace_tuning.trace_reads_lo.load(std::memory_order_relaxed),
+                                 trace_tuning.trace_writer_word.load(std::memory_order_relaxed)};
+        for (size_t i = 0; i < targets.size(); ++i) {
+            if (targets[i] == 0 || write_size == 0) {
+                continue;
+            }
+            const VAddr block = Common::AlignDown(targets[i], BYTES_PER_WORD);
+            if (write_addr < block + BYTES_PER_WORD &&
+                (write_addr >= block || write_size > block - write_addr)) {
+                feedback_trace_block_writers[i] = {
+                    block, write_addr, write_size, writer_shader, Sched().CurrentTick(),
+                    memory_tracker->CurrentWriteSeq(), active->index};
             }
         }
-    }
-    if (!is_written && memo && have_versions) {
+        NoteFeedbackWrite(write_addr, write_size, writer_shader);
+    } else if (memo && have_versions) {
         // Versions read before the synchronization: a write during it changes them.
         Common::Perf::Add(Common::Perf::SyncMemoMisses);
         *memo = SyncMemo{
@@ -2238,7 +2907,7 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
             job.flush_size = staging.size;
             // The worker writes the staging memory before the submission of these copies.
             Rt().CopyBuffer(staging.buffer, arena, copies);
-            NoteQueueUpload(device_addr, size);
+            NoteQueueUpload(device_addr, size, arena->cpu_addr, copies);
         }
         Sched().RequireBeforeSubmit(upload_worker->Enqueue(std::move(job)));
     } else if (!copies.empty()) {
@@ -2257,7 +2926,7 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
         }
         staging.Flush();
         Rt().CopyBuffer(staging.buffer, arena, copies);
-        NoteQueueUpload(device_addr, size);
+        NoteQueueUpload(device_addr, size, arena->cpu_addr, copies);
     }
     if (is_texel_buffer && !is_written && !OnComputeQueue()) {
         return SynchronizeMemoryFromImage(arena, device_addr, size);
@@ -2265,11 +2934,24 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
     return false;
 }
 
-void BufferCache::NoteQueueUpload(VAddr device_addr, u64 size) {
+void BufferCache::NoteQueueUpload(VAddr device_addr, u64 size, VAddr arena_base,
+                                  std::span<const vk::BufferCopy> copies) {
     // A GPU write of the range: the other queue must be done reading and writing it (the guest
     // changed the data once its own fences told it the GPU was done; those fences are signaled
     // when the commands are translated, before the GPU runs them).
     NoteQueueAccess(device_addr, size, true);
+    NoteFeedbackWrite(device_addr, size, 0, false);
+    const auto& tuning = Common::Perf::GetTuning();
+    if ((tuning.trace_reads_lo.load(std::memory_order_relaxed) != 0 ||
+         tuning.trace_writer_word.load(std::memory_order_relaxed) != 0) &&
+        (feedback_trace_writes < 8192 || Common::PathTrace::ReadbackWaitScopeAuditActive()))
+        [[unlikely]] {
+        // The synchronization request may cover the arena; the diagnostic should
+        // report only the ranges actually uploaded into it.
+        for (const auto& copy : copies) {
+            TraceFeedbackWrite(arena_base + copy.dstOffset, copy.size, 0);
+        }
+    }
 }
 
 void BufferCache::ProbeHostImport(VAddr address) {
@@ -2349,6 +3031,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
         if (*type == TextureCache::MetaType::HTile) {
             static constexpr u32 ZmaskUncompressed = 0xf;
             runtime.FillBuffer(arena, arena->Offset(device_addr), size, ZmaskUncompressed);
+            NoteFeedbackWrite(device_addr, size);
             return true;
         } else {
             LOG_WARNING(Render_Vulkan, "Unhandled metadata type {}", magic_enum::enum_name(*type));
@@ -2391,6 +3074,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
     }
     auto& tile_manager = texture_cache.GetTileManager();
     tile_manager.TileImage(image, buffer_copies, arena, arena_offset);
+    NoteFeedbackWrite(image.info.guest_address, image.info.guest_size);
     return true;
 }
 

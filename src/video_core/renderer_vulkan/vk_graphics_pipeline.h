@@ -106,11 +106,14 @@ public:
     }
 
     /// Gets the attributes and bindings for vertex inputs.
-    template <typename Attribute, typename Binding>
+    template <typename Attribute, typename Binding, bool UseCurrentSharps = false>
     void GetVertexInputs(VertexInputs<Attribute>& attributes, VertexInputs<Binding>& bindings,
                          VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT>& divisors,
                          VertexInputs<AmdGpu::Buffer>& guest_buffers, u32 step_rate_0,
                          u32 step_rate_1) const;
+
+    void ReadVertexInputKey(VertexInputs<u64>& key, VertexInputs<AmdGpu::Buffer>& guest_buffers,
+                            u32 step_rate_0, u32 step_rate_1) const;
 
 private:
     void BuildDescSetLayout(bool preloading);

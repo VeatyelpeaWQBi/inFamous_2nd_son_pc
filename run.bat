@@ -6,6 +6,7 @@ set "MODE=auto"
 set "MENU_OPTION="
 set "DEBUG_OPTION="
 set "BENCHMARK_OPTION="
+set "SUPER_OPTION="
 :parse
 if "%~1"=="" goto launch
 if /I "%~1"=="--no-menu" (
@@ -18,6 +19,10 @@ if /I "%~1"=="--debug" (
 )
 if /I "%~1"=="--benchmark" (
     set "BENCHMARK_OPTION=-Benchmark"
+    goto next
+)
+if /I "%~1"=="--super-pool" (
+    set "SUPER_OPTION=-SuperPool"
     goto next
 )
 if /I "%~1"=="--help" goto help
@@ -33,9 +38,10 @@ exit /b 2
 shift
 goto parse
 :help
-echo Usage: run.bat [720p ^| 900p ^| 1080p ^| 1440p ^| 1800p ^| pro4k] [--no-menu] [--debug] [--benchmark]
+echo Usage: run.bat [720p ^| 900p ^| 1080p ^| 1440p ^| 1800p ^| pro4k] [--no-menu] [--debug] [--benchmark] [--super-pool]
 echo Default: open settings and reuse the saved resolution. Benchmarks: 1080p or pro4k only.
+echo --super-pool: manual test of the compact super-record layout; cannot combine with --benchmark.
 exit /b 0
 :launch
-"%PS%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\launch.ps1" -Mode "%MODE%" %MENU_OPTION% %DEBUG_OPTION% %BENCHMARK_OPTION%
+"%PS%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\launch.ps1" -Mode "%MODE%" %MENU_OPTION% %DEBUG_OPTION% %BENCHMARK_OPTION% %SUPER_OPTION%
 exit /b %errorlevel%

@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#version 450
+#if REDUCE
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#endif
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0, std430) buffer Results { ivec2 tile[]; } results;
+shared int values[256];
+shared int lowest;
+shared int highest;
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+    if (lane == 0) {
+        lowest = 2147483647;
+        highest = -2147483647 - 1;
+    }
+    uint group = gl_WorkGroupID.x;
+    uint bits = (lane + 1u) * 2654435761u ^ group * 2246822519u;
+    bool valid = (group & 7u) != 0u && (bits & 7u) != 0u;
+    values[lane] = int(bits);
+    barrier();
+    int value = values[lane];
+#if REDUCE
+    int lo = subgroupMin(valid ? value : 2147483647);
+    int hi = subgroupMax(valid ? value : -2147483647 - 1);
+    if (subgroupElect()) {
+        atomicMin(lowest, lo);
+        atomicMax(highest, hi);
+    }
+#else
+    if (valid) {
+        atomicMin(lowest, value);
+        atomicMax(highest, value);
+    }
+#endif
+    barrier();
+    if (lane == 0) {
+        results.tile[group] = ivec2(lowest, highest);
+    }
+}

@@ -437,6 +437,29 @@ public:
         return cooled;
     }
 
+    // Exactly the per-region written-range early-out below, lifted before SynchronizeMemory's
+    // upload preparation. Missing regions and out-of-range requests must use the full path.
+    // No token survives this access; readbacks/guest faults are checked again on the next bind.
+    bool AreWrittenPagesCurrent(VAddr cpu_addr, u64 size) noexcept {
+        if (size == 0 || cpu_addr >= MAX_CPU_ADDRESS || size > MAX_CPU_ADDRESS - cpu_addr) {
+            return false;
+        }
+        u64 index = cpu_addr >> HIGHER_PAGE_BITS;
+        u64 offset = cpu_addr & HIGHER_PAGE_MASK;
+        while (size != 0) {
+            const u64 amount = std::min(size, HIGHER_PAGE_SIZE - offset);
+            auto* region = top_tier[index];
+            if (!region || region->template IsRegionModified<Type::CPU>(offset, amount) ||
+                !region->IsRegionFullyGpuModified(offset, amount)) {
+                return false;
+            }
+            ++index;
+            offset = 0;
+            size -= amount;
+        }
+        return true;
+    }
+
     /// Call 'func' for each CPU modified range and unmark those pages as CPU modified.
     /// func(addr, size, keep_gpu_owned) is called with the region locked; the uploaded pages are
     /// no longer GPU owned (write merge) unless func calls keep_gpu_owned(page) for them.

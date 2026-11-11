@@ -69,8 +69,15 @@ void ApplyGameProfile(std::string_view serial) {
     t.skip_redundant_binds.store(true, relaxed);
     t.shader_params_memo.store(true, relaxed);
     t.runtime_lookup_memo.store(serial == "CUSA00309", relaxed);
+    t.command_buffer_sharps.store(false, relaxed);
+    t.compute_barrier_scope.store(false, relaxed);
+    t.readback_feedback_checkpoint.store(false, relaxed);
+    t.readback_feedback_writers.store(false, relaxed);
+    t.readback_word_load.store(false, relaxed);
     t.readback_early_complete.store(false, relaxed);
     t.readback_writer_footprint.store(false, relaxed);
+    t.gds_counter_scope.store(false, relaxed);
+    t.compute_threaded_recording.store(false, relaxed);
     t.skip_empty_draws.store(true, relaxed);
     t.pipeline_key_memo.store(true, relaxed);
     t.bind_prefetch.store(true, relaxed);
@@ -164,6 +171,32 @@ void PollTuning() {
             tuning.skip_redundant_binds.store(value != "0", std::memory_order_relaxed);
         } else if (key == "shader_params_memo") {
             tuning.shader_params_memo.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "compute_barrier_scope") {
+            tuning.compute_barrier_scope.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "readback_feedback_checkpoint") {
+            tuning.readback_feedback_checkpoint.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "readback_feedback_writers") {
+            tuning.readback_feedback_writers.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "readback_word_prefetch") {
+            tuning.readback_word_prefetch.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "readback_word_prefetch_bulk") {
+            tuning.readback_word_prefetch_bulk.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "readback_word_page_cluster") {
+            tuning.readback_word_page_cluster.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "readback_word_load") {
+            tuning.readback_word_load.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "readback_early_complete") {
+            tuning.readback_early_complete.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "readback_writer_footprint") {
+            tuning.readback_writer_footprint.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "gds_counter_scope") {
+            tuning.gds_counter_scope.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "command_buffer_sharps") {
+            tuning.command_buffer_sharps.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "written_sync_fastpath") {
+            tuning.written_sync_fastpath.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "image_sync_once") {
+            tuning.image_sync_once.store(value != "0", std::memory_order_relaxed);
         } else if (key == "runtime_lookup_memo") {
             tuning.runtime_lookup_memo.store(value != "0", std::memory_order_relaxed);
         } else if (key == "skip_empty_draws") {
@@ -211,6 +244,8 @@ void PollTuning() {
             }
             tuning.num_relaxed_sites.store(count, std::memory_order_release);
             tuning.relaxed_all.store(all, std::memory_order_release);
+        } else if (key == "compute_threaded_recording") {
+            tuning.compute_threaded_recording.store(value != "0", std::memory_order_relaxed);
         } else if (key == "asc_queue") {
             tuning.asc_queue.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gpu_profile") {
@@ -235,10 +270,6 @@ void PollTuning() {
             tuning.path_trace.store(value != "0", std::memory_order_relaxed);
         } else if (key == "feedback_link_sample") {
             tuning.feedback_link_sample.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "readback_early_complete") {
-            tuning.readback_early_complete.store(value != "0", std::memory_order_relaxed);
-        } else if (key == "readback_writer_footprint") {
-            tuning.readback_writer_footprint.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gpu_threads_priority") {
             tuning.gpu_threads_priority.store(
                 static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 2)),
@@ -263,6 +294,8 @@ void PollTuning() {
                 std::memory_order_relaxed);
         } else if (key == "profile_stacks") {
             tuning.profile_stacks.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "reg_dump_fast_empty") {
+            tuning.reg_dump_fast_empty.store(value != "0", std::memory_order_relaxed);
         } else if (key == "recorder_spin_us") {
             tuning.recorder_spin_us.store(
                 static_cast<u32>(std::min<u64>(std::strtoull(value.c_str(), nullptr, 10), 5000)),
@@ -288,6 +321,12 @@ void PollTuning() {
             }
             tuning.trace_reads_lo.store(hi > lo ? lo : 0, std::memory_order_relaxed);
             tuning.trace_reads_hi.store(hi > lo ? hi : 0, std::memory_order_relaxed);
+        } else if (key == "trace_writer_word") {
+            char* end{};
+            const u64 word = std::strtoull(value.c_str(), &end, 16);
+            const bool valid = end != value.c_str() && *end == '\0' && word < (1ull << 40) &&
+                               (word & 3) == 0;
+            tuning.trace_writer_word.store(valid ? word : 0, std::memory_order_relaxed);
         } else if (key == "trace_draw") {
             tuning.trace_draw.store(std::strtoull(value.c_str(), nullptr, 16),
                                     std::memory_order_relaxed);
@@ -1093,7 +1132,8 @@ private:
     /// The emulator threads translating the graphics commands (gpu_threads_affinity).
     static bool IsGpuThread(const std::string& name) {
         return name == "shadPS4:GpuCommandProcessor" || name == "shadPS4:GpuCommandRecorder" ||
-               name == "shadPS4:Scout" || name == "shadPS4:GpuUploadWorker";
+               name == "shadPS4:ComputeRecorder" || name == "shadPS4:Scout" ||
+               name == "shadPS4:GpuUploadWorker";
     }
 
     /// Priority of the threads translating the graphics commands from perf_tuning.ini
@@ -1240,7 +1280,8 @@ private:
             }
             const u64 kernel_time = FileTimeTo100ns(kernel);
             const u64 total_time = kernel_time + FileTimeTo100ns(user);
-            if (info.has_baseline && interval_s > 0.0) {
+            const bool has_cpu_sample = info.has_baseline && interval_s > 0.0;
+            if (has_cpu_sample) {
                 // 100 ns units to percent of one core.
                 info.cpu = static_cast<double>(total_time - info.last_total) / (interval_s * 1e5);
                 info.kernel =
@@ -1262,6 +1303,9 @@ private:
             ApplyThreadAffinity(info, tid);
             ApplyThreadPriority(info, tid);
             by_cpu.emplace_back(info.cpu, tid);
+            if (has_cpu_sample) {
+                Core::Benchmark::NoteThreadCpu(info.name, info.cpu, info.kernel, interval_s);
+            }
         }
         std::sort(by_cpu.begin(), by_cpu.end(), std::greater<>{});
 
@@ -1341,6 +1385,46 @@ private:
             ResumeThread(handle);
             if (!has_context) {
                 continue;
+            }
+            if (Common::PathTrace::IsFlipCaller(tid)) {
+                u64 frame_return_hint = 0;
+                u64 label_hint = 0;
+                if (context.Rbp >= context.Rsp && stack_bytes >= 2 * sizeof(u64)) {
+                    const u64 frame_offset = context.Rbp - context.Rsp;
+                    if (frame_offset <= stack_bytes - 2 * sizeof(u64)) {
+                        std::memcpy(&frame_return_hint, copy + frame_offset + sizeof(u64),
+                                    sizeof(u64));
+                        // Match the caller's return, helper RIP and preserved table register.
+                        // The helper saves the caller's RBX at RBP-8. These are diagnostics;
+                        // pointer reads after resume can race and must be checked offline.
+                        if (frame_return_hint >= 0x16961a && frame_offset >= sizeof(u64)) {
+                            const u64 base = frame_return_hint - 0x16961a;
+                            if (context.Rip >= base + 0x53b340 &&
+                                context.Rip <= base + 0x53b34e &&
+                                context.R15 == base + 0xe17e80) {
+                                u64 object = 0;
+                                u64 table = 0;
+                                s32 index = -1;
+                                std::memcpy(&object, copy + frame_offset - sizeof(u64),
+                                            sizeof(u64));
+                                if (object && object < GuestAddressEnd &&
+                                    ReadProcessMemory(GetCurrentProcess(),
+                                                      reinterpret_cast<void*>(context.R15),
+                                                      &table, sizeof(table), nullptr) &&
+                                    ReadProcessMemory(GetCurrentProcess(),
+                                                      reinterpret_cast<void*>(object + 0x1b8c),
+                                                      &index, sizeof(index), nullptr) &&
+                                    table && table < GuestAddressEnd && index >= 0 && index < 4096) {
+                                    label_hint = table + static_cast<u64>(index) * 8;
+                                }
+                            }
+                        }
+                    }
+                }
+                Common::PathTrace::EmitFlipCallerSample(tid, context.Rip, frame_return_hint,
+                                                        label_hint,
+                                                        label_hint ? static_cast<u32>(context.R14)
+                                                                   : 0);
             }
             const u64* const stack = reinterpret_cast<const u64*>(copy);
 

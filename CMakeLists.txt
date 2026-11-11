@@ -2,6 +2,10 @@
 cmake_minimum_required(VERSION 3.30)
 project(inFamous_2nd_son_pc LANGUAGES NONE)
 option(IFSS_BUILD_ENGINE "Build this project Windows runtime" ON)
+option(IFSS_RENDERER_INLINE_CANDIDATE "Experimental full inlining in three renderer units" OFF)
+set(IFSS_RENDERER_PGO "Off" CACHE STRING "Renderer profile-guided optimization: Off, Train or Use")
+set_property(CACHE IFSS_RENDERER_PGO PROPERTY STRINGS Off Train Use)
+set(IFSS_RENDERER_PGO_DATA "" CACHE FILEPATH "Indexed LLVM profile for the renderer candidate")
 if(NOT IFSS_BUILD_ENGINE)
     message(STATUS "Engine build explicitly disabled by IFSS_BUILD_ENGINE=OFF.")
     return()
@@ -68,6 +72,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND MSVC)
 endif()
 if(TARGET shadps4)
     target_sources(shadps4 PRIVATE
+        src/shader_recompiler/gds_counter_plan.cpp src/shader_recompiler/gds_counter_plan.h
         src/core/second_son_controls.cpp src/core/second_son_controls.h
         src/core/second_son_cheats.cpp src/core/second_son_cheats.h
         src/core/second_son_cheat_menu.cpp src/core/second_son_compatibility.h
@@ -84,6 +89,22 @@ if(TARGET shadps4)
         message(FATAL_ERROR "The project game icon is missing.")
     endif()
     target_compile_definitions(shadps4 PRIVATE IFSS_GAME_ICON_PATH="${IFSS_GAME_ICON_PATH}")
+    if(IFSS_RENDERER_INLINE_CANDIDATE)
+        if(NOT MSVC OR NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            message(FATAL_ERROR "The renderer inlining candidate requires the existing clang-cl toolchain")
+        endif()
+        # Keep debug information and all numeric/renderer policies. Only lift /Ob1's
+        # explicit-inline restriction in the measured CPU preparation units.
+        set_property(SOURCE
+            src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+            src/video_core/renderer_vulkan/vk_rasterizer.cpp
+            src/video_core/buffer_cache/buffer_cache.cpp
+            TARGET_DIRECTORY shadps4 APPEND PROPERTY COMPILE_OPTIONS
+            "$<$<CONFIG:RelWithDebInfo>:/Ob2>")
+    endif()
+    if(NOT IFSS_RENDERER_PGO STREQUAL "Off")
+        include(cmake/RendererPgo.cmake)
+    endif()
     # Optional collection control from the installed VTune SDK; no runtime is copied.
     set(IFSS_ITT_SDK_ROOT "" CACHE PATH "Existing VTune SDK for diagnostic collection control")
     if(IFSS_ITT_SDK_ROOT)
@@ -112,6 +133,14 @@ if(TARGET shadps4)
     endforeach()
 endif()
 
+# Offline VTune report compatibility. Uses only Windows SDK libraries; no profiler injection
+# into the game, downloaded dependency, or change to collected hardware events.
+if(WIN32)
+    add_executable(ifss_vtune_report_guard tests/bootstrap/vtune_report_probe.cpp)
+    target_compile_features(ifss_vtune_report_guard PRIVATE cxx_std_20)
+    target_link_libraries(ifss_vtune_report_guard PRIVATE dbghelp bcrypt)
+endif()
+
 # Small native regression using existing engine dependencies; no test framework download.
 add_executable(ifss_log_sink_test EXCLUDE_FROM_ALL tests/test_log_file_sink.cpp)
 target_compile_features(ifss_log_sink_test PRIVATE cxx_std_23)
@@ -128,16 +157,43 @@ add_executable(ifss_readback_dependencies_test EXCLUDE_FROM_ALL tests/test_readb
 target_compile_features(ifss_readback_dependencies_test PRIVATE cxx_std_23)
 target_include_directories(ifss_readback_dependencies_test PRIVATE src)
 
+add_executable(ifss_feedback_policy_test EXCLUDE_FROM_ALL tests/cache_runtime/test_feedback_policy.cpp)
+target_compile_features(ifss_feedback_policy_test PRIVATE cxx_std_23)
+target_include_directories(ifss_feedback_policy_test PRIVATE src)
+
+add_executable(ifss_gds_counter_plan_test EXCLUDE_FROM_ALL
+    tests/cache_runtime/test_gds_counter_plan.cpp src/shader_recompiler/gds_counter_plan.cpp)
+target_compile_features(ifss_gds_counter_plan_test PRIVATE cxx_std_23)
+target_include_directories(ifss_gds_counter_plan_test PRIVATE src
+    "${IFSS_EXTERNALS_ROOT}/sirit/externals/SPIRV-Headers/include")
+
+add_executable(ifss_gpu_full_word_summary_test EXCLUDE_FROM_ALL
+    tests/cache_runtime/test_gpu_full_word_summary.cpp)
+target_compile_features(ifss_gpu_full_word_summary_test PRIVATE cxx_std_23)
+target_include_directories(ifss_gpu_full_word_summary_test PRIVATE src)
+
 add_executable(ifss_writer_footprint_test EXCLUDE_FROM_ALL tests/test_writer_footprint.cpp)
 target_compile_features(ifss_writer_footprint_test PRIVATE cxx_std_23)
 target_include_directories(ifss_writer_footprint_test PRIVATE src)
 
 # V2 scheduling/bounds policies: no device, framework or new dependency.
+add_executable(ifss_access_union_test EXCLUDE_FROM_ALL tests/cache_runtime/test_access_union.cpp)
+target_compile_features(ifss_access_union_test PRIVATE cxx_std_23)
+target_include_directories(ifss_access_union_test PRIVATE src)
+add_executable(ifss_buffer_access_test EXCLUDE_FROM_ALL tests/cache_runtime/test_buffer_access.cpp)
+target_compile_features(ifss_buffer_access_test PRIVATE cxx_std_23)
+target_include_directories(ifss_buffer_access_test PRIVATE src)
+
 add_executable(ifss_optimization_v2_test EXCLUDE_FROM_ALL tests/test_optimization_v2.cpp)
 target_compile_features(ifss_optimization_v2_test PRIVATE cxx_std_23)
 target_include_directories(ifss_optimization_v2_test PRIVATE src)
 
 # Diagnostic transport ordering/full/drop tests. Not part of the default engine build.
+# Reuse the existing shared-readiness concurrency oracle; not part of the game build.
+add_executable(ifss_compile_readiness_test EXCLUDE_FROM_ALL tests/cache_runtime/test_compile_readiness.cpp)
+target_compile_features(ifss_compile_readiness_test PRIVATE cxx_std_23)
+target_include_directories(ifss_compile_readiness_test PRIVATE src)
+
 add_executable(ifss_path_trace_queue_test EXCLUDE_FROM_ALL tests/test_path_trace_queue.cpp)
 target_compile_features(ifss_path_trace_queue_test PRIVATE cxx_std_23)
 target_include_directories(ifss_path_trace_queue_test PRIVATE src)
@@ -147,3 +203,22 @@ add_executable(ifss_second_son_controls_test EXCLUDE_FROM_ALL tests/test_second_
 target_compile_features(ifss_second_son_controls_test PRIVATE cxx_std_23)
 target_include_directories(ifss_second_son_controls_test PRIVATE src)
 target_link_libraries(ifss_second_son_controls_test PRIVATE SDL3::Headers)
+
+# Command-local descriptor reuse, real guest decode logic; no GPU/game.
+add_executable(ifss_command_buffer_sharps_test EXCLUDE_FROM_ALL tests/cache_runtime/test_command_buffer_sharps.cpp)
+target_compile_features(ifss_command_buffer_sharps_test PRIVATE cxx_std_23)
+target_include_directories(ifss_command_buffer_sharps_test PRIVATE src)
+target_link_libraries(ifss_command_buffer_sharps_test PRIVATE Boost::headers fmt::fmt magic_enum::magic_enum)
+
+# Pure policy regression and optional headless GPU validation with the installed SDK loader.
+add_executable(ifss_compute_barrier_policy_test EXCLUDE_FROM_ALL tests/cache_runtime/test_compute_barrier_policy.cpp)
+target_compile_features(ifss_compute_barrier_policy_test PRIVATE cxx_std_23)
+target_include_directories(ifss_compute_barrier_policy_test PRIVATE src)
+target_link_libraries(ifss_compute_barrier_policy_test PRIVATE Vulkan::Headers fmt::fmt)
+find_library(IFSS_INSTALLED_VULKAN_LOADER NAMES vulkan-1 HINTS "$ENV{VULKAN_SDK}/Lib")
+if(IFSS_INSTALLED_VULKAN_LOADER)
+    add_executable(ifss_compute_barrier_micro EXCLUDE_FROM_ALL tests/cache_runtime/compute_barrier_micro.cpp)
+    target_compile_features(ifss_compute_barrier_micro PRIVATE cxx_std_23)
+    target_include_directories(ifss_compute_barrier_micro PRIVATE src)
+    target_link_libraries(ifss_compute_barrier_micro PRIVATE Vulkan::Headers "${IFSS_INSTALLED_VULKAN_LOADER}")
+endif()

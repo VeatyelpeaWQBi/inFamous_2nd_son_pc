@@ -28,4 +28,9 @@ void Poll(Input::GameController& controller);
 // One cheap timestamp per guest frame, buffered CSV output in explicit test mode only.
 void OnFlip();
 void NoteNativeCompute(bool graphics);
+void NoteComputeRecorderSubmit();
+// Reuses the existing sampler's GetThreadTimes deltas; 100% means one logical processor.
+void NoteThreadCpu(std::string_view name, double cpu, double kernel, double interval_seconds);
+void NoteGdsCounterScope(bool reduced_conflict);
+void NoteGdsCounterBarrierAvoided();
 } // namespace Core::Benchmark

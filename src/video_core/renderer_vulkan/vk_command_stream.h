@@ -71,6 +71,17 @@ public:
         return num_commands;
     }
 
+    /// Diagnostic only, called immediately before appending one direct draw.
+    u32 NoteDirectDraw(bool indexed, u32 instance_count, u32 first_instance) noexcept {
+        const bool continues = draw_run.length != 0 && num_commands == draw_run.end &&
+                               indexed == draw_run.indexed &&
+                               instance_count == draw_run.instance_count &&
+                               first_instance == draw_run.first_instance;
+        draw_run = {num_commands + 1, continues ? draw_run.length + 1 : 1, instance_count,
+                    first_instance, indexed};
+        return draw_run.length;
+    }
+
     /// Replays the commands on the command buffer, then forgets them (the memory is kept).
     void Execute(vk::CommandBuffer cmdbuf) {
         for (CommandBase* command = first; command != nullptr;) {
@@ -145,6 +156,7 @@ private:
         block_index = 0;
         block_offset = 0;
         large_blocks.clear();
+        draw_run = {};
     }
 
     std::vector<std::unique_ptr<std::byte[]>> blocks;
@@ -154,6 +166,13 @@ private:
     CommandBase* first{};
     CommandBase* last{};
     size_t num_commands{};
+    struct {
+        size_t end{};
+        u32 length{};
+        u32 instance_count{};
+        u32 first_instance{};
+        bool indexed{};
+    } draw_run;
 };
 
 } // namespace Vulkan

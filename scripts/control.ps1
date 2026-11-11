@@ -1,7 +1,7 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][ValidateSet('status','screenshot','capture','nsight','nsight-stop','vtune-detach','quit','button','axis')][string]$Action,
+param([Parameter(Mandatory)][ValidateSet('status','screenshot','capture','nsight','nsight-stop','vtune-detach','karma-fill','trace-start','quit','button','axis')][string]$Action,
       [ValidateSet('cross','circle','options','up','down','left','right','square','triangle')][string]$Button='cross',
-      [ValidateRange(50,2000)][int]$DurationMs=200,[ValidateRange(0,3)][int]$Axis=2,
+      [ValidateRange(50,2000)][int]$DurationMs=200,[ValidateRange(0,120)][int]$MinimumFrames=0,[ValidateRange(0,3)][int]$Axis=2,
       [ValidateRange(0,255)][int]$Value=128,[string]$Session)
 $ErrorActionPreference='Stop'
 # Reuse helpers already loaded by the automation caller.
@@ -23,6 +23,7 @@ try{
     if(Test-Path -LiteralPath $path){$sequence=1+[long](Read-JsonUtf8 $path).sequence}
     $command=[ordered]@{sequence=$sequence;action=$Action}
     if($Action -eq 'button'){$command.button=$Button;$command.duration_ms=$DurationMs}
+    if($Action -eq 'button' -and $MinimumFrames -gt 0){$command.minimum_frames=$MinimumFrames}
     if($Action -eq 'axis'){$command.axis=$Axis;$command.value=$Value}
     # Publish an immutable FIFO entry before updating the latest-command summary.
     # Fast producers must never overwrite an unapplied screenshot/input request.

@@ -31,6 +31,7 @@ namespace Vulkan {
 
 class Instance;
 class CommandRecorder;
+u64 VertexInputKeyHits() noexcept;
 
 struct RenderAttachment {
     vk::ImageView image_view;
@@ -230,6 +231,8 @@ struct DynamicState {
         u32 num_vertex_attributes{};
         std::array<vk::VertexInputBindingDescription2EXT, MaxVertexInputs> vertex_bindings{};
         std::array<vk::VertexInputAttributeDescription2EXT, MaxVertexInputs> vertex_attributes{};
+        u32 num_vertex_key_words{~0U};
+        std::array<u64, MaxVertexInputs> vertex_key{};
 
         void Forget() noexcept {
             pipelines = {};
@@ -263,6 +266,9 @@ struct DynamicState {
         /// pushed last with the same layout and the same writes, skipping on).
         bool SkipDescriptors(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout, u32 set,
                              std::span<const vk::WriteDescriptorSet> writes) noexcept;
+
+        bool SkipVertexInputKey(std::span<const u64> key) const noexcept;
+        void RememberVertexInputKey(std::span<const u64> key) noexcept;
 
         /// Notes a vertex input set; true when it can be left out (same as the last one, with the
         /// same graphics pipeline bound since, skipping on).
@@ -608,10 +614,14 @@ public:
     }
 
     /// gpu_profile = 2: GPU timestamps around a compute dispatch, counted for its shader.
-    void ProfileDispatchBegin(u64 shader_hash);
+    void ProfileDispatchBegin(u64 shader_hash, std::array<u32, 3> groups = {});
     void ProfileDispatchEnd();
+    // Bounded diagnostic only: joins a precise demand copy to its GPU clock interval.
+    // The copy ID is zero unless the explicit path trace is recording.
+    bool ProfileReadbackBegin(u64 copy_id);
     void ProfileDrawBegin(u64 shader_hash);
     void ProfileDrawEnd();
+    void ProfileCountDraw();
 
     /// gpu_profile: reads the timestamps of the submissions the GPU has finished (command
     /// processor thread, once per guest frame).
@@ -660,6 +670,10 @@ public:
     static std::mutex submit_mutex;
 
 private:
+    friend class CommandRecorder;
+    void AuditDirectDraw(CommandStream* stream, bool indexed, u32 instance_count,
+                         u32 first_instance) noexcept;
+
     void EndSession();
 
     void SubmitExecution(SubmitInfo& info);
@@ -751,6 +765,17 @@ private:
     std::jthread recorder_thread;
     std::atomic<u64> submit_dependency{}; ///< See RequireBeforeSubmit.
     std::atomic<u64> submitted_tick{};    ///< See SubmittedTick.
+
+    bool draw_batch_audit{};
+    struct {
+        u64 begin{};
+        u32 count{};
+        u32 direct{};
+        u32 indexed{};
+        u32 adjacent_indexed{};
+        u32 adjacent_nonindexed{};
+        u32 longest{};
+    } draw_batch;
 
     /// gpu_profile state (vk_scheduler.cpp), created when first enabled.
     struct GpuProfile;
@@ -920,14 +945,14 @@ public:
     }
 
     void draw(u32 vertex_count, u32 instance_count, u32 first_vertex, u32 first_instance) const {
-        Record([=](vk::CommandBuffer c) {
+        RecordDirectDraw(false, instance_count, first_instance, [=](vk::CommandBuffer c) {
             c.draw(vertex_count, instance_count, first_vertex, first_instance);
         });
     }
 
     void drawIndexed(u32 index_count, u32 instance_count, u32 first_index, s32 vertex_offset,
                      u32 first_instance) const {
-        Record([=](vk::CommandBuffer c) {
+        RecordDirectDraw(true, instance_count, first_instance, [=](vk::CommandBuffer c) {
             c.drawIndexed(index_count, instance_count, first_index, vertex_offset, first_instance);
         });
     }
@@ -1250,6 +1275,23 @@ public:
     }
 
 private:
+    template <typename Func>
+    void RecordDirectDraw(bool indexed, u32 instance_count, u32 first_instance, Func&& func) const {
+        const bool audit = scheduler && scheduler->draw_batch_audit;
+        if (const vk::CommandBuffer cmdbuf = Direct()) {
+            if (audit) [[unlikely]] {
+                scheduler->AuditDirectDraw(nullptr, indexed, instance_count, first_instance);
+            }
+            func(cmdbuf);
+        } else {
+            auto& stream = scheduler->Stream();
+            if (audit) [[unlikely]] {
+                scheduler->AuditDirectDraw(&stream, indexed, instance_count, first_instance);
+            }
+            stream.Record(std::forward<Func>(func));
+        }
+    }
+
     /// The command buffer to record in now, or null to record into the stream.
     [[nodiscard]] vk::CommandBuffer Direct() const noexcept {
         return scheduler ? scheduler->DirectCommandBuffer() : fixed;

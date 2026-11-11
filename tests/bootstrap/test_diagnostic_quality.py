@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -25,6 +26,65 @@ class DiagnosticQualityTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value, encoding="utf-8")
         return path
+
+    def test_super_cpu_reports_exclude_cold_attempts(self):
+        window = {"cycle": 8, "release_sequence": 80,
+                  "window_started": "2026-01-01T00:00:05Z", "window_finished": "2026-01-01T00:01:05Z"}
+        state = {**window, "super_qualified_windows": [window], "super_excluded_cycles": [1, 2, 3]}
+        filled = {"observed_unix_ms": (self.start + 5) * 1000,
+                  "shader_compile_starts": 10, "pipeline_compile_starts": 20}
+        after = {**filled, "observed_unix_ms": (self.start + 65) * 1000}
+        accepted = {"cycle": 8, "kind": "measurement", "status": "collected", "warm": True,
+                    "meter_consumed": True, "recovery": {"completed": True}, "release": {"sequence": 80},
+                    "filled": filled, "after": after}
+        cold = {"cycle": 3, "kind": "warmup", "status": "warmup-new-compilation"}
+        cycles = self.write("super-rounds.json", json.dumps([cold, accepted]))
+        scope = {**window, "target_pid": 42, "collection_start_utc": "2026-01-01T00:00:00Z",
+                 "begin_seconds": 6, "end_seconds": 64}
+        self.write("diagnostics/vtune-super-cycle-8-hotspots.json", json.dumps(scope))
+        self.write("diagnostics/vtune-super-cycle-8-hotspots.csv", "PID,Function,CPU Time,Module\n42,work,1.5,module\n")
+        plan = {"super_capture": {"rounds": 1}}
+        result = quality.super_round_quality(self.root, state, plan, 42)
+        self.assertEqual(result["qualified_rounds"], 1)
+        self.assertEqual(result["excluded_cycles"], [1, 2, 3])
+        accepted["after"]["pipeline_compile_starts"] += 1
+        cycles.write_text(json.dumps([cold, accepted]), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "new compilation"):
+            quality.super_round_quality(self.root, state, plan, 42)
+        accepted["warm"] = False
+        cycles.write_text(json.dumps([cold, accepted]), encoding="utf-8")
+        plan["super_capture"]["warmup_policy"] = "reuse-existing-cache"
+        result = quality.super_round_quality(self.root, state, plan, 42)
+        self.assertEqual(result["captured_rounds"], 1)
+        self.assertEqual(result["qualified_rounds"], 0)
+        self.assertFalse(result["all_rounds_warm"])
+        self.assertFalse(result["per_round_cpu_reports"][0]["warm"])
+        del plan["super_capture"]["warmup_policy"]
+        accepted["warm"] = True
+        accepted["after"]["pipeline_compile_starts"] -= 1
+        cycles.write_text(json.dumps([cold, accepted]), encoding="utf-8")
+        scope["begin_seconds"] = 0
+        self.write("diagnostics/vtune-super-cycle-8-hotspots.json", json.dumps(scope))
+        with self.assertRaisesRegex(ValueError, "time filter"):
+            quality.super_round_quality(self.root, state, plan, 42)
+
+    def test_optional_sensor_failure_is_disclosed_without_failing_required_outputs(self):
+        self.write("diagnostics/status.json", json.dumps({
+            "window_started": "2026-01-01T00:00:05Z", "window_finished": "2026-01-01T00:01:05Z"}))
+        plan = {"gpu_capture_backend": "engine", "collectors": {"sensors_optional": True},
+                "tools": [{"name": "nvidia_smi", "available": True}]}
+        self.write("diagnostics/plan.json", json.dumps(plan))
+        self.write("launch.json", json.dumps({"pid": 42, "prepared_at": "2026-01-01T08:00:00+08:00"}))
+        with mock.patch.multiple(quality, wpr_full_quality=lambda *a: {}, frame_quality=lambda *a: {},
+                                 symbols_quality=lambda *a: {}, vtune_quality=lambda *a: {}):
+            with mock.patch.object(quality, "sensor_quality", side_effect=ValueError("sampling gap")):
+                result = quality.inspect(self.root, ROOT)
+                self.assertTrue(result["complete"])
+                self.assertFalse(result["checks"]["sensors"]["validated"])
+                self.assertTrue(any("Optional telemetry incomplete" in s for s in result["limitations"]))
+                plan["collectors"]["sensors_optional"] = False
+                self.write("diagnostics/plan.json", json.dumps(plan))
+                self.assertFalse(quality.inspect(self.root, ROOT)["complete"])
 
     def test_detach_receipt_cannot_mask_failed_collector(self):
         receipt = {"sequence": 42, "action": "vtune-detach", "accepted": True,
@@ -224,6 +284,17 @@ class DiagnosticQualityTest(unittest.TestCase):
     def test_vtune_calibration_and_bounds(self):
         self.vtune()
         self.assertEqual(quality.vtune_quality(self.root, self.start + 5, self.start + 65)["peak_gbps"], 55)
+
+    def test_software_vtune_has_explicit_scope_and_preserves_hardware_checks(self):
+        self.vtune()
+        self.write("vtune-errors.log", "Collection started.")
+        self.write("vtune/config/context_values.cfg", '<bag><contextValue id="runss:enable" boolean:value="true"/></bag>')
+        self.write("vtune/config/runss.options", "--type=cpu:stack\n--interval=10\n")
+        result = quality.vtune_quality(self.root, self.start + 5, self.start + 65, "vtune-software")
+        self.assertFalse(result["cpu_hardware_memory_metrics_available"])
+        self.assertFalse(result["calibration_requested"])
+        with self.assertRaisesRegex(ValueError, "measurement"):
+            quality.vtune_quality(self.root, self.start + 5, self.start + 65, "vtune-hardware")
 
     def test_vtune_reject_uncalibrated_or_bad_scale(self):
         self.vtune()

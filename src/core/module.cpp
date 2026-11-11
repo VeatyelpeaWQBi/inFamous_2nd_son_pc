@@ -141,7 +141,9 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
     // Partition the existing arena for CPU, controls and cheat patches.
     RegisterPatchModule(*out_addr, aligned_base_size, trampoline_addr,
                         TrampolineSize - SecondSon::ControlsTrampolineSize -
-                            SecondSon::Cheats::TrampolineSize);
+                            SecondSon::Cheats::TrampolineSize -
+                            SecondSon::ParticlePollTrampolineSize -
+                            SecondSon::FeedbackArenaTrampolineSize);
 #endif
 
     LOG_INFO(Core_Linker, "======== Load Module to Memory ========");
@@ -370,6 +372,19 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
                                         SecondSon::ControlsTrampolineSize -
                                         SecondSon::Cheats::TrampolineSize),
                 SecondSon::Cheats::TrampolineSize);
+            SecondSon::InstallParticlePollPause(
+                base_virtual_addr, base_size,
+                reinterpret_cast<void*>(base_virtual_addr + aligned_base_size + TrampolineSize -
+                                        SecondSon::ControlsTrampolineSize -
+                                        SecondSon::Cheats::TrampolineSize -
+                                        SecondSon::ParticlePollTrampolineSize));
+            SecondSon::InstallFeedbackArena(
+                base_virtual_addr, base_size,
+                reinterpret_cast<void*>(base_virtual_addr + aligned_base_size + TrampolineSize -
+                                        SecondSon::ControlsTrampolineSize -
+                                        SecondSon::Cheats::TrampolineSize -
+                                        SecondSon::ParticlePollTrampolineSize -
+                                        SecondSon::FeedbackArenaTrampolineSize));
 #endif
         }
     }

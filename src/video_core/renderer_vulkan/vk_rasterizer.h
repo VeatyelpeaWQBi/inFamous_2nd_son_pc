@@ -167,6 +167,22 @@ public:
     void DispatchDirect();
     void DispatchIndirect(VAddr address, u32 offset, u32 size);
 
+    // Diagnostic CPU wall times, local to one CP resume slice. No GPU timing or frame ID.
+    struct AscDispatchBudget {
+        std::array<u64, 4> phases{}; // prepare, resources, record, retire
+        u64 buffers_ns{}, textures_ns{}, calls{};
+        std::array<u64, 4> buffer_detail{}; // obtain, image invalidation, hazard query, full bind
+        u64 sampled_calls{};
+    };
+    void BeginAscDispatchBudget() noexcept {
+        asc_dispatch_budget = {};
+        trace_asc_dispatch = true;
+    }
+    [[nodiscard]] AscDispatchBudget EndAscDispatchBudget() noexcept {
+        trace_asc_dispatch = false;
+        return asc_dispatch_budget;
+    }
+
     /// The command processor translates the commands of one of the guest's asynchronous compute
     /// queues (asc_queue: their dispatches, copies and fills run on the compute queue).
     void SetAsyncCompute(bool active) noexcept {
@@ -226,6 +242,7 @@ public:
     void OnGpuThreadWrite(VAddr addr, u64 size);
     /// guest_rip: the faulting instruction of a guest read (readback_relaxed_sites), 0 if none.
     bool ReadMemory(VAddr addr, u64 size, bool assume_locks = false, u64 guest_rip = 0);
+    bool ReadFaultWord(VAddr addr, u32& value);
     bool IsMapped(VAddr addr, u64 size);
     void MapMemory(VAddr addr, u64 size);
     void RegisterMemory(VAddr addr, u64 size);
@@ -274,12 +291,12 @@ private:
     void TraceShaderResources(const Shader::Info& stage);
     void TraceBufferWriters(const Shader::Info& stage);
     void BindBuffers(const Shader::Info& stage, Shader::Backend::Bindings& binding,
-                     Shader::PushData& push_data);
+                     Shader::PushData& push_data, const CommandBufferSharps* sharps = nullptr);
     /// Finish immutable table uploads after vertex/index preparation, immediately before
     /// recording descriptors. This prevents a later ring wrap from overwriting reused data.
     void FinalizeFlatbufUploads();
     void BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding);
-    bool BindResources(const Pipeline* pipeline);
+    bool BindResources(const Pipeline* pipeline, const CommandBufferSharps* sharps = nullptr);
 
     /// Tuning::bind_prefetch: prefetches the memo entries the bindings of a draw read first,
     /// from its scout entry (the current draw if not done yet, and the next one), and the
@@ -302,7 +319,7 @@ private:
     void BindVertexBuffers(const GraphicsPipeline* pipeline);
     void BindIndexBuffer(u32 index_offset = 0);
 
-    void ResetBindings(bool is_compute);
+    void ResetBindings(bool is_compute, u64 compute_hash = 0);
 
     bool IsComputeMetaClear(const Pipeline* pipeline);
     bool IsComputeImageCopy(const Pipeline* pipeline);
@@ -310,6 +327,51 @@ private:
 
 private:
     friend class VideoCore::BufferCache;
+
+    template <int AuditPhase>
+    void DrawImpl(bool is_indexed, u32 index_offset, u64 ordinal);
+    bool draw_prep_audit_requested{};
+    bool draw_prep_cap_reported{};
+    u64 draw_prep_ordinal{}, draw_prep_samples{};
+
+    class DispatchBudgetScope {
+    public:
+        explicit DispatchBudgetScope(Rasterizer& rasterizer) noexcept
+            : owner{rasterizer},
+              budget{rasterizer.trace_asc_dispatch ? &rasterizer.asc_dispatch_budget : nullptr} {
+            if (budget) {
+                last = Common::Perf::NowNs();
+                ++budget->calls;
+                owner.trace_buffer_detail =
+                    ((++owner.trace_dispatch_ordinal * 0x9E3779B97F4A7C15ULL) >> 60) == 0;
+                if (owner.trace_buffer_detail) ++budget->sampled_calls;
+            }
+        }
+        ~DispatchBudgetScope() {
+            Finish();
+            owner.trace_buffer_detail = false;
+        }
+        void Next() noexcept {
+            Finish();
+            ++phase;
+        }
+    private:
+        void Finish() noexcept {
+            if (budget) {
+                const u64 end = Common::Perf::NowNs();
+                budget->phases[phase] += end - last;
+                last = end;
+            }
+        }
+        Rasterizer& owner;
+        AscDispatchBudget* budget{};
+        u64 last{};
+        u32 phase{};
+    };
+    AscDispatchBudget asc_dispatch_budget{};
+    bool trace_asc_dispatch{};
+    bool trace_buffer_detail{};
+    u64 trace_dispatch_ordinal{};
 
     /// asc_queue: whether the compute queue can run this dispatch (buffers only, push
     /// descriptors), with the compute queue objects created at first use.
@@ -375,6 +437,7 @@ private:
     PipelineCache pipeline_cache;
     const bool host_markers_enabled;
     const bool guest_markers_enabled;
+    bool vertex_input_key_requested{};
 
     struct Probe {
         u32 frame;
@@ -450,6 +513,8 @@ private:
         VAddr address{}; ///< Guest address (frame x-ray), 0 for emulator buffers.
     };
     boost::container::static_vector<BoundBuffer, Shader::NUM_BUFFERS> bound_buffers;
+    struct DispatchPairCensus;
+    std::unique_ptr<DispatchPairCensus> dispatch_pair_census;
 
     u32 set_write_index{};
     Pipeline::DescriptorWrites set_writes;
@@ -511,6 +576,7 @@ private:
     const GraphicsPipeline* last_draw_pipeline{};
     vk::ImageAspectFlags attachment_feedback_loop{};
     bool needs_barrier{};
+    bool gds_broad_conflict{}; // This command only; diagnostics distinguish hits from saved barriers.
     struct SkippedWrite {
         VAddr start;
         VAddr end;

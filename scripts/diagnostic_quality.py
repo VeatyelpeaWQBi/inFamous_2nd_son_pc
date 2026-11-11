@@ -97,16 +97,16 @@ def wpr_gameplay_quality(directory, state, target_pid):
 
 def wpr_full_quality(directory, state, target_pid, begin, end, cpu_backend=None):
     result = wpr_quality((directory / "wpr-statistics.txt").read_text(encoding="utf-8-sig"),
-                         begin, end, require_cpu_samples=cpu_backend != "vtune-hardware")
-    if cpu_backend != "vtune-hardware":
+                         begin, end, require_cpu_samples=cpu_backend not in ("vtune-hardware", "vtune-software"))
+    if cpu_backend not in ("vtune-hardware", "vtune-software"):
         result.update(wpr_gameplay_quality(directory, state, target_pid))
     else:
         result["scope"] = "GPU, scheduling, wait stacks, memory and I/O; CPU instruction sampling belongs to VTune"
     return result
 
 
-def vtune_gameplay_cpu_quality(directory, state, target_pid):
-    scope = load(directory / "vtune-gameplay-hotspots.json")
+def vtune_gameplay_cpu_quality(directory, state, target_pid, stem="vtune-gameplay-hotspots", cpu_backend=None):
+    scope = load(directory / (stem + ".json"))
     if (scope.get("target_pid") != target_pid or
             any(scope.get(key) != state[key] for key in ("window_started", "window_finished"))):
         raise ValueError("VTune CPU: stale gameplay report")
@@ -117,7 +117,7 @@ def vtune_gameplay_cpu_quality(directory, state, target_pid):
     if (not all(math.isfinite(value) for value in (begin, end)) or end <= begin or
             abs(begin - expected_begin) > .001 or abs(end - expected_end) > .001):
         raise ValueError("VTune CPU: gameplay time filter does not match the recorded window")
-    rows = table_rows(directory / "vtune-gameplay-hotspots.csv")
+    rows = table_rows(directory / (stem + ".csv"))
     header = next(rows)
     required = ("PID", "Function", "CPU Time", "Module")
     if any(key not in header for key in required):
@@ -136,10 +136,43 @@ def vtune_gameplay_cpu_quality(directory, state, target_pid):
             cpu_time += value
     if not count or cpu_time <= 0:
         raise ValueError("VTune CPU: no target CPU samples inside the gameplay window")
-    return {"source": "VTune hardware event-based sampling", "target_pid": target_pid,
+    source = "VTune user-mode software sampling" if cpu_backend == "vtune-software" else "VTune hardware event-based sampling"
+    return {"source": source, "target_pid": target_pid,
             "positive_hotspot_rows": count, "sampled_cpu_seconds": cpu_time,
             "report_window_seconds": end - begin, "utc_correlation_uncertainty_seconds": 1,
             "wpr_timer_sampling_available": False}
+
+
+def super_round_quality(session, state, plan, target_pid):
+    reuse = plan["super_capture"].get("warmup_policy") == "reuse-existing-cache"
+    cycles = load(session / "super-rounds.json")
+    accepted = [c for c in cycles if c["kind"] == "measurement" and c["status"] == "collected"]
+    windows = state.get("super_qualified_windows", [])
+    if len(accepted) != plan["super_capture"]["rounds"] or len(windows) != len(accepted):
+        raise ValueError("Super: incomplete qualified intervals")
+    reports = []
+    for cycle, window in zip(accepted, windows):
+        if ((not reuse and not cycle["warm"]) or not cycle["meter_consumed"] or not cycle["recovery"]["completed"] or
+                cycle["cycle"] != window["cycle"] or cycle["release"]["sequence"] != window["release_sequence"]):
+            raise ValueError("Super: unqualified or mismatched interval")
+        for key in ("shader_compile_starts", "pipeline_compile_starts"):
+            first, last = int(cycle["filled"][key]), int(cycle["after"][key])
+            if first < 0 or last < first:
+                raise ValueError("Super: invalid compilation counters")
+            if (not reuse or cycle["warm"]) and first != last:
+                raise ValueError("Super: new compilation in accepted interval")
+        if (abs(utc(window["window_started"]) - cycle["filled"]["observed_unix_ms"] / 1000) > .001 or
+                abs(utc(window["window_finished"]) - cycle["after"]["observed_unix_ms"] / 1000) > .001 or
+                utc(window["window_started"]) < utc(state["window_started"]) or
+                utc(window["window_finished"]) > utc(state["window_finished"])):
+            raise ValueError("Super: incorrect accepted time range")
+        report = vtune_gameplay_cpu_quality(session / "diagnostics", window, target_pid,
+                                           f"vtune-super-cycle-{cycle['cycle']}-hotspots", plan.get("cpu_sampling_backend"))
+        reports.append({"cycle": cycle["cycle"], "warm": cycle["warm"], **report})
+    return {"captured_rounds": len(accepted), "qualified_rounds": sum(bool(c["warm"]) for c in accepted),
+            "all_rounds_warm": all(c["warm"] for c in accepted), "per_round_cpu_reports": reports,
+            "excluded_cycles": state.get("super_excluded_cycles", []),
+            "enclosing_recording_includes_rewarm": not reuse}
 
 
 def frame_quality(session, begin, end):
@@ -217,7 +250,7 @@ def sensor_quality(path, begin, end, utc_offset_seconds=None):
             "qpc_end_is_observation_bound": True}
 
 
-def vtune_quality(directory, begin, end):
+def vtune_quality(directory, begin, end, cpu_backend=None):
     # The summary deliberately contains several CSV sections of different widths.
     with (directory / "vtune-summary.csv").open(encoding="utf-8-sig", newline="") as stream:
         rows = list(csv.reader(stream))
@@ -228,6 +261,17 @@ def vtune_quality(directory, begin, end):
         result[label + "_unix_s"] = datetime.strptime(value, "%H:%M:%S %d/%m/%Y UTC").replace(tzinfo=timezone.utc).timestamp()
     if result["start_unix_s"] > begin or result["stop_unix_s"] < end - 1:
         raise ValueError("VTune: sampling did not cover the gameplay window")
+    cpu_time = float(values["CPU Time"])
+    if not math.isfinite(cpu_time) or cpu_time <= 0:
+        raise ValueError("VTune: invalid sampled CPU time")
+    if cpu_backend == "vtune-software":
+        context = (directory / "vtune/config/context_values.cfg").read_text(encoding="utf-8-sig")
+        if not re.search(r'id="(?:samplingMode|collectorType)"[^>]*value="(?:sw|runss)"', context):
+            # The installed collector persists user-mode identity in runss.options.
+            if not (directory / "vtune/config/runss.options").is_file():
+                raise ValueError("VTune: missing software collector identity")
+        return {**result, "sampling_backend": "vtune-software", "raw_cpu_time_seconds": cpu_time,
+                "cpu_hardware_memory_metrics_available": False, "calibration_requested": False}
     warning = "Measuring peak DRAM bandwidth is not enabled"
     log = (directory / "vtune-errors.log").read_text(encoding="utf-8-sig", errors="replace")
     if warning in log:
@@ -399,7 +443,7 @@ def inspect(session, project):
         "wpr": lambda: wpr_full_quality(directory, state, launch["pid"], begin, end, plan.get("cpu_sampling_backend")),
         "frames": lambda: frame_quality(session, begin, end),
         "symbols": lambda: symbols_quality(project, launch),
-        "vtune": lambda: vtune_quality(directory, begin, end),
+        "vtune": lambda: vtune_quality(directory, begin, end, plan.get("cpu_sampling_backend")),
     }
     if any(tool.get("name") == "nvidia_smi" and tool.get("available") for tool in plan.get("tools", [])):
         offset = datetime.fromisoformat(launch["prepared_at"]).utcoffset().total_seconds()
@@ -413,18 +457,30 @@ def inspect(session, project):
     if plan.get("nsight_exit_policy") == "engine-shutdown-self-terminate":
         checks["diagnostic_exit"] = lambda: diagnostic_exit_quality(directory, state, launch["pid"])
         result["limitations"].append("Nsight diagnostics exit after successful collector export and engine shutdown using self-termination; the reproduced third-party DLL detach fault is bypassed, not repaired.")
+    if plan.get("cpu_sampling_backend") in ("vtune-hardware", "vtune-software"):
+        checks["cpu_hotspots"] = lambda: vtune_gameplay_cpu_quality(directory, state, launch["pid"], cpu_backend=plan.get("cpu_sampling_backend"))
     if plan.get("cpu_sampling_backend") == "vtune-hardware":
-        checks["cpu_hotspots"] = lambda: vtune_gameplay_cpu_quality(directory, state, launch["pid"])
         result["limitations"].append("Concurrent VTune hardware sampling suppresses WPR timer CPU sampling; CPU hotspots must pass a separate target-PID and gameplay-window check using VTune. ETW wait/scheduling stacks remain enabled.")
+    if plan.get("cpu_sampling_backend") == "vtune-software":
+        result["limitations"].append("Stable VTune CPU backend uses user-mode software sampling, not Memory Access hardware sampling. CPU hardware cache, load-latency and DRAM bandwidth metrics are unavailable. Full finalization and per-round PID/time filtering remain required; WPR provides scheduling and GPU timelines.")
     if plan.get("vtune_stop_method") == "native-itt-detach":
         checks["vtune_control"] = lambda: vtune_control_quality(directory, state)
+    if plan.get("super_capture"):
+        checks["super_rounds"] = lambda: super_round_quality(session, state, plan, launch["pid"])
+        if plan["super_capture"].get("warmup_policy") == "reuse-existing-cache":
+            result["limitations"].append("Existing cache reused without extra super warmup. Capture completeness does not certify warm performance; use each round's warm flag and compilation counters before averaging.")
+        else:
+            result["limitations"].append("The enclosing recording may contain excluded/re-warm attempts; use qualified per-round CPU filters and native release receipts for warm analysis.")
     for name, check in checks.items():
         try:
             result["checks"][name] = {"validated": True, **check()}
         except (ValueError, KeyError, OSError, StopIteration, struct.error, csv.Error) as error:
             message = f"{name}: {error}"
             result["checks"][name] = {"validated": False, "error": message}
-            result["errors"].append(message)
+            if name == "sensors" and plan.get("collectors", {}).get("sensors_optional", False):
+                result["limitations"].append("Optional telemetry incomplete: " + message)
+            else:
+                result["errors"].append(message)
     if result["checks"].get("vtune", {}).get("attach_calibration_uncertainty"):
         result["limitations"].append("VTune measured peak bandwidth in attach mode; concurrent system load may bias the scale.")
     if result["checks"].get("nsight", {}).get("periodic_samples_merged"):

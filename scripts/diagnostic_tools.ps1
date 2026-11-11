@@ -1,9 +1,10 @@
-﻿# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Dot-source after tools.ps1. Importing this file never starts a collector.
 . (Join-Path $PSScriptRoot 'diagnostic_automation.ps1')
 . (Join-Path $PSScriptRoot 'diagnostic_retention.ps1')
 . (Join-Path $PSScriptRoot 'diagnostic_artifacts.ps1')
 . (Join-Path $PSScriptRoot 'diagnostic_sensors.ps1')
+. (Join-Path $PSScriptRoot 'super_capture_tools.ps1')
 $script:DiagnosticNames=@('cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full')
 function Get-DiagnosticSpec([string]$Name,[string]$FullGpuCollector='',[Nullable[bool]]$GpuAssisted=$null) {
     if($Name -notin $script:DiagnosticNames){throw 'Unknown diagnostic profile.'}
@@ -41,7 +42,23 @@ function Get-DiagnosticPlanSpec($Plan) {
     $spec=Get-DiagnosticSpec $Plan.profile $backend $gpuAssisted
     $hasWpr=if($Plan -is [Collections.IDictionary]){$Plan.Contains('wpr_profile')}else{[bool]$Plan.PSObject.Properties['wpr_profile']}
     if($hasWpr){$spec.Wpr=[string]$Plan.wpr_profile}
+    $software=if($Plan -is [Collections.IDictionary]){$Plan.Contains('vtune_sampling_mode') -and $Plan.vtune_sampling_mode -eq 'sw'}else{$Plan.PSObject.Properties['vtune_sampling_mode'] -and $Plan.vtune_sampling_mode -eq 'sw'}
+    if($software){
+        if($Plan.cpu_sampling_backend -ne 'vtune-software' -or $Plan.collectors.vtune_analysis -ne 'hotspots'){throw 'Inconsistent VTune software sampling plan.'}
+        $spec.VtuneAnalysis='hotspots'
+    }
     return $spec
+}
+function Get-DiagnosticVtuneKnobs($Plan,[string]$Analysis) {
+    if($Analysis -eq 'memory-access'){return @('-knob','dram-bandwidth-limits=true')}
+    if($Analysis -eq 'hotspots'){
+        $software=if($Plan -is [Collections.IDictionary]){$Plan.Contains('vtune_sampling_mode') -and $Plan.vtune_sampling_mode -eq 'sw'}else{$Plan.PSObject.Properties['vtune_sampling_mode'] -and $Plan.vtune_sampling_mode -eq 'sw'}
+        # Software Hotspots has a fixed 10 ms interval and always supplies its
+        # own stacks. Hardware-only knobs are rejected in this mode.
+        if($software){return @('-knob','sampling-mode=sw','-knob','enable-characterization-insights=false')}
+        return @('-knob','sampling-mode=hw','-knob','enable-stack-collection=true')
+    }
+    throw 'Unsupported VTune analysis.'
 }
 $script:DiagnosticStorageMonitor=$null
 function Get-DiagnosticStoragePolicy {
@@ -182,7 +199,7 @@ function Initialize-DiagnosticSession([string]$Root,[string]$Session,[string]$Pr
     Set-DiagnosticTuning $Root $Session ([ordered]@{
         perf_log=1;profile_stacks=1;gpu_profile=$spec.GpuProfile;gpu_profile_compute_hash=0;gpu_profile_compute_limit=0
         gpu_profile_draw_hash='0';gpu_profile_draw_limit=0;path_trace=0;gpu_checkpoints=[int]$spec.Crash;dump_frames=0
-        trace_shader='';trace_reads='';trace_draw=0;dump_images='';dump_after=''
+        trace_shader='';trace_reads='';trace_writer_word='0';trace_draw=0;dump_images='';dump_after=''
     })
     if($spec.RenderDoc){
         $inputPath=Join-Path $Session 'user/input_config/global.ini'
@@ -529,18 +546,66 @@ function Get-DiagnosticWprArguments([string]$Profile,[string]$Instance,[string]$
     return @('-start',((Join-Path $PSScriptRoot 'diagnostic.wprp')+'!'+$Profile),
         '-filemode','-instancename',$Instance,'-recordtempto',$TemporaryDirectory)
 }
-function Invoke-DiagnosticNative([string]$Executable,[string[]]$Arguments,[string]$Log,[int]$TimeoutMilliseconds=120000) {
+function Resolve-DiagnosticNativeInvocation([string]$Executable,[string[]]$Arguments,[string]$Log,[switch]$ForceUnguarded) {
+    if(-not $ForceUnguarded -and [IO.Path]::GetFileName($Executable) -in @('vtune.exe','amplxe-cl.exe') -and
+       $Arguments -contains '-report' -and $Arguments -contains '-report-output'){
+        $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+        $project=Read-JsonUtf8 (Join-Path $projectRoot 'project.json')
+        $runtime=Resolve-ProjectChild $projectRoot $project.runtime_path
+        $guard=Join-Path (Split-Path -Parent $runtime) 'ifss_vtune_report_guard.exe'
+        if(-not(Test-Path -LiteralPath $guard -PathType Leaf)){
+            throw 'Build the existing project target ifss_vtune_report_guard before exporting VTune reports.'
+        }
+        $dump=$Log+'.'+[Guid]::NewGuid().ToString('N').Substring(0,8)+'.dmp'
+        return [pscustomobject]@{Executable=$guard;Arguments=@('--xml-rng-lifetime',$dump,$Executable)+$Arguments;Guarded=$true}
+    }
+    return [pscustomobject]@{Executable=$Executable;Arguments=$Arguments;Guarded=$false}
+}
+function Test-DiagnosticNativeCrashExit([int]$Code) {
+    return @(-1073741819,-1073741571,-1073740940,-1073740791) -contains $Code
+}
+function Start-DiagnosticNativeProcess([string]$Executable,[string[]]$Arguments) {
     $start=[Diagnostics.ProcessStartInfo]::new()
     $start.FileName=$Executable;$start.Arguments=($Arguments|ForEach-Object {Quote-WindowsArgument $_}) -join ' '
     $start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
-    $p=[Diagnostics.Process]::Start($start)
-    try{
-        $output=$p.StandardOutput.ReadToEndAsync();$errors=$p.StandardError.ReadToEndAsync()
-        if(-not (Wait-DiagnosticHelper $p $TimeoutMilliseconds)){$p.Kill();$p.WaitForExit();throw 'This session diagnostic helper timed out.'}
-        $p.WaitForExit()
-        [IO.File]::AppendAllText($Log,($output.Result+$errors.Result),[Text.UTF8Encoding]::new($false))
-        if($p.ExitCode -ne 0){throw ('Diagnostic tool returned '+$p.ExitCode+'; see '+[IO.Path]::GetFileName($Log))}
-    }finally{$p.Dispose()}
+    return [Diagnostics.Process]::Start($start)
+}
+function Invoke-DiagnosticNative([string]$Executable,[string[]]$Arguments,[string]$Log,[int]$TimeoutMilliseconds=120000) {
+    $attempts=@(@{label='primary';unguarded=$false})
+    # Guarded reports are required for the fingerprinted VTune 2026.4 libxml2 RNG bug on
+    # typical hotspots. Large Full memory-access reports can AV inside the guard (sspicli);
+    # unguarded vtune.exe then succeeds. Fall back only after a crash exit.
+    $mayFallback=[IO.Path]::GetFileName($Executable) -in @('vtune.exe','amplxe-cl.exe') -and
+        $Arguments -contains '-report' -and $Arguments -contains '-report-output'
+    if($mayFallback){ $attempts+=@{label='unguarded-after-guard-crash';unguarded=$true} }
+    $lastError=$null
+    foreach($attempt in $attempts){
+        $invocation=Resolve-DiagnosticNativeInvocation $Executable $Arguments $Log -ForceUnguarded:$($attempt.unguarded)
+        if($attempt.unguarded -and $invocation.Guarded){ throw 'Internal error: unguarded fallback remained guarded.' }
+        $p=$null
+        try{
+            $p=Start-DiagnosticNativeProcess $invocation.Executable $invocation.Arguments
+            $output=$p.StandardOutput.ReadToEndAsync();$errors=$p.StandardError.ReadToEndAsync()
+            $timedOut=-not (Wait-DiagnosticHelper $p $TimeoutMilliseconds)
+            if($timedOut){$p.Kill();$p.WaitForExit()}
+            $p.WaitForExit()
+            $text=$output.Result+$errors.Result
+            if($attempt.unguarded){
+                $text=('VTune report fallback: ifss_vtune_report_guard crashed; retried unguarded vtune.exe for this large/offline export.'+[Environment]::NewLine+$text)
+            }
+            [IO.File]::AppendAllText($Log,$text,[Text.UTF8Encoding]::new($false))
+            if($timedOut){throw ('Diagnostic helper '+[IO.Path]::GetFileName($Executable)+' timed out after '+$TimeoutMilliseconds+' ms; output saved in '+[IO.Path]::GetFileName($Log))}
+            if($p.ExitCode -eq 0){ return }
+            $msg='Diagnostic tool returned '+$p.ExitCode+'; see '+[IO.Path]::GetFileName($Log)
+            if($invocation.Guarded -and (Test-DiagnosticNativeCrashExit $p.ExitCode) -and $mayFallback){
+                [IO.File]::AppendAllText($Log,([Environment]::NewLine+'Owned/guarded report crashed with exit '+$p.ExitCode+'; attempting unguarded fallback.'+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
+                $lastError=$msg
+                continue
+            }
+            throw $msg
+        }finally{ if($p){ $p.Dispose() } }
+    }
+    throw $lastError
 }
 function Read-DiagnosticSharedText([string]$Path) {
     $stream=[IO.File]::Open($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
@@ -550,7 +615,7 @@ function Read-DiagnosticSharedText([string]$Path) {
         return $reader.ReadToEnd()
     }finally{if($reader){$reader.Dispose()}else{$stream.Dispose()}}
 }
-function Stop-DiagnosticVtune($Process,$Tools,[string]$Directory,$State,[string]$Root,[string]$Session) {
+function Stop-DiagnosticVtune($Process,$Tools,[string]$Directory,$State,[string]$Root,[string]$Session,[int]$ExitTimeoutMilliseconds=30000) {
     if(-not $Process){return}
     if($Process.HasExited){$State.vtune_exit_code=$Process.ExitCode;return}
     # A startup failure can request cleanup before VTune creates its result.
@@ -582,7 +647,7 @@ function Stop-DiagnosticVtune($Process,$Tools,[string]$Directory,$State,[string]
         throw ('VTune native detach rejected: '+$ack.error)
     }
     Write-JsonUtf8 (Join-Path $Directory 'vtune-control.json') $ack
-    if(-not (Wait-DiagnosticHelper $Process 30000)){throw 'VTune did not detach before game shutdown.'}
+    if(-not (Wait-DiagnosticHelper $Process $ExitTimeoutMilliseconds)){throw 'VTune did not detach before game shutdown.'}
     $State.vtune_detached_utc=[DateTime]::UtcNow.ToString('o')
     $State.vtune_exit_code=$Process.ExitCode
     if($Process.ExitCode -ne 0){throw ('VTune returned '+$Process.ExitCode+' while detaching.')}
@@ -604,9 +669,17 @@ function Invoke-DiagnosticWorker([string]$Root,[string]$Session) {
     $statusPath=Join-Path $dir 'status.json'
     $wprOwned=$false;$wprAttempted=$false;$vtune=$null;$smi=$null;$nsight=$null;$capturing=$false;$finished=$false;$sequence=0L;$drawPhase=$false
     $auto=New-DiagnosticAutomation $plan;$state.scene_confirmed=$false;$state.automation=$true
+    $superControlled=[bool]$plan.PSObject.Properties['super_capture']
+    if($superControlled){
+        # The batch driver is the only input producer until it publishes completion.
+        # Ordinary Full navigation/workload and idle-window GPU triggers stay opt-out.
+        $auto.events=@();$auto.workload=if(Test-SuperReuseCachePlan $plan){'cached-super-releases'}else{'warm-super-releases'};$auto.enabled=$false
+        $state.super_qualified_windows=@();$state.super_excluded_cycles=@()
+    }
     $writer=$null;$target=$null;$captureAt=$null;$storage=$null;$tick=0;$lastCpu=$null;$lastTime=$null
     $clock=[Diagnostics.Stopwatch]::StartNew()
     $startCollectors={
+        param([switch]$BootstrapOnly)
         if($spec.Nsight -and -not $nsight){
             try{
                 $captureDirectory=Join-Path $sessionPath 'user/captures/nsight'
@@ -625,6 +698,7 @@ function Invoke-DiagnosticWorker([string]$Root,[string]$Session) {
                 $state.collector_start_errors['Nsight']=Get-DiagnosticErrorInfo $_ $Root
             }
         }
+        if(-not $BootstrapOnly){
         if($plan.wpr_profile -and -not $wprAttempted){
             try{
                 Write-JsonUtf8 $statusPath $state
@@ -644,8 +718,7 @@ function Invoke-DiagnosticWorker([string]$Root,[string]$Session) {
                 Assert-ProjectPath $Root $vtuneUser
                 $null=[IO.Directory]::CreateDirectory($vtuneUser)
                 $toolArguments=@('-collect',$analysis,'-target-pid',[string]$target.Id,'-duration',[string]$plan.collector_timing.vtune_seconds,'-data-limit',[string]$plan.storage.vtune_data_limit_mib,'-finalization-mode','none','-result-dir',(Join-Path $dir 'vtune'),'-user-data-dir',(Join-Path $dir 'vtune-user'))
-                if($analysis -eq 'memory-access'){$toolArguments+=@('-knob','dram-bandwidth-limits=true')}
-                if($analysis -eq 'hotspots'){$toolArguments+=@('-knob','sampling-mode=hw','-knob','enable-stack-collection=true')}
+                $toolArguments+=@(Get-DiagnosticVtuneKnobs $plan $analysis)
                 $options=@{FilePath=$tools.vtune;ArgumentList=(($toolArguments|ForEach-Object {Quote-WindowsArgument $_}) -join ' ');WorkingDirectory=$sessionPath;PassThru=$true;WindowStyle='Hidden';RedirectStandardOutput=(Join-Path $dir 'vtune-output.log');RedirectStandardError=(Join-Path $dir 'vtune-errors.log')}
                 $vtune=Start-DiagnosticProcess $options
                 $state.vtune_started=$true;$state.vtune_started_utc=[DateTime]::UtcNow.ToString('o')
@@ -665,6 +738,7 @@ function Invoke-DiagnosticWorker([string]$Root,[string]$Session) {
                 $state.errors+=('NVIDIA sensors startup: '+$_.Exception.Message)
                 $state.collector_start_errors['NVIDIA sensors']=Get-DiagnosticErrorInfo $_ $Root
             }
+        }
         }
     }
     try{
@@ -686,7 +760,12 @@ function Invoke-DiagnosticWorker([string]$Root,[string]$Session) {
             catch{$state.errors+=('Module inventory: '+$_.Exception.Message)}
         }
         Write-JsonUtf8 $statusPath $state
-        if(($plan.profile -eq 'full' -or $spec.Nsight) -and $target){
+        if($superControlled -and $spec.Nsight -and $target){
+            # Keep the previously working injected-SDK/controller startup order.
+            # This only arms the SDK-triggered capture; WPR/VTune stay deferred.
+            . $startCollectors -BootstrapOnly
+            Write-JsonUtf8 $statusPath $state
+        }elseif(($plan.profile -eq 'full' -or $spec.Nsight) -and $target){
             # Full records startup too. Scene readiness gates input and RenderDoc, not tracing.
             $state.startup_window_started=[DateTime]::UtcNow.ToString('o')
             . $startCollectors
@@ -746,26 +825,46 @@ function Invoke-DiagnosticWorker([string]$Root,[string]$Session) {
             Update-DiagnosticStorage $storage;$tick++
             $stopRequested=$command -and $command.action -eq 'stop'
             if($storage.low_space -or $storage.failed){break}
-            Update-DiagnosticAutomation $Root $Session $plan $auto $elapsed
+            if($superControlled){Update-SuperFullAutomation $Root $Session $plan $auto $state $elapsed}
+            else{Update-DiagnosticAutomation $Root $Session $plan $auto $elapsed}
             $state.automation_phase=$auto.phase;$state.scene_status=$auto.scene_status;$state.elapsed_s=$elapsed
             if($tick % 5 -eq 0){Write-JsonUtf8 $statusPath $state}
             $beginRequested=$auto.ready -and ($elapsed-$auto.ready_at) -ge $plan.automation.warmup_seconds -and
-                (($command -and $command.action -eq 'capture') -or ($plan.delay_seconds -ge 0 -and $elapsed -ge $plan.delay_seconds))
+                (($superControlled -and $auto.ready) -or ($command -and $command.action -eq 'capture') -or ($plan.delay_seconds -ge 0 -and $elapsed -ge $plan.delay_seconds))
+            if($superControlled -and -not $capturing -and -not $finished -and -not $stopRequested -and $beginRequested){
+                if($state.status -ne 'starting-collectors'){
+                    $state.status='starting-collectors';$state.collector_attach_elapsed=$elapsed
+                    . $startCollectors
+                    Write-JsonUtf8 $statusPath $state
+                }
+                if($state.collector_start_errors.Count){throw 'Full super collector attachment failed; see collector_start_errors.'}
+                # VTune calibrates before sampling. Do not expose a recording
+                # window until its actual collection-start receipt is present.
+                $vtuneLog=Join-Path $dir 'vtune-errors.log'
+                $samplingReady=$vtune -and -not $vtune.HasExited -and (Test-Path -LiteralPath $vtuneLog) -and
+                    (Read-DiagnosticSharedText $vtuneLog).Contains('Collection started.')
+                if(-not $samplingReady){
+                    if(($vtune -and $vtune.HasExited) -or $elapsed-$state.collector_attach_elapsed -gt 180){throw 'VTune did not acknowledge sampling start before the Full super window.'}
+                    Start-Sleep -Milliseconds 250
+                    continue
+                }
+            }
             if(-not $capturing -and -not $finished -and -not $stopRequested -and $beginRequested){
-                $captureAt=$elapsed;$capturing=$true;$state.status='recording';$state.window_started=$now.ToString('o')
+                $captureAt=$elapsed;$capturing=$true;$state.status='starting-collectors';$state.window_started=[DateTime]::UtcNow.ToString('o')
                 $auto.capture_at=$elapsed;$auto.phase='recording'
-                if($spec.Nsight){
+                if($spec.Nsight -and -not $superControlled){
                     $state.nsight_scene_anchor_utc=$now.ToString('o')
                     & (Join-Path $PSScriptRoot 'control.ps1') -Action nsight -Session $Session | Out-Null
                     $state.nsight_trigger_sequence=[long](Read-JsonUtf8 (Join-Path $sessionPath 'command.json')).sequence
                 }
                 $state.marks+=@{utc=$now.ToString('o');elapsed_s=$elapsed;action='gpu_profile';value=$spec.GpuProfile}
                 . $startCollectors
+                $state.status='recording'
                 Write-JsonUtf8 (Join-Path $dir 'modules.json') @($target.Modules|ForEach-Object {@{module=$_.ModuleName;base_address=('0x{0:x}' -f $_.BaseAddress.ToInt64());bytes=$_.ModuleMemorySize}})
                 $state.module_inventory_utc=[DateTime]::UtcNow.ToString('o')
                 Write-JsonUtf8 $statusPath $state
             }
-            if($capturing -and $plan.profile -in @('all','full') -and -not $drawPhase -and ($elapsed-$captureAt) -ge ($plan.seconds/2)){
+            if($capturing -and -not $superControlled -and $plan.profile -in @('all','full') -and -not $drawPhase -and ($elapsed-$captureAt) -ge ($plan.seconds/2)){
                 Set-DiagnosticTuning $Root $sessionPath @{gpu_profile=3};$drawPhase=$true
                 $state.marks+=@{utc=$now.ToString('o');elapsed_s=$elapsed;action='gpu_profile';value=3};Write-JsonUtf8 $statusPath $state
             }
@@ -783,13 +882,19 @@ function Invoke-DiagnosticWorker([string]$Root,[string]$Session) {
             if($capturing -and ($elapsed-$captureAt) -gt ($plan.seconds+90)){
                 throw 'Capture completion timed out: input acknowledgements or GPU frame output are missing.'
             }
-            if(-not $finished -and ($stopRequested -or ($capturing -and ($elapsed-$captureAt) -ge $plan.seconds -and $captureToolsReady -and $auto.workload_completed))){
+            $windowElapsed=$capturing -and ($superControlled -or ($elapsed-$captureAt) -ge $plan.seconds)
+            if(-not $finished -and ($stopRequested -or ($windowElapsed -and $captureToolsReady -and $auto.workload_completed))){
                 if(-not $state.window_finished){$state.window_finished=[DateTime]::UtcNow.ToString('o')}
                 $state.stop_reason=if($stopRequested){'requested-stop'}else{'completed-window-and-applied-workload'}
                 # Stop the game while the trace is still recording; ETL merging must not
                 # leave heavy GPU instrumentation running for another two minutes.
                 Stop-DiagnosticVtune $vtune $tools $dir $state $Root $Session
-                if($spec.Nsight -and $plan.nsight_exit_policy -eq 'engine-shutdown-self-terminate'){
+                if($spec.Nsight -and $stopRequested -and -not $state.Contains('nsight_trigger_sequence')){
+                    # Before an SDK trigger there is no trace to export. Waiting 30
+                    # minutes here only records an idle game and grows the ETL.
+                    if($nsight -and -not $nsight.HasExited){$nsight.Kill();$nsight.WaitForExit()}
+                    $state.errors+='Collection stopped before any Nsight SDK trigger; no detailed trace was captured.'
+                }elseif($spec.Nsight -and $plan.nsight_exit_policy -eq 'engine-shutdown-self-terminate'){
                     if(-not (Wait-DiagnosticHelper $nsight 1800000)){throw 'Nsight export did not finish before diagnostic exit.'}
                     $readiness=Get-DiagnosticExitReadiness $target.Id $nsight $vtune ([bool]$spec.VtuneAnalysis)
                     $state.nsight_exit_code=$nsight.ExitCode
@@ -799,7 +904,7 @@ function Invoke-DiagnosticWorker([string]$Root,[string]$Session) {
                 & (Join-Path $PSScriptRoot 'control.ps1') -Action quit -Session $Session | Out-Null
                 if(-not (Wait-DiagnosticHelper $target 30000)){throw 'The game did not exit after the acknowledged workload.'}
                 if($wprOwned){
-                    Invoke-DiagnosticNative $tools.wpr @('-stop',(Join-Path $dir 'timeline.etl'),'-instancename',$plan.wpr_instance) (Join-Path $dir 'wpr.log')
+                    Invoke-DiagnosticNative $tools.wpr @('-stop',(Join-Path $dir 'timeline.etl'),'-instancename',$plan.wpr_instance) (Join-Path $dir 'wpr.log') 1800000
                     $wprOwned=$false;$state.wpr_saved=$true
                 }
                 $finished=$true;$capturing=$false;$state.status=if($state.window_started){'collected'}else{'no-window'}
@@ -835,6 +940,7 @@ function Invoke-DiagnosticWorker([string]$Root,[string]$Session) {
             catch{$state.errors+=('Low-space cleanup exit: '+$_.Exception.Message)}
         }
         if($nsight){
+            if(-not $state.Contains('nsight_trigger_sequence') -and -not $nsight.HasExited){$nsight.Kill();$nsight.WaitForExit()}
             if(-not $nsight.HasExited -and -not (Wait-DiagnosticHelper $nsight 1800000)){$nsight.Kill();$nsight.WaitForExit();$state.errors+='Stopped this session Nsight helper after timeout.'}
             if($nsight.ExitCode -ne 0){$state.errors+=('Nsight returned '+$nsight.ExitCode)}
             $state.nsight_exit_code=$nsight.ExitCode
@@ -842,7 +948,7 @@ function Invoke-DiagnosticWorker([string]$Root,[string]$Session) {
         }
         if($wprOwned -or ($wprAttempted -and -not $state.wpr_saved)){
             try{
-                Invoke-DiagnosticNative $tools.wpr @('-stop',(Join-Path $dir 'timeline.etl'),'-instancename',$plan.wpr_instance) (Join-Path $dir 'wpr.log')
+                Invoke-DiagnosticNative $tools.wpr @('-stop',(Join-Path $dir 'timeline.etl'),'-instancename',$plan.wpr_instance) (Join-Path $dir 'wpr.log') 1800000
                 $wprOwned=$false;$state.wpr_saved=$true
             }catch{$state.errors+=$_.Exception.Message}
         }
@@ -991,7 +1097,7 @@ function Get-DiagnosticCoverage([string]$Root,[string]$Session,$Plan,$State,$Aut
         @{name='wpr';requested=[bool]$spec.Wpr;produced=($State.wpr_saved -and $files.wpr.Count -gt 0);scope='system-trace-filter-by-target-pid'}
         @{name='renderdoc';requested=$spec.RenderDoc;produced=($Auto.capture_triggered -and $files.renderdoc.Count -gt 0);scope='target-process-one-frame'}
         @{name='nsight';requested=$spec.Nsight;produced=($null -ne $State.nsight_exit_code -and $State.nsight_exit_code -eq 0 -and $files.nsight.Count -gt 0);scope='target-process-bounded-gpu-trace'}
-        @{name='vtune';requested=[bool]$spec.VtuneAnalysis;produced=($State.vtune_started -and $null -ne $State.vtune_exit_code -and $State.vtune_exit_code -eq 0 -and $files.vtune.Count -gt 0);scope='target-process-finalized-memory-access'}
+        @{name='vtune';requested=[bool]$spec.VtuneAnalysis;produced=($State.vtune_started -and $null -ne $State.vtune_exit_code -and $State.vtune_exit_code -eq 0 -and $files.vtune.Count -gt 0);scope=if($spec.VtuneAnalysis -eq 'memory-access'){'target-process-finalized-memory-access'}else{'target-process-finalized-cpu-hotspots'}}
         @{name='sensors';requested=$false;produced=($files.sensors.Count -gt 0);scope='whole-gpu-optional'}
     )
     $qualityPath=Join-Path $Session 'diagnostics/data-quality.json'

@@ -1,0 +1,55 @@
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -571,7 +571,9 @@
+             return false;
+         }
+         const auto& pinfo = program->info;
+-        Shader::RuntimeInfo runtime_info = runtime_infos[0];
++        // Private output: BuildRuntimeInfoFrom initializes every byte.
++        // Never copy the command processor's concurrently mutable runtime info.
++        Shader::RuntimeInfo runtime_info{};
+         if (!BuildRuntimeInfoFrom(runtime_info, regs, stage_in, stage_out, color_buffers,
+                                   indirect_params)) {
+             return false;
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.h
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.h
+@@ -97,7 +97,7 @@
+     };
+     static constexpr size_t NumMemoEntries = 16;
+     std::array<MemoEntry, NumMemoEntries> memo{};
+-    u32 memo_next{}; ///< Command processor only.
++    std::atomic<u32> memo_next{}; ///< CP writes; scout reads only the search order.
+ 
+     /// Exact inputs and last selection; never accessed by the scout/compiler threads.
+     /// Vertex attribute descriptors are additionally checked at every use.
+@@ -107,7 +107,8 @@
+ 
+     /// Command processor: remembers the permutation of a key (oldest entry replaced).
+     void WriteMemo(u64 key, u32 perm_idx) noexcept {
+-        auto& entry = memo[memo_next];
++        const u32 next = memo_next.load(std::memory_order_relaxed);
++        auto& entry = memo[next];
+         const u32 seq = entry.seq.load(std::memory_order_relaxed);
+         entry.seq.store(seq + 1, std::memory_order_relaxed);
+         std::atomic_thread_fence(std::memory_order_release);
+@@ -115,16 +116,16 @@
+         entry.perm_idx.store(perm_idx, std::memory_order_relaxed);
+         entry.valid.store(true, std::memory_order_relaxed);
+         entry.seq.store(seq + 2, std::memory_order_release);
+-        memo_next = (memo_next + 1) % NumMemoEntries;
++        memo_next.store((next + 1) % NumMemoEntries, std::memory_order_relaxed);
+     }
+ 
+     /// Scout thread: the permutation remembered for the key, read consistently, most recent
+     /// entries first.
+     bool ReadMemo(u64 key, u32& perm_idx) const noexcept {
++        // The cursor only orders the scan; the entry sequence protects its payload.
++        const u32 next = memo_next.load(std::memory_order_relaxed);
+         for (size_t n = 0; n < NumMemoEntries; ++n) {
+-            // memo_next is the command processor's: a stale value only changes the order.
+-            const auto& entry =
+-                memo[(NumMemoEntries + memo_next - 1 - n) % NumMemoEntries];
++            const auto& entry = memo[(NumMemoEntries + next - 1 - n) % NumMemoEntries];
+             const u32 seq = entry.seq.load(std::memory_order_acquire);
+             if ((seq & 1) != 0) {
+                 continue;

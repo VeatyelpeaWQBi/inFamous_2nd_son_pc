@@ -11,6 +11,7 @@
 #include <queue>
 
 #include "common/types.h"
+#include "common/perf_stats.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/regs.h"
 #include "video_core/renderer_vulkan/vk_common.h"
@@ -158,6 +159,8 @@ class DebugStateImpl {
 
     s32 gnm_frame_dump_request_count = -1;
     std::unordered_map<size_t, FrameDump*> waiting_reg_dumps;
+    // Published by the map writers under frame_dump_list_mutex.
+    std::atomic<bool> waiting_reg_dumps_present{false};
     std::unordered_map<size_t, std::string> waiting_reg_dumps_dbg;
     bool waiting_submit_pause = false;
     bool should_show_frame_dump = false;
@@ -249,6 +252,10 @@ public:
     }
 
     bool DumpingCurrentReg() {
+        if (Common::Perf::GetTuning().reg_dump_fast_empty.load(std::memory_order_relaxed) &&
+            !waiting_reg_dumps_present.load(std::memory_order_acquire)) {
+            return false;
+        }
         std::shared_lock lock{frame_dump_list_mutex};
         return !waiting_reg_dumps.empty();
     }

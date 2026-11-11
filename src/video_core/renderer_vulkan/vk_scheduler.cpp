@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -21,6 +22,7 @@
 #include "common/path_trace.h"
 #include "common/scope_exit.h"
 #include "common/thread.h"
+#include "core/benchmark_control.h"
 #include "imgui/renderer/texture_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -231,22 +233,35 @@ struct Scheduler::GpuProfile {
         u64 end;
         u64 hash;
         bool graphics{};
+        u64 copy_id{};
+        std::array<u32, 3> groups{};
     };
     struct Session {
+        static constexpr u32 MaxDispatchOrder = 512;
         u64 tick{};
         u64 first{}; ///< Number of the first query of the session (they are consecutive).
         u64 count{};
         u64 begin{NoQuery};
         u64 end{NoQuery};
         u64 in_flight{};
+        u32 draws{};
+        u32 compute_dispatches{};
         bool readback{};
         bool active{};
         std::vector<Dispatch> dispatches;
+        std::vector<u64> dispatch_order;
     };
 
     explicit GpuProfile(const Instance& instance) : device{instance.GetDevice()} {
         const vk::PhysicalDevice physical_device = instance.GetPhysicalDevice();
         period_ns = physical_device.getProperties().limits.timestampPeriod;
+#ifdef _WIN32
+        if (instance.HasCalibratedTimestamps()) {
+            const auto [domain_result, domains] = physical_device.getCalibrateableTimeDomainsEXT();
+            calibrate_clock = domain_result == vk::Result::eSuccess &&
+                std::ranges::find(domains, vk::TimeDomainEXT::eQueryPerformanceCounter) != domains.end();
+        }
+#endif
         const auto families = physical_device.getQueueFamilyProperties();
         const u32 family = instance.GetGraphicsQueueFamilyIndex();
         const u32 valid_bits = family < families.size() ? families[family].timestampValidBits : 0;
@@ -296,6 +311,31 @@ struct Scheduler::GpuProfile {
         return static_cast<u32>(number % NumQueries);
     }
 
+    void TraceClock() {
+#ifdef _WIN32
+        if (!calibrate_clock) return;
+        const u64 now = Common::Perf::NowNs();
+        if (now - last_calibration < 500'000'000ULL) return;
+        const u64 id = Common::PathTrace::NextId();
+        if (!id) return;
+        last_calibration = now;
+        const VkCalibratedTimestampInfoEXT infos[] = {
+            {VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT, nullptr, VK_TIME_DOMAIN_DEVICE_EXT},
+            {VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT, nullptr,
+             VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT},
+        };
+        u64 times[2]{}, deviation{};
+        const auto result = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetCalibratedTimestampsEXT(
+            device, 2, infos, times, &deviation);
+        if (result == VK_SUCCESS) {
+            // a: device ns; b: raw QPC ticks (use trace metadata frequency/anchor);
+            // c: maximum deviation in ns. CPU event time is only the observation.
+            Common::PathTrace::Emit(Common::PathTrace::Kind::GpuClockCalibration, id,
+                static_cast<u64>(static_cast<double>(times[0]) * period_ns), times[1], deviation);
+        }
+#endif
+    }
+
     vk::Device device;
     vk::QueryPool pool{};
     double period_ns{1.0};
@@ -309,18 +349,26 @@ struct Scheduler::GpuProfile {
     u64 open_dispatch{NoQuery};
     u64 open_hash{};
     bool open_graphics{};
+    u64 open_copy_id{};
+    std::array<u32, 3> open_groups{};
+    u32 trace_copies_issued{};
+    u32 trace_dispatch_order_issued{};
     std::unordered_map<u64, std::pair<u64, u64>> graphics_ns;
     std::unordered_map<u64, u64> graphics_seen;
     u64 graphics_samples_issued{}; // Lifetime budget; report/reset does not replenish it.
     u64 compute_samples_issued{}; // Shared by compute hashes; reload/report never replenishes it.
     std::unordered_map<u64, std::pair<u64, u64>> shader_ns; ///< hash: GPU ns, dispatches.
     u64 report_start_ns{};
+    bool calibrate_clock{};
+    u64 last_calibration{};
     std::vector<u64> results;
 };
 
 Scheduler::Scheduler(const Instance& instance, vk::Queue queue_, const char* name_)
     : instance{instance}, queue{queue_ ? queue_ : instance.GetGraphicsQueue()}, name{name_},
       work_semaphore{instance}, command_pool{instance, &work_semaphore} {
+    const char* audit = std::getenv("IFSS_COMPUTE_SCOPE_AUDIT");
+    draw_batch_audit = audit && std::strcmp(audit, "1") == 0;
     GpuCrashDiag::g_instance.store(&instance, std::memory_order_relaxed);
 #if TRACY_GPU_ENABLED
     profiler_scope = reinterpret_cast<tracy::VkCtxScope*>(std::malloc(sizeof(tracy::VkCtxScope)));
@@ -374,6 +422,31 @@ CommandStream& Scheduler::Stream() {
         DispatchStream();
     }
     return *stream;
+}
+
+void Scheduler::AuditDirectDraw(CommandStream* stream, bool indexed, u32 instance_count,
+                                u32 first_instance) noexcept {
+    using namespace Common::PathTrace;
+    if (!IsActive()) {
+        draw_batch = {};
+        return;
+    }
+    if (draw_batch.count == 0) {
+        draw_batch.begin = Common::Perf::NowNs();
+    }
+    const u32 length = stream ? stream->NoteDirectDraw(indexed, instance_count, first_instance) : 0;
+    draw_batch.direct += !stream;
+    draw_batch.indexed += indexed;
+    draw_batch.adjacent_indexed += indexed && length > 1;
+    draw_batch.adjacent_nonindexed += !indexed && length > 1;
+    draw_batch.longest = std::max(draw_batch.longest, length);
+    if (++draw_batch.count == 1024) {
+        Emit(Kind::DrawBatchCensus, NextId(), draw_batch.begin,
+             (u64{draw_batch.direct} << 32) | draw_batch.count,
+             (u64{draw_batch.adjacent_indexed} << 32) | draw_batch.indexed,
+             (u64{draw_batch.longest} << 32) | draw_batch.adjacent_nonindexed);
+        draw_batch = {};
+    }
 }
 
 void Scheduler::DispatchStream() {
@@ -435,7 +508,9 @@ vk::CommandBuffer Scheduler::RecorderCommandBuffer() {
 }
 
 void Scheduler::RecorderThread(std::stop_token stoken) {
-    Common::SetCurrentThreadName("shadPS4:GpuCommandRecorder");
+    Common::SetCurrentThreadName(std::strcmp(name, "compute") == 0
+                                     ? "shadPS4:ComputeRecorder"
+                                     : "shadPS4:GpuCommandRecorder");
     while (true) {
         // Optionally wait a little for the next commands before sleeping: the command processor
         // then rarely has to wake this thread up.
@@ -475,6 +550,10 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
             recorder_cmdbuf = vk::CommandBuffer{};
             std::scoped_lock lk{submit_mutex};
             SubmitToQueue(std::span{&cmdbuf, 1}, job.info);
+            if (std::strcmp(name, "compute") == 0) {
+                // Actual worker submission, not a requested flag or a CP dispatch count.
+                Core::Benchmark::NoteComputeRecorderSubmit();
+            }
         }
         Common::Perf::Add(Common::Perf::RecorderBusyNs, Common::Perf::NowNs() - busy_start);
         {
@@ -628,8 +707,11 @@ void Scheduler::BeginSession() {
     EndSession();
 
     // Threaded recording (perf_tuning.ini), decided per session.
-    stream_session = threading_allowed &&
-                     Common::Perf::GetTuning().threaded_recording.load(std::memory_order_relaxed);
+    const auto& tuning = Common::Perf::GetTuning();
+    const bool compute_recording = std::strcmp(name, "compute") != 0 ||
+        tuning.compute_threaded_recording.load(std::memory_order_relaxed);
+    stream_session = threading_allowed && compute_recording &&
+                     tuning.threaded_recording.load(std::memory_order_relaxed);
     if (stream_session) {
         // The recording thread allocates and records the command buffer of the session.
         recorder_used = true;
@@ -729,6 +811,8 @@ void Scheduler::WaitSubmitted(u64 tick) {
 }
 
 void Scheduler::SubmitExecution(SubmitInfo& info) {
+    Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitQueued, Common::PathTrace::NextId(),
+                            std::string_view{name} == "compute", CurrentTick(), stream_session);
     // Work of other threads the commands of the session read: done before they are submitted.
     info.upload_dependency = std::max(
         info.upload_dependency, submit_dependency.exchange(0, std::memory_order_acq_rel));
@@ -861,7 +945,16 @@ void Scheduler::SubmitToQueue(std::span<const vk::CommandBuffer> cmd_buffers, Su
     if (queue == instance.GetGraphicsQueue()) {
         ImGui::Core::TextureManager::Submit();
     }
+    u64 trace_tick = 0;
+    for (u32 i = 0; i < info.num_signal_semas; ++i) {
+        if (info.signal_semas[i] == work_semaphore.Handle()) { trace_tick = info.signal_ticks[i]; }
+    }
+    const u64 submit_trace = Common::PathTrace::NextId();
+    Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitDriverBegin, submit_trace,
+                            std::string_view{name} == "compute", trace_tick, cmd_buffers.size());
     auto submit_result = queue.submit(submit_info, info.fence);
+    Common::PathTrace::Emit(Common::PathTrace::Kind::SubmitDriverEnd, submit_trace,
+                            std::string_view{name} == "compute", trace_tick, u64(submit_result));
     if (submit_result == vk::Result::eErrorDeviceLost) {
         GpuCrashDiag::ReportDeviceLost(instance, "submit");
     }
@@ -942,16 +1035,34 @@ void Scheduler::ProfileSessionSubmitted(u64 tick) {
     prof.current = {};
 }
 
-void Scheduler::ProfileDispatchBegin(u64 shader_hash) {
-    if (!profile || !profile->current.active ||
-        Common::Perf::GetTuning().gpu_profile.load(std::memory_order_relaxed) != 2) {
+void Scheduler::ProfileDispatchBegin(u64 shader_hash, std::array<u32, 3> groups) {
+    if (!profile || !profile->current.active) {
         return;
     }
+    ++profile->current.compute_dispatches;
     const auto& tuning = Common::Perf::GetTuning();
     const u64 filter = tuning.gpu_profile_compute_hash.load(std::memory_order_relaxed);
+    if (profile->current.dispatch_order.size() < GpuProfile::Session::MaxDispatchOrder &&
+        filter && profile->trace_dispatch_order_issued < 100'000) {
+        profile->current.dispatch_order.push_back(shader_hash);
+    }
+    if (tuning.gpu_profile.load(std::memory_order_relaxed) != 2) {
+        return;
+    }
     const u32 limit = tuning.gpu_profile_compute_limit.load(std::memory_order_relaxed);
     if (filter != 0 && shader_hash != filter) return;
     GpuProfile& prof = *profile;
+    // A capped, unfiltered diagnostic samples commands across the entire window.
+    // Mix the command ordinal and tick to avoid selecting the same slot in repeated passes.
+    if (!filter && limit) {
+        u64 sample = (CurrentTick() << 32) | prof.current.compute_dispatches;
+        sample ^= sample >> 33;
+        sample *= 0xff51afd7ed558ccdULL;
+        sample ^= sample >> 33;
+        if (sample & 31) {
+            return;
+        }
+    }
     if (limit && prof.compute_samples_issued >= limit) return;
     u64 number;
     if (!prof.Allocate(number)) {
@@ -965,10 +1076,34 @@ void Scheduler::ProfileDispatchBegin(u64 shader_hash) {
     prof.open_dispatch = number;
     prof.open_hash = shader_hash;
     prof.open_graphics = false;
+    prof.open_copy_id = 0;
+    prof.open_groups = groups;
     // Written once the work before the dispatch is done.
     Recorder().Record([pool = prof.pool, index = prof.Index(number)](vk::CommandBuffer c) {
         c.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, pool, index);
     });
+}
+
+bool Scheduler::ProfileReadbackBegin(u64 copy_id) {
+    if (!copy_id || !profile || !profile->current.active ||
+        profile->open_dispatch != GpuProfile::NoQuery || profile->trace_copies_issued >= 8192) {
+        return false;
+    }
+    auto& prof = *profile;
+    u64 number;
+    if (!prof.Allocate(number)) return false;
+    ++prof.trace_copies_issued;
+    if (prof.trace_copies_issued == 8192) {
+        LOG_INFO(Render_Vulkan, "GPU demand-copy trace budget exhausted: 8192 copies");
+    }
+    prof.open_dispatch = number;
+    prof.open_hash = 0;
+    prof.open_graphics = false;
+    prof.open_copy_id = copy_id;
+    Recorder().Record([pool = prof.pool, index = prof.Index(number)](vk::CommandBuffer c) {
+        c.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, pool, index);
+    });
+    return true;
 }
 
 void Scheduler::ProfileDispatchEnd() {
@@ -986,6 +1121,8 @@ void Scheduler::ProfileDispatchEnd() {
         .end = number,
         .hash = prof.open_hash,
         .graphics = prof.open_graphics,
+        .copy_id = prof.open_copy_id,
+        .groups = std::exchange(prof.open_groups, {}),
     });
     Recorder().Record([pool = prof.pool, index = prof.Index(number)](vk::CommandBuffer c) {
         c.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, pool, index);
@@ -1014,6 +1151,7 @@ void Scheduler::ProfileDrawBegin(u64 shader_hash) {
     prof.open_dispatch = number;
     prof.open_hash = shader_hash;
     prof.open_graphics = true;
+    prof.open_copy_id = 0;
     Recorder().Record([pool = prof.pool, index = prof.Index(number)](vk::CommandBuffer c) {
         c.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, pool, index);
     });
@@ -1023,11 +1161,18 @@ void Scheduler::ProfileDrawEnd() {
     ProfileDispatchEnd();
 }
 
+void Scheduler::ProfileCountDraw() {
+    if (profile && profile->current.active) {
+        ++profile->current.draws;
+    }
+}
+
 void Scheduler::CollectProfile() {
     if (!profile || profile->pending.empty()) {
         return;
     }
     GpuProfile& prof = *profile;
+    prof.TraceClock();
     const vk::Device device = prof.device;
     work_semaphore.Refresh();
     while (!prof.pending.empty() && work_semaphore.IsFree(prof.pending.front().tick)) {
@@ -1070,6 +1215,29 @@ void Scheduler::CollectProfile() {
                     Common::Perf::Add(Common::Perf::GpuProfileReadbackSessions);
                     Common::Perf::Add(Common::Perf::GpuProfileReadbackNs, ns);
                 }
+                Common::PathTrace::Emit(Common::PathTrace::Kind::GpuSessionBounds,
+                                        Common::PathTrace::NextId(), session.tick,
+                                        to_ns(start), to_ns(end),
+                                        std::strcmp(name, "compute") == 0);
+                Common::PathTrace::Emit(Common::PathTrace::Kind::GpuSessionWorkload,
+                                        Common::PathTrace::NextId(), session.tick, session.draws,
+                                        session.compute_dispatches,
+                                        std::strcmp(name, "compute") == 0);
+                const auto& order = session.dispatch_order;
+                const u64 sampled_tick = session.tick ^ (session.tick >> 3) ^ (session.tick >> 7);
+                if (session.draws <= 16 && order.size() >= 80 &&
+                    order.size() == session.compute_dispatches && (sampled_tick & 3) == 0 &&
+                    order.size() <= 100'000 - prof.trace_dispatch_order_issued) {
+                    const u64 id = Common::PathTrace::NextId();
+                    if (id) {
+                        prof.trace_dispatch_order_issued += static_cast<u32>(order.size());
+                        for (u32 ordinal = 0; ordinal < order.size(); ++ordinal) {
+                            Common::PathTrace::Emit(Common::PathTrace::Kind::GpuSessionDispatch,
+                                                    id, session.tick, ordinal, order[ordinal],
+                                                    std::strcmp(name, "compute") == 0);
+                        }
+                    }
+                }
             }
             for (const auto& dispatch : session.dispatches) {
                 const u64 begin = stamp(dispatch.begin);
@@ -1078,6 +1246,12 @@ void Scheduler::CollectProfile() {
                     continue;
                 }
                 const u64 ns = to_ns(finish - begin);
+                if (dispatch.copy_id) {
+                    Common::PathTrace::Emit(Common::PathTrace::Kind::GpuCopyBounds,
+                                            dispatch.copy_id, to_ns(begin), to_ns(finish),
+                                            session.tick, std::strcmp(name, "compute") == 0);
+                    continue; // Demand-copy timestamps are not compute shader work.
+                }
                 if (dispatch.graphics) {
                     auto& [draw_ns, count] = prof.graphics_ns[dispatch.hash];
                     draw_ns += ns;
@@ -1089,9 +1263,16 @@ void Scheduler::CollectProfile() {
                 ++shader_count;
                 // CPU event time is query retirement, NOT GPU execution time. Duration comes
                 // from GPU timestamps; keep the two clock domains distinct in the analysis.
+                const u64 trace_id = Common::PathTrace::NextId();
                 Common::PathTrace::Emit(Common::PathTrace::Kind::GpuDispatchResult,
-                                        Common::PathTrace::NextId(), dispatch.hash,
+                                        trace_id, dispatch.hash,
                                         session.tick, ns, std::strcmp(name, "compute") == 0);
+                Common::PathTrace::Emit(Common::PathTrace::Kind::GpuDispatchBounds,
+                                        trace_id, to_ns(begin), to_ns(finish), session.tick,
+                                        std::strcmp(name, "compute") == 0);
+                Common::PathTrace::Emit(Common::PathTrace::Kind::GpuDispatchGeometry, trace_id,
+                                        dispatch.groups[0], dispatch.groups[1],
+                                        dispatch.groups[2]);
                 Common::Perf::Add(Common::Perf::GpuProfileComputeNs, ns);
                 Common::Perf::Add(Common::Perf::GpuProfileDispatches);
             }
@@ -1349,9 +1530,35 @@ bool DynamicState::BindCache::SkipDescriptors(vk::PipelineBindPoint bind_point,
     return false;
 }
 
+static std::atomic<u64> vertex_input_key_hits{};
+
+u64 VertexInputKeyHits() noexcept {
+    return vertex_input_key_hits.load(std::memory_order_relaxed);
+}
+
+bool DynamicState::BindCache::SkipVertexInputKey(std::span<const u64> key) const noexcept {
+    if (!vertex_input_known || key.size() != num_vertex_key_words || !SkipRedundantBinds() ||
+        !std::equal(key.begin(), key.end(), vertex_key.begin())) {
+        return false;
+    }
+    Common::Perf::Add(Common::Perf::VertexInputSets);
+    Common::Perf::Add(Common::Perf::VertexInputSetsSkipped);
+    if (!key.empty()) {
+        vertex_input_key_hits.fetch_add(1, std::memory_order_relaxed);
+    }
+    return true;
+}
+
+void DynamicState::BindCache::RememberVertexInputKey(std::span<const u64> key) noexcept {
+    ASSERT(key.size() <= vertex_key.size());
+    std::copy(key.begin(), key.end(), vertex_key.begin());
+    num_vertex_key_words = static_cast<u32>(key.size());
+}
+
 bool DynamicState::BindCache::SkipVertexInput(
     std::span<const vk::VertexInputBindingDescription2EXT> bindings,
     std::span<const vk::VertexInputAttributeDescription2EXT> attributes) noexcept {
+    num_vertex_key_words = ~0U;
     Common::Perf::Add(Common::Perf::VertexInputSets);
     if (bindings.size() > MaxVertexInputs || attributes.size() > MaxVertexInputs) {
         vertex_input_known = false;

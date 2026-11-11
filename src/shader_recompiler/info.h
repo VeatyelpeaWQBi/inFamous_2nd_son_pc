@@ -11,6 +11,7 @@
 #include "shader_recompiler/backend/bindings.h"
 #include "shader_recompiler/frontend/copy_shader.h"
 #include "shader_recompiler/frontend/tessellation.h"
+#include "shader_recompiler/gds_counter_plan.h"
 #include "shader_recompiler/ir/attribute.h"
 #include "shader_recompiler/ir/passes/srt.h"
 #include "shader_recompiler/ir/reg.h"
@@ -101,6 +102,7 @@ struct Info : InfoPersistent {
     };
 
     std::span<const u32> user_data;
+    GdsCounterPlan gds_counter_plan; // Derived at module creation/load, not persistent metadata.
     std::vector<u32> flattened_ud_buf;
     PersistentSrtInfo srt_info;
 

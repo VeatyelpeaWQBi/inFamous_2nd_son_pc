@@ -15,6 +15,7 @@
 #include <xxhash.h>
 
 #include "common/hash.h"
+#include "common/scope_exit.h"
 #include "common/elf_info.h"
 #include "common/io_file.h"
 #include "common/path_util.h"
@@ -864,12 +865,21 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     return it->second.get();
 }
 
-const ComputePipeline* PipelineCache::GetComputePipeline() {
+const ComputePipeline* PipelineCache::GetComputePipeline(CommandBufferSharps* sharps) {
+    if (sharps) {
+        sharps->Begin(nullptr, 0, 0);
+    }
+    auto* const previous_sharps = std::exchange(active_buffer_sharps, sharps);
+    SCOPE_EXIT { active_buffer_sharps = previous_sharps; };
     if (!RefreshComputeKey()) {
         return nullptr;
     }
     const auto [it, is_new] = compute_pipelines.try_emplace(compute_key);
     if (is_new) {
+        // New pipelines cannot qualify as warm command reuse.
+        if (sharps) {
+            sharps->Begin(nullptr, 0, 0);
+        }
         const auto pipeline_hash = std::hash<ComputePipelineKey>{}(compute_key);
         LOG_INFO(Render_Vulkan, "Compiling compute pipeline {:#x}", pipeline_hash);
 
@@ -1172,6 +1182,7 @@ bool PipelineCache::TakeScoutedStage(Shader::HwStage stage_in, Shader::SwStage s
     runtime_infos[stage_out_idx] = scouted->GetRuntimeInfo();
     info.pgm_base = reinterpret_cast<VAddr>(code);
     info.user_data = pgm.user_data;
+    ++resource_refresh_serial;
     info.flattened_ud_buf.assign(scouted->flat, scouted->flat + scouted->flat_size);
     info.AddBindings(binding);
     auto& perm = program->modules[scouted->perm_idx];
@@ -1358,6 +1369,7 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
         Common::Perf::Add(Common::Perf::ComputeShaderCompileNs,
                           Common::Perf::NowNs() - compute_start);
     }
+    Shader::ObserveGdsCounterPlan(info, spv, is_patched);
     RegisterShaderBinary(std::move(spv), info.pgm_hash, perm_idx);
 
     const auto name = GetShaderName(info.hw_stage, info.pgm_hash, perm_idx);
@@ -1377,7 +1389,8 @@ namespace {
 /// textures of the same layout finds its permutation.
 template <typename InfoT>
 void SpecializationInputs(const InfoT& info, const Shader::Backend::Bindings& binding,
-                          boost::container::small_vector<u32, 160>& words) {
+                          boost::container::small_vector<u32, 160>& words,
+                          CommandBufferSharps* sharps = nullptr) {
     words.push_back(binding.unified);
     words.push_back(binding.buffer);
     if (info.has_fetch_shader) {
@@ -1392,8 +1405,14 @@ void SpecializationInputs(const InfoT& info, const Shader::Backend::Bindings& bi
         words.push_back(static_cast<u32>(address >> 32));
         words.insert(words.end(), code, code + count);
     }
+    size_t resource_index = 0;
     for (const auto& desc : info.buffers) {
         const auto sharp = desc.GetSharp(info);
+        if (sharps && !desc.IsSpecial()) {
+            sharps->Store(resource_index, sharp);
+            Common::Perf::Add(Common::Perf::CommandSharpsDecoded);
+        }
+        ++resource_index;
         const auto* raw = reinterpret_cast<const u32*>(&sharp);
         words.push_back(static_cast<bool>(sharp));
         words.push_back(raw[1] & ~0xFFu); // Stride, swizzle enable (not the address).
@@ -1474,6 +1493,7 @@ bool VertexAttributesMatch(const InfoT& info, const Shader::RuntimeInfo& runtime
 PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_stage,
                                                 const Shader::ShaderParams& params,
                                                 Shader::Backend::Bindings& binding) {
+    ++resource_refresh_serial;
     Common::Perf::Add(Common::Perf::SpecCalls);
     // Scout: the stage lookup precomputed for this draw, if its inputs are those of the draw
     // the command processor is at (the scout decides from its own copy of the registers).
@@ -1566,9 +1586,19 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
     const bool exact_memo = memoize && scouted == nullptr &&
                             Common::Perf::GetTuning().runtime_lookup_memo.load(
                                 std::memory_order_relaxed);
+    CommandBufferSharps* sharps = nullptr;
+    if (active_buffer_sharps && exact_memo && hw_stage == HwStage::Compute &&
+        info.images.empty() && info.fmasks.empty() && info.samplers.empty() &&
+        info.buffers.size() <= Shader::NUM_BUFFERS) {
+        sharps = active_buffer_sharps;
+        sharps->Begin(&info, resource_refresh_serial, info.buffers.size());
+    }
     boost::container::small_vector<u32, 160> selection_words;
     const auto runtime_bytes = std::as_bytes(std::span{&runtime_info, 1});
     const auto reuse_permutation = [&](u32 perm) {
+        if (sharps) {
+            sharps->Publish();
+        }
         Common::Perf::Add(Common::Perf::SpecMemoHits);
         info.AddBindings(binding);
         auto& module = program->modules[perm];
@@ -1578,7 +1608,7 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         return std::make_tuple(&info, module.module, HashCombine(params.hash, u64{perm}));
     };
     if (exact_memo) {
-        SpecializationInputs(info, binding, selection_words);
+        SpecializationInputs(info, binding, selection_words, sharps);
         const auto input_bytes = std::as_bytes(
             std::span<const u32>{selection_words.data(), selection_words.size()});
         const u32 perm = program->selection_perm;
@@ -1635,6 +1665,9 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         }
         auto new_info = Shader::Info(hw_stage, sw_stage, params);
         module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding);
+        // Runtime permutations compile into temporary Info, while every pipeline reads the
+        // program's shared Info. An unknown/different module must invalidate its GDS proof too.
+        info.gds_counter_plan.Observe(new_info.gds_counter_plan.flat_word);
 
         RegisterShaderMeta(info, spec.fetch_shader_data, spec, perm_hash, perm_idx);
         // The scout thread reads the permutations of the program (shared lock).

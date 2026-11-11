@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <fstream>
 #include <locale>
+#include <mutex>
 #include <stdexcept>
 #include <string_view>
 #ifdef _WIN32
@@ -28,9 +29,14 @@
 #include "core/emulator_settings.h"
 #include "core/debug_state.h"
 #include "core/second_son_cheats.h"
+#include "core/second_son_controls.h"
 #include "input/controller.h"
 #include "video_core/renderdoc.h"
 #include "video_core/compile_observer.h"
+#include "video_core/renderer_vulkan/vk_access_range_policy.h"
+#include "video_core/renderer_vulkan/vk_image_read_transition.h"
+#include "video_core/renderer_vulkan/vk_readback_copy_policy.h"
+#include "video_core/renderer_vulkan/vk_scheduler.h"
 #ifdef IFSS_HAVE_ITT
 #include <ittnotify.h>
 #endif
@@ -43,9 +49,42 @@ namespace {
 using Clock = std::chrono::steady_clock;
 std::filesystem::path root;
 Clock::time_point next_poll{}, release_time{};
+Clock::time_point button_watchdog{};
+u64 button_release_frame{};
 u64 last_sequence{};
 std::atomic<bool> quit_requested{};
 std::atomic<u64> native_compute{}, native_graphics_compute{};
+std::atomic<u64> compute_recorder_submits{};
+std::atomic<u64> gds_scope_bindings{}, gds_scope_conflicts_reduced{}, gds_scope_barriers_avoided{};
+std::atomic<u64> completed_flips{};
+struct ThreadCpuSample {
+    double cpu{}, kernel{}, seconds{};
+    u64 observed_ns{};
+};
+constexpr std::array ThreadCpuNames{
+    "shadPS4:GpuCommandProcessor", "shadPS4:GpuCommandRecorder", "shadPS4:ComputeRecorder",
+    "shadPS4:GpuUploadWorker", "Game:Main"};
+constexpr std::array ThreadCpuKeys{
+    "command_processor", "graphics_recorder", "compute_recorder", "upload_worker", "game_main"};
+std::array<ThreadCpuSample, ThreadCpuNames.size()> thread_cpu_samples{};
+std::mutex thread_cpu_mutex;
+nlohmann::json ThreadCpuStatus() {
+    nlohmann::json result{{"units", "percent_of_one_logical_processor"}};
+    std::scoped_lock lock{thread_cpu_mutex};
+    const u64 now = Common::Perf::NowNs();
+    for (size_t i = 0; i < thread_cpu_samples.size(); ++i) {
+        const auto& s = thread_cpu_samples[i];
+        const bool valid = s.observed_ns != 0 && now >= s.observed_ns &&
+            now - s.observed_ns <= 3'000'000'000 && s.seconds > 0.0 && s.seconds < 5.0 &&
+            s.cpu >= 0.0 && s.cpu <= 200.0 && s.kernel >= 0.0 && s.kernel <= s.cpu;
+        result[ThreadCpuKeys[i]] = {{"available", valid}};
+        if (valid) {
+            result[ThreadCpuKeys[i]].update({{"cpu_percent", s.cpu}, {"kernel_percent", s.kernel},
+                {"window_seconds", s.seconds}, {"sample_age_ms", static_cast<double>(now - s.observed_ns) / 1e6}});
+        }
+    }
+    return result;
+}
 Libraries::Pad::OrbisPadButtonDataOffset held_button{};
 Libraries::Pad::OrbisPadButtonDataOffset Button(std::string_view name) {
     using B = Libraries::Pad::OrbisPadButtonDataOffset;
@@ -123,6 +162,7 @@ void Acknowledge(u64 sequence, std::string_view action, bool accepted,
         {"error", error}, {"applied_unix_ms", now},
         {"applied_unix_ns", stamp.unix_ns}, {"qpc_before", stamp.qpc_before},
         {"qpc_after", stamp.qpc_after},
+        {"frame_count", completed_flips.load(std::memory_order_relaxed)},
         {"renderdoc_ready", VideoCore::IsRenderDocLoaded()}};
     {
         std::ofstream output{pending};
@@ -305,6 +345,31 @@ void NoteNativeCompute(bool graphics) {
     if (graphics) native_graphics_compute.fetch_add(1, std::memory_order_relaxed);
 }
 
+void NoteThreadCpu(std::string_view name, double cpu, double kernel, double seconds) {
+    if (!Enabled()) return;
+    for (size_t i = 0; i < ThreadCpuNames.size(); ++i) {
+        if (name == ThreadCpuNames[i]) {
+            std::scoped_lock lock{thread_cpu_mutex};
+            thread_cpu_samples[i] = {cpu, kernel, seconds, Common::Perf::NowNs()};
+            return;
+        }
+    }
+}
+
+void NoteComputeRecorderSubmit() {
+    if (Enabled()) compute_recorder_submits.fetch_add(1, std::memory_order_relaxed);
+}
+
+void NoteGdsCounterScope(bool reduced_conflict) {
+    if (!Enabled()) return;
+    gds_scope_bindings.fetch_add(1, std::memory_order_relaxed);
+    if (reduced_conflict) gds_scope_conflicts_reduced.fetch_add(1, std::memory_order_relaxed);
+}
+
+void NoteGdsCounterBarrierAvoided() {
+    if (Enabled()) gds_scope_barriers_avoided.fetch_add(1, std::memory_order_relaxed);
+}
+
 std::filesystem::path TuningPath() {
     return root / "perf_tuning.ini";
 }
@@ -361,6 +426,7 @@ void OnFlip() {
                 << ns(now - frames.previous) << ',' << stamp.unix_ns << ','
                 << stamp.qpc_before << ',' << stamp.qpc_after << '\n';
     frames.previous = now;
+    completed_flips.store(frames.index, std::memory_order_relaxed);
     if (now - frames.flushed >= std::chrono::seconds{1}) {
         frames.file.flush();
         frames.flushed = now;
@@ -370,7 +436,9 @@ void OnFlip() {
 void Poll(Input::GameController& controller) {
     if (!Enabled()) return;
     const auto now = Clock::now();
-    if (held_button != Libraries::Pad::OrbisPadButtonDataOffset::None && now >= release_time) {
+    if (held_button != Libraries::Pad::OrbisPadButtonDataOffset::None && now >= release_time &&
+        (completed_flips.load(std::memory_order_relaxed) >= button_release_frame ||
+         now >= button_watchdog)) {
         controller.Button(held_button, false);
         held_button = Libraries::Pad::OrbisPadButtonDataOffset::None;
     }
@@ -416,11 +484,17 @@ void Poll(Input::GameController& controller) {
             const auto button = Button(command.at("button").get<std::string>());
             const int duration = command.value("duration_ms", 200);
             if (duration < 50 || duration > 2000) throw std::runtime_error("Invalid pulse duration");
+            const int minimum_frames = command.value("minimum_frames", 0);
+            if (minimum_frames < 0 || minimum_frames > 120)
+                throw std::runtime_error("Invalid pulse frame count");
             if (held_button != Libraries::Pad::OrbisPadButtonDataOffset::None)
                 controller.Button(held_button, false);
             held_button = button;
             controller.Button(button, true);
             release_time = now + std::chrono::milliseconds{duration};
+            button_release_frame = completed_flips.load(std::memory_order_relaxed) + minimum_frames;
+            // A frozen guest must not leave a synthetic button held indefinitely.
+            button_watchdog = now + std::chrono::seconds{30};
         } else if (action == "axis") {
             const int axis = command.at("axis").get<int>();
             const int value = command.at("value").get<int>();
@@ -475,12 +549,38 @@ void Poll(Input::GameController& controller) {
         } else if (action == "karma-fill") {
             if (!SecondSon::Cheats::RequestKarmaFill())
                 throw std::runtime_error("Karma fill unavailable or a request is already pending");
+        } else if (action == "trace-start") {
+            if (!Common::PathTrace::Resume())
+                throw std::runtime_error("No initialized critical trace available");
         } else if (action == "status") {
             const auto& tuning = Common::Perf::GetTuning();
+            const auto& feedback = Common::Perf::GetFeedbackActivity();
+            const auto access_ranges = Vulkan::GetAccessRangePolicyStatus();
+            const auto image_read = Vulkan::GetImageReadTransitionStatus();
+            const auto readback_copy = Vulkan::GetReadbackCopyPolicyStatus();
             const auto fill = SecondSon::Cheats::GetKarmaFill();
+            const auto feedback_pool = SecondSon::FeedbackArenaPoolCounts();
             auto& compiles = VideoCore::CompileObserver::Get();
             nlohmann::json status{
+                {"frame_count", completed_flips.load(std::memory_order_relaxed)},
                 {"schema", 2},
+                {"access_union_enabled", access_ranges.enabled},
+                {"access_union_used", access_ranges.used},
+                {"readback_copy_stage_enabled", readback_copy.enabled},
+                {"image_read_transition_enabled", image_read.enabled},
+                {"image_read_transition_used", image_read.used},
+                {"readback_copy_stage_narrowed", readback_copy.narrowed_copies},
+                {"feedback_arena_moves", SecondSon::FeedbackArenaMoves()},
+                {"feedback_arena_group_moves", SecondSon::FeedbackArenaGroupMoves()},
+                {"feedback_arena_pool_moves", feedback_pool.moves},
+                {"feedback_arena_pool_overflows", feedback_pool.overflows},
+                {"feedback_arena_pool_busy", feedback_pool.busy},
+                {"feedback_arena_pool_used", feedback_pool.used},
+                {"feedback_arena_pool_resets", feedback_pool.resets},
+                {"feedback_arena_pool_capacity", feedback_pool.capacity},
+                {"feedback_arena_pool_stride", feedback_pool.stride},
+                {"feedback_arena_pool_group_records", feedback_pool.group_records},
+                {"vertex_input_key_hits", Vulkan::VertexInputKeyHits()},
                 {"karma_fill_requested", fill.requested},
                 {"karma_fill_completed", fill.completed},
                 {"karma_fill_count", fill.count},
@@ -494,23 +594,58 @@ void Poll(Input::GameController& controller) {
                 {"renderdoc_ready", VideoCore::IsRenderDocLoaded()},
                 {"cpu_affinity", tuning.cpu_affinity.load()},
                 {"asc_queue", tuning.asc_queue.load()},
-                {"perf_log", tuning.perf_log.load()}, {"gpu_profile", tuning.gpu_profile.load()},
-                {"readback_window_kb", tuning.readback_window_bytes.load() / 1024},
-                {"readback_prefetch", tuning.readback_prefetch.load()},
+                {"threaded_recording", tuning.threaded_recording.load()},
+                {"compute_threaded_recording", tuning.compute_threaded_recording.load()},
+                {"compute_recorder_submits", compute_recorder_submits.load(std::memory_order_relaxed)},
+                {"command_buffer_sharps", tuning.command_buffer_sharps.load()},
+                {"written_sync_fastpath", tuning.written_sync_fastpath.load()},
+                {"written_sync_skips", feedback.written_sync_skips.load()},
+                {"image_sync_once", tuning.image_sync_once.load()},
+                {"image_sync_queries_skipped", feedback.image_sync_queries_skipped.load()},
+                {"image_sync_copies_skipped", feedback.image_sync_copies_skipped.load()},
+                {"compute_barrier_scope", tuning.compute_barrier_scope.load()},
+                {"readback_feedback_checkpoint", tuning.readback_feedback_checkpoint.load()},
+                {"readback_feedback_writers", tuning.readback_feedback_writers.load()},
+                {"readback_word_load", tuning.readback_word_load.load()},
+                {"readback_word_prefetch", tuning.readback_word_prefetch.load()},
+                {"readback_word_prefetch_bulk", tuning.readback_word_prefetch_bulk.load()},
+                {"readback_word_page_cluster", tuning.readback_word_page_cluster.load()},
                 {"readback_early_complete", tuning.readback_early_complete.load()},
-                {"feedback_early_complete_submits", Common::Perf::Total(Common::Perf::ReadbackEarlyCompleteSubmits)},
-                {"feedback_early_complete_fallbacks", Common::Perf::Total(Common::Perf::ReadbackEarlyCompleteFallbacks)},
                 {"readback_writer_footprint", tuning.readback_writer_footprint.load()},
                 {"writer_footprint_proven", Common::Perf::Total(Common::Perf::WriterFootprintProven)},
                 {"writer_footprint_fallbacks", Common::Perf::Total(Common::Perf::WriterFootprintFallbacks)},
                 {"writer_footprint_narrowed", Common::Perf::Total(Common::Perf::WriterFootprintNarrowed)},
+                {"feedback_early_complete_submits", Common::Perf::Total(Common::Perf::ReadbackEarlyCompleteSubmits)},
+                {"feedback_early_complete_fallbacks", Common::Perf::Total(Common::Perf::ReadbackEarlyCompleteFallbacks)},
+                {"feedback_word_cluster_served", feedback.word_cluster_served.load()},
+                {"gds_counter_scope", tuning.gds_counter_scope.load()},
+                {"gds_scope_bindings", gds_scope_bindings.load()},
+                {"gds_scope_conflicts_reduced", gds_scope_conflicts_reduced.load()},
+                {"gds_scope_barriers_avoided", gds_scope_barriers_avoided.load()},
+                {"feedback_word_attempts", feedback.word_attempts.load()},
+                {"feedback_word_served", feedback.word_served.load()},
+                {"feedback_word_bulk_queued", feedback.word_bulk_queued.load()},
+                {"feedback_word_fallbacks", feedback.word_fallbacks.load()},
+                {"feedback_checkpoint_attempts", feedback.checkpoint_attempts.load()},
+                {"feedback_checkpoint_submits", feedback.checkpoint_submits.load()},
+                {"feedback_writer_hits", feedback.writer_hits.load()},
+                {"feedback_writer_fallbacks", feedback.writer_fallbacks.load()},
+                {"feedback_writer_reductions", feedback.writer_reductions.load()},
+                {"perf_log", tuning.perf_log.load()}, {"gpu_profile", tuning.gpu_profile.load()},
+                {"trace_reads_lo", tuning.trace_reads_lo.load()},
+                {"trace_reads_hi", tuning.trace_reads_hi.load()},
+                {"trace_writer_word", tuning.trace_writer_word.load()},
+                {"readback_window_kb", tuning.readback_window_bytes.load() / 1024},
+                {"readback_prefetch", tuning.readback_prefetch.load()},
                 {"recorder_spin_us", tuning.recorder_spin_us.load()},
+                {"reg_dump_fast_empty", tuning.reg_dump_fast_empty.load()},
                 {"gpu_threads_affinity", tuning.gpu_threads_affinity.load()},
                 {"other_threads_affinity", tuning.other_threads_affinity.load()},
                 {"asc_dispatches", Common::Perf::Total(Common::Perf::AscQueueDispatches)},
                 {"native_compute", native_compute.load(std::memory_order_relaxed)},
                 {"native_graphics_compute", native_graphics_compute.load(std::memory_order_relaxed)},
             };
+            status["thread_cpu"] = ThreadCpuStatus();
             if (tuning.gpu_threads_affinity.load() == Common::Perf::AffinityAuto) {
                 status["gpu_threads_affinity"] = "auto";
             }

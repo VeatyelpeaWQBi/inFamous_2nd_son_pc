@@ -13,6 +13,17 @@ function Get-DiagnosticMenuDecision([string]$Text,[string]$Selected='') {
     if($Text -match '(?i)press.+(?:any button|any key|to start|to begin|cross|\bX\b)'){
         return @{action='button';button='confirm';reason='title-prompt'}
     }
+    # OPTIONS opens the world map in the progressed save. Its footer is
+    # "Options and Saves" (with a button glyph), not the separate save page.
+    # Require the map heading AND multiple legend labels; a lone HUD objective
+    # or a noisy button footer must never establish a menu or gameplay state.
+    $mapLabels=@('mobile command','scanning station','security camera','genome analysis')
+    $mapMatches=@($mapLabels|Where-Object {$Text -match ('(?i)\b'+[regex]::Escape($_)+'\b')})
+    # Captured 4K OCR also reads the U as II (CIIRRENT LOCATION). Keep the
+    # complete heading plus multiple independent legends, never a footer alone.
+    if($Text -match '(?i)\bc(?:u|ii)rrent\s+location\b' -and $mapMatches.Count -ge 2){
+        return @{action='blocked';reason='map-menu'}
+    }
     if(@($lines|Where-Object {$_ -match '^(pause|paused|options and save|options & save|photo mode|save game)$'}).Count){
         return @{action='blocked';reason='pause-menu'}
     }
@@ -33,11 +44,16 @@ function Get-DiagnosticMenuDecision([string]$Text,[string]$Selected='') {
     return @{action='wait';reason='unknown-frame'}
 }
 function Get-DiagnosticPauseResponse($Decision,[bool]$ReturnSent,[double]$Age,[bool]$Telemetry) {
+    if($Decision.reason -eq 'map-menu' -and -not $ReturnSent){
+        # Use the same OPTIONS toggle that opened the map. Cross/confirm belongs
+        # to other pages; Circle on this map opens Details instead of resuming.
+        return @{action='return';button='options';reason='close-world-map-toggle'}
+    }
     if($Decision.reason -eq 'pause-menu' -and -not $ReturnSent){
         # Visually verified footer of the fingerprint-pinned CUSA00309 01.07 options page.
         return @{action='return';button='cross';reason='verified-game-back-button'}
     }
-    if($Decision.action -eq 'blocked' -and $Decision.reason -ne 'pause-menu'){
+    if($Decision.action -eq 'blocked' -and $Decision.reason -notin @('pause-menu','map-menu')){
         return @{action='fail';reason=$Decision.reason}
     }
     if($ReturnSent -and $Decision.action -eq 'wait' -and $Decision.reason -eq 'unknown-frame' -and $Telemetry){

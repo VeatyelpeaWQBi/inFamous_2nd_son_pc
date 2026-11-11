@@ -229,7 +229,8 @@ private:
     Task ProcessCeUpdate(std::span<const u32> ccb);
     /// submit_ns: when the guest submitted the work (top level submissions only, for statistics).
     template <bool is_indirect = false>
-    Task ProcessCompute(std::span<const u32> acb, u32 vqid, u64 submit_ns = 0);
+    Task ProcessCompute(std::span<const u32> acb, u32 vqid, u64 submit_ns,
+                        u64 first_resume_ns = 0);
 
     void ProcessCommands();
     void Process(std::stop_token stoken);
@@ -325,6 +326,10 @@ private:
     u64 context_reg_changes{};
     /// Time the command processor thread slept inside packets (flip label waits).
     u64 blocked_ns{};
+    bool trace_asc_work{};
+    u64 trace_asc_dispatch_ns{};
+    u64 trace_asc_release_ns{};
+    u64 trace_asc_dispatch_count{};
     struct CpLabel {
         VAddr address{};
         u32 value{};

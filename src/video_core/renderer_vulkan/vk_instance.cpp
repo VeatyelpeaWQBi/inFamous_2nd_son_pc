@@ -403,8 +403,7 @@ bool Instance::CreateDevice() {
     device_fault = fault_features.deviceFault && add_extension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
     // Only probed (BufferCache::ProbeHostImport): can the GPU use guest memory in place?
     external_memory_host = add_extension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
-    const bool calibrated_timestamps =
-        TRACY_GPU_ENABLED ? add_extension(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) : false;
+    calibrated_timestamps = add_extension(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
 
     PrivateDataBaseHandleFeatures private_handle_features;
     bool private_handle_enabled = false;

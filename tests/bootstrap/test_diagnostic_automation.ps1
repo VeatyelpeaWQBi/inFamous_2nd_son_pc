@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+﻿# SPDX-License-Identifier: GPL-2.0-or-later
 # Pure decision checks: no game, OCR, disk output, keyboard or controller access.
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../../scripts/diagnostic_automation.ps1')
@@ -43,6 +43,27 @@ if((Get-DiagnosticPauseResponse $pauseWithResume $true 2 $true).action -ne 'wait
 if((Get-DiagnosticPauseResponse $pauseWithResume $true 21 $true).action -ne 'fail'){throw 'Failed menu close must not repeat or proceed.'}
 if((Get-DiagnosticPauseResponse $unknown $true 2 $true).action -ne 'resumed'){throw 'Closed menu plus render telemetry must confirm the resume response.'}
 if((Get-DiagnosticPauseResponse (Get-DiagnosticMenuDecision 'Overwrite saved data?') $true 2 $true).action -ne 'fail'){throw 'A save confirmation must stop automation.'}
+# Recorded OCR from the progressed-save OPTIONS map, 2026-10-30 failure.
+$mapText="CURRENT LOCATION`nSEATTLE, WA`nGEORGETOWN`nMOBILE COMMAND`nSCANNING STATION`nSECURITY CAMERA`nGENOME ANALYSIS`nPOWERS`n@ Details`nO Options and Saves"
+$map=Get-DiagnosticMenuDecision $mapText
+if($map.reason -ne 'map-menu' -or $map.action -ne 'blocked'){throw 'The observed map must not be an unknown frame.'}
+$ocrMap=Get-DiagnosticMenuDecision ($mapText.Replace('CURRENT','CIIRRENT'))
+if($ocrMap.reason -ne 'map-menu' -or (Get-DiagnosticPauseResponse $ocrMap $false 7 $true).button -ne 'options'){
+    throw 'Recorded CIIRRENT LOCATION OCR must close the verified map through OPTIONS.'
+}
+if((Get-DiagnosticMenuDecision "CIIRRENT LOCATION`nMOBILE COMMAND").reason -eq 'map-menu'){
+    throw 'A corrupted heading still requires at least two independent map legends.'
+}
+$mapReturn=Get-DiagnosticPauseResponse $map $false 5 $true
+if($mapReturn.action -ne 'return' -or $mapReturn.button -ne 'options'){throw 'The OPTIONS map probe must close through OPTIONS, not Details or save controls.'}
+if((Get-DiagnosticPauseResponse $map $true 5 $true).action -ne 'wait'){throw 'An open map cannot count as a resumed scene.'}
+if((Get-DiagnosticPauseResponse $map $true 21 $true).action -ne 'fail'){throw 'An unclosed map must stop without another blind toggle.'}
+if(Test-DiagnosticGameplayCandidate $map $true 30 $true){throw 'Map rendering cannot establish gameplay readiness.'}
+if(Test-DiagnosticPauseProbe $map $false 0 30 $true){throw 'An already visible map must not receive a blind probe.'}
+foreach($partial in @('CURRENT LOCATION','MOBILE COMMAND',"CURRENT OBJECTIVE`nO Options and Saves")){
+    if((Get-DiagnosticMenuDecision $partial).reason -eq 'map-menu'){throw 'A partial/noisy label must not be classified as the map.'}
+}
+if((Get-DiagnosticMenuDecision ($mapText+"`nOverwrite saved data?`nYES`nNO")).reason -ne 'confirmation-dialog'){throw 'Save confirmation must retain precedence over map labels.'}
 foreach($profile in @('cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full')){
     $events=@(Get-DiagnosticWorkload $profile 60)
     $last=-1

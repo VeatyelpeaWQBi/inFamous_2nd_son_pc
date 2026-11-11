@@ -5,8 +5,10 @@
 
 #include "common/assert.h"
 #include "common/debug.h"
+#include "common/path_trace.h"
 #include "common/perf_stats.h"
 #include "common/polyfill_thread.h"
+#include "common/scope_exit.h"
 #include "common/thread.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
@@ -167,6 +169,16 @@ void Liverpool::Process(std::stop_token stoken) {
                 }
                 task = queue.submits.front();
             }
+            using namespace Common::PathTrace;
+            const bool trace_slice = IsActive();
+            const u64 slice_start = trace_slice ? Common::Perf::NowNs() : 0;
+            trace_asc_work = trace_slice && curr_qid != GfxQueueId;
+            if (trace_asc_work) {
+                trace_asc_dispatch_ns = 0;
+                trace_asc_release_ns = 0;
+                trace_asc_dispatch_count = 0;
+                if (rasterizer) rasterizer->BeginAscDispatchBudget();
+            }
             if (curr_qid != GfxQueueId) {
                 const u64 resume_start = Common::Perf::NowNs();
                 task.resume();
@@ -174,6 +186,30 @@ void Liverpool::Process(std::stop_token stoken) {
             } else {
                 task.resume();
             }
+            Vulkan::Rasterizer::AscDispatchBudget dispatch_budget{};
+            if (trace_asc_work && rasterizer) {
+                dispatch_budget = rasterizer->EndAscDispatchBudget();
+            }
+            if (trace_slice) {
+                const u64 end = Common::Perf::NowNs();
+                if (end - slice_start >= 50'000) {
+                    const u64 trace_id = NextId();
+                    Emit(Kind::CpQueueSlice, trace_id, slice_start, end, curr_qid, task.done());
+                    if (trace_asc_work) {
+                        Emit(Kind::CpAscSliceWork, trace_id, trace_asc_dispatch_ns,
+                             trace_asc_release_ns, trace_asc_dispatch_count);
+                        const auto& p = dispatch_budget.phases;
+                        Emit(Kind::CpAscDispatchPhases, trace_id, p[0], p[1], p[2], p[3]);
+                        Emit(Kind::CpAscBindingPhases, trace_id, dispatch_budget.buffers_ns,
+                             dispatch_budget.textures_ns, dispatch_budget.calls,
+                             dispatch_budget.sampled_calls);
+                        const auto& detail = dispatch_budget.buffer_detail;
+                        Emit(Kind::CpAscBufferDetail, trace_id, detail[0], detail[1], detail[2],
+                             detail[3]);
+                    }
+                }
+            }
+            trace_asc_work = false;
             account_time(false);
 
             if (task.done()) {
@@ -282,6 +318,13 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                                            u64 scout_seq) {
     FIBER_ENTER(dcb_task_name);
 
+    const u64 trace_id = Common::PathTrace::NextId();
+    const bool census = trace_id && ((trace_id ^ (trace_id >> 4) ^ (trace_id >> 9)) & 15) == 0;
+    const size_t initial_dcb_size = dcb.size();
+    size_t candidate_words = 0;
+    size_t contiguous_words = 0;
+    size_t longest_words = 0;
+
     cblock.Reset();
 
     // TODO: potentially, ASCs also can depend on CE and in this case the
@@ -328,6 +371,42 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
 
         const auto* header = reinterpret_cast<const PM4Header*>(dcb.data());
         const u32 type = header->type;
+
+        // Measure only packet runs worth inspecting for predecode. Execution still reads
+        // live bytes, and a run is not a guarantee of immutable command memory.
+        if (census) {
+            bool simple = false;
+            size_t words = 0;
+            if (type == 3) {
+                words = header->type3.NumWords() + 1;
+                switch (header->type3.opcode) {
+                case PM4ItOpcode::SetConfigReg:
+                case PM4ItOpcode::SetContextReg:
+                case PM4ItOpcode::SetShReg:
+                case PM4ItOpcode::SetUconfigReg:
+                case PM4ItOpcode::IndexType:
+                case PM4ItOpcode::NumInstances:
+                case PM4ItOpcode::IndexBase:
+                case PM4ItOpcode::IndexBufferSize:
+                case PM4ItOpcode::SetBase:
+                case PM4ItOpcode::DrawIndex2:
+                case PM4ItOpcode::DrawIndexOffset2:
+                case PM4ItOpcode::DrawIndexAuto:
+                case PM4ItOpcode::DispatchDirect:
+                    simple = words <= dcb.size();
+                    break;
+                default:
+                    break;
+                }
+            }
+            if (simple) {
+                candidate_words += words;
+                contiguous_words += words;
+                longest_words = std::max(longest_words, contiguous_words);
+            } else {
+                contiguous_words = 0;
+            }
+        }
 
         switch (type) {
         default:
@@ -1040,17 +1119,23 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
         scout->Finish(scout_seq);
     }
 
+    if (census) {
+        Common::PathTrace::Emit(Common::PathTrace::Kind::GfxCommandCensus, trace_id,
+                                initial_dcb_size, ccb.size(), candidate_words, longest_words);
+    }
     FIBER_EXIT;
 }
 
 template <bool is_indirect>
-Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u64 submit_ns) {
+Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u64 submit_ns,
+                                          u64 first_resume_ns) {
     FIBER_ENTER(acb_task_name[vqid]);
     auto& queue = asc_queues[{vqid}];
-    if (submit_ns != 0) {
+    if (first_resume_ns == 0) {
         // First resumed: how long the work waited for the command processor.
+        first_resume_ns = Common::Perf::NowNs();
         Common::Perf::Add(Common::Perf::AscStarts);
-        Common::Perf::Add(Common::Perf::AscStartDelayNs, Common::Perf::NowNs() - submit_ns);
+        Common::Perf::Add(Common::Perf::AscStartDelayNs, first_resume_ns - submit_ns);
     }
     if (rasterizer && rasterizer->IsDumping()) [[unlikely]] {
         rasterizer->DumpNote("asc", fmt::format("queue {} {} dwords{}", vqid, acb.size(),
@@ -1123,7 +1208,8 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u6
         case PM4ItOpcode::IndirectBuffer: {
             const auto* indirect_buffer = reinterpret_cast<const PM4CmdIndirectBuffer*>(header);
             auto task = ProcessCompute<true>(
-                {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size}, vqid);
+                {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size}, vqid,
+                submit_ns, first_resume_ns);
             RESUME_ASC(task, vqid);
 
             while (!task.handle.done()) {
@@ -1220,6 +1306,13 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u6
         }
         case PM4ItOpcode::DispatchDirect: {
             const auto* dispatch_direct = reinterpret_cast<const PM4CmdDispatchDirect*>(header);
+            const u64 trace_start = trace_asc_work ? Common::Perf::NowNs() : 0;
+            SCOPE_EXIT {
+                if (trace_start) {
+                    trace_asc_dispatch_ns += Common::Perf::NowNs() - trace_start;
+                    ++trace_asc_dispatch_count;
+                }
+            };
             if (auto it = std::ranges::find(indirect_patches, header, &IndirectPatch::header);
                 it != indirect_patches.end()) {
                 const auto size = sizeof(PM4CmdDispatchIndirect::GroupDimensions);
@@ -1247,6 +1340,13 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u6
         case PM4ItOpcode::DispatchIndirect: {
             const auto* dispatch_indirect =
                 reinterpret_cast<const PM4CmdDispatchIndirectMec*>(header);
+            const u64 trace_start = trace_asc_work ? Common::Perf::NowNs() : 0;
+            SCOPE_EXIT {
+                if (trace_start) {
+                    trace_asc_dispatch_ns += Common::Perf::NowNs() - trace_start;
+                    ++trace_asc_dispatch_count;
+                }
+            };
             auto& cs_program = GetCsRegs();
             const auto ib_address = dispatch_indirect->Address<VAddr>();
             const auto size = sizeof(PM4CmdDispatchIndirect::GroupDimensions);
@@ -1311,12 +1411,27 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u6
         }
         case PM4ItOpcode::ReleaseMem: {
             const auto* release_mem = reinterpret_cast<const PM4CmdReleaseMem*>(header);
+            using namespace Common::PathTrace;
+            const u64 label_trace_id = release_mem->event_type.Value() == 0x2f &&
+                                              release_mem->dw2 == 0x23000000
+                                          ? NextId()
+                                          : 0;
+            const u64 before_fence = label_trace_id ? Common::Perf::NowNs() : 0;
+            const u64 trace_start = trace_asc_work
+                                        ? (before_fence ? before_fence : Common::Perf::NowNs())
+                                        : 0;
+            SCOPE_EXIT {
+                if (trace_start) {
+                    trace_asc_release_ns += Common::Perf::NowNs() - trace_start;
+                }
+            };
             if (rasterizer) {
                 // asc_queue: the work before the fence is submitted now, so the guest (and the
                 // readbacks at this fence) wait for it only.
                 rasterizer->FlushComputeQueue();
                 rasterizer->OnFence();
             }
+            const u64 fence_ns = label_trace_id ? Common::Perf::NowNs() - before_fence : 0;
             release_mem->SignalFence(
                 [pipe_id = queue.pipe_id] {
                     Platform::IrqC::Instance()->Signal(static_cast<Platform::InterruptId>(pipe_id));
@@ -1328,6 +1443,13 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u6
             case DataSelect::Data32Low:
                 NoteCpWrite(release_mem->Address<VAddr>(), release_mem->Address<const void*>(),
                             sizeof(u32));
+                Emit(Kind::ParticleLabelWrite, label_trace_id, release_mem->Address<VAddr>(),
+                     release_mem->DataDWord(), release_mem->dw2,
+                     (fence_ns << 8) | queue.pipe_id);
+                if (label_trace_id && IsSampledParticleLabel(release_mem->Address<VAddr>())) {
+                    Emit(Kind::ParticleLabelSchedule, label_trace_id, submit_ns, first_resume_ns,
+                         before_fence, vqid);
+                }
                 break;
             case DataSelect::Data64:
             case DataSelect::GpuClock64:

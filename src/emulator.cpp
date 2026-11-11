@@ -67,6 +67,10 @@
 #endif
 #include <core/file_format/npbind.h>
 
+#ifdef IFSS_RENDERER_PGO_TRAINING
+extern "C" int __llvm_profile_dump();
+#endif
+
 Frontend::WindowSDL* g_window = nullptr;
 extern std::unique_ptr<Vulkan::Presenter> presenter;
 
@@ -544,7 +548,8 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     Core::PerfSampler::PollTuning();
     if (Core::Benchmark::Enabled() &&
         Common::Perf::GetTuning().path_trace.load(std::memory_order_relaxed)) {
-        Common::PathTrace::Start(Core::Benchmark::TuningPath().parent_path());
+        Common::PathTrace::Start(Core::Benchmark::TuningPath().parent_path(),
+                                 std::getenv("IFSS_PATH_TRACE_ARMED") != nullptr);
     }
     if (Core::Benchmark::Enabled() &&
         Common::Perf::GetTuning().feedback_link_sample.load(std::memory_order_relaxed)) {
@@ -760,6 +765,13 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         Common::Log::Flush();
         Core::Benchmark::ExitAfterProfilerShutdown();
     }
+#ifdef IFSS_RENDERER_PGO_TRAINING
+    // quick_exit skips LLVM's ordinary profile writer.
+    if (__llvm_profile_dump() != 0) {
+        LOG_ERROR(Common, "Failed to save the renderer training profile");
+        std::quick_exit(1);
+    }
+#endif
     std::quick_exit(0);
 }
 

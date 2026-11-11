@@ -294,8 +294,8 @@ void VideoOutDriver::DrawLastFrame() {
     }
 }
 
-bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
-                                bool is_eop /*= false*/) {
+bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop,
+                                u64 eop_trace_id) {
     {
         std::unique_lock lock{port->port_mutex};
         if (index != -1 && port->flip_status.flip_pending_num > 16) {
@@ -310,7 +310,7 @@ bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
         port->flip_status.submit_tsc = Libraries::Kernel::sceKernelReadTsc();
     }
 
-    const u64 trace_id = Common::PathTrace::NextId();
+    const u64 trace_id = eop_trace_id ? eop_trace_id : Common::PathTrace::NextId();
     Common::PathTrace::Emit(Common::PathTrace::Kind::FlipRequest, trace_id, index, is_eop,
                             static_cast<u64>(flip_arg));
     if (!is_eop) {
@@ -382,6 +382,8 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         auto& vblank_status = main_port.vblank_status;
         if (vblank_status.count % (main_port.flip_rate + 1) == 0) {
             const auto request = receive_request();
+            Common::PathTrace::Emit(Common::PathTrace::Kind::FlipPoll, Common::PathTrace::NextId(),
+                                    vblank_status.count, request.trace_id, main_port.flip_rate);
             if (!request) {
                 if (timer.GetTotalWait().count() < 0) { // Dont draw too fast
                     if (!main_port.is_open) {

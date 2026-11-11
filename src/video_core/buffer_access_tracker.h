@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <span>
 #include <vector>
-#include "common/interval_set.h"
+#include "video_core/access_range_list.h"
 
 namespace VideoCore {
 
@@ -16,8 +16,8 @@ class BufferAccessTracker {
 public:
     struct Access {
         Handle handle;
-        IntervalList<Interval> read_ranges;
-        IntervalList<Interval> write_ranges;
+        AccessRangeList read_ranges;
+        AccessRangeList write_ranges;
     };
 
     Access& Get(Handle handle) {

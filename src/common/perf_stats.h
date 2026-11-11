@@ -327,6 +327,16 @@ enum Counter : u32 {
     ReadbackPagePrefetchFinished,
     ReadbackCompletionRequests,
     ReadbackCompletionQueueNs,
+    ComputeBarriersNarrowed,
+    ComputeBarriersFallback,
+    CommandSharpsDecoded,
+    CommandSharpsReused,
+    CommandSharpsFallback,
+    FeedbackCheckpointAttempts,
+    FeedbackCheckpointSubmits,
+    FeedbackWriterHits,
+    FeedbackWriterFallbacks,
+    FeedbackWriterReductions,
     CounterCount,
 };
 
@@ -463,6 +473,7 @@ struct Tuning {
     /// [trace_reads_lo, trace_reads_hi) are logged with the bytes the guest gets and the frame.
     std::atomic<u64> trace_reads_lo{};
     std::atomic<u64> trace_reads_hi{};
+    std::atomic<u64> trace_writer_word{};
     /// Particle trace: the indirect draws of this pixel shader log their arguments (as guest
     /// memory has them) each frame, 0: off.
     std::atomic<u64> trace_draw{};
@@ -544,6 +555,7 @@ struct Tuning {
     /// The recording thread waits for new commands this long (microseconds) before sleeping,
     /// so the command processor rarely has to wake it up with a system call (0: sleeps at once).
     std::atomic<u32> recorder_spin_us{0};
+    std::atomic<bool> reg_dump_fast_empty{false};
     /// The profiler also walks the call stacks of the emulator threads: profiles then give the
     /// time of each function including what it calls (Perf inclusive / Perf path lines).
     std::atomic<bool> profile_stacks{false};
@@ -586,6 +598,23 @@ struct Tuning {
     /// Revalidate shader metadata across epochs and reuse exact specialization/upload inputs.
     /// Enabled automatically for tested CUSA00309; other games/regions remain opt-in.
     std::atomic<bool> runtime_lookup_memo{false};
+    std::atomic<bool> command_buffer_sharps{false};
+    std::atomic<bool> written_sync_fastpath{false};
+    std::atomic<bool> image_sync_once{false};
+    std::atomic<bool> compute_barrier_scope{false};
+    /// Experimental producer checkpoint and selective page provenance; independent opt-ins.
+    std::atomic<bool> readback_feedback_checkpoint{false};
+    std::atomic<bool> readback_feedback_writers{false};
+    std::atomic<bool> readback_word_load{false};
+    std::atomic<bool> readback_word_prefetch{false};
+    std::atomic<bool> readback_word_prefetch_bulk{false};
+    std::atomic<bool> readback_word_page_cluster{false};
+    /// O01 early complete-boundary; default off. No Flush-timing change until the boundary patch.
+    std::atomic<bool> readback_early_complete{false};
+    /// O02 writer-footprint switch; default off. No Draft A/B / SetWriteTick semantics until O02_candidate.
+    std::atomic<bool> readback_writer_footprint{false};
+    /// Only exact module-proven GDS counter footprints; descriptors/queue ownership unchanged.
+    std::atomic<bool> gds_counter_scope{false};
     /// Draws without vertices and dispatches without workgroups are left out before their
     /// pipeline and resources are looked up.
     std::atomic<bool> skip_empty_draws{false};
@@ -637,10 +666,6 @@ struct Tuning {
     std::atomic<bool> path_trace{false};
     /// Default-off FeedbackLinkSample instrument (M2-A). Never enable from ordinary run.bat.
     std::atomic<bool> feedback_link_sample{false};
-    /// O01 early-complete switch; default off. No Flush-timing change until the boundary patch.
-    std::atomic<bool> readback_early_complete{false};
-    /// O02 writer-footprint switch; default off. Draft A: proven subrange SetWriteTick only when 1.
-    std::atomic<bool> readback_writer_footprint{false};
     /// readback_relaxed_sites: code of the game (offsets of 256 byte blocks of its executable, as
     /// the readback site report shows them) whose reads of GPU written memory do not wait for
     /// the GPU. The read gets guest memory as it is (data of the previous download, a frame or
@@ -655,6 +680,9 @@ struct Tuning {
     /// stay on the graphics queue). Dependencies between the queues are tracked per 256 KB of
     /// guest memory and waited for with semaphores.
     std::atomic<bool> asc_queue{false};
+    /// Experimental: allow the independent compute scheduler to use its own CPU recorder.
+    /// Per-session mode still obeys threaded_recording; default and ordinary baseline stay off.
+    std::atomic<bool> compute_threaded_recording{false};
     /// Performance reports in the log: the per second counters line, slow frames, the CPU usage
     /// of the emulator threads and their profiles (perf_tuning.ini perf_log = 1). Off by default.
     std::atomic<bool> perf_log{false};
@@ -669,6 +697,23 @@ constexpr u64 AffinityAuto = ~0ULL;
 inline Tuning& GetTuning() {
     static Tuning tuning{};
     return tuning;
+}
+
+// Process-lifetime coverage in lightweight trials (perf_log can stay off). Updated only
+// inside an explicitly enabled feedback candidate, not on ordinary baseline operations.
+struct FeedbackActivity {
+    std::atomic<u64> checkpoint_attempts{}, checkpoint_submits{};
+    std::atomic<u64> writer_hits{}, writer_fallbacks{}, writer_reductions{};
+    std::atomic<u64> word_attempts{}, word_served{}, word_fallbacks{};
+    std::atomic<u64> word_bulk_queued{};
+    std::atomic<u64> word_cluster_served{};
+    std::atomic<u64> written_sync_skips{};
+    std::atomic<u64> image_sync_queries_skipped{}, image_sync_copies_skipped{};
+    std::atomic<u64> early_complete_submits{}, early_complete_fallbacks{};
+};
+inline FeedbackActivity& GetFeedbackActivity() {
+    static FeedbackActivity activity{};
+    return activity;
 }
 
 /// Frame x-ray in progress (Tuning::dump_frames): caches log what they do.
@@ -1003,6 +1048,19 @@ inline void OnFlip(float draws_per_frame, float dispatches_per_frame) {
                  t[ReadbackCompletionRequests], ms(t[ReadbackCompletionQueueNs]));
     }
 
+    if (t[FeedbackCheckpointAttempts] || t[FeedbackWriterHits] || t[FeedbackWriterFallbacks]) {
+        LOG_INFO(Debug, "Perf feedback: checkpoint attempts {} submits {} writer hits {} fallback {} reduced {}",
+                 t[FeedbackCheckpointAttempts], t[FeedbackCheckpointSubmits],
+                 t[FeedbackWriterHits], t[FeedbackWriterFallbacks], t[FeedbackWriterReductions]);
+    }
+    if (t[CommandSharpsDecoded] || t[CommandSharpsReused] || t[CommandSharpsFallback]) {
+        LOG_INFO(Debug, "Perf sharps: decoded {} reused {} fallback {}",
+                 t[CommandSharpsDecoded], t[CommandSharpsReused], t[CommandSharpsFallback]);
+    }
+    if (t[ComputeBarriersNarrowed] || t[ComputeBarriersFallback]) {
+        LOG_INFO(Debug, "Perf compute barriers: narrowed {} fallback {}",
+                 t[ComputeBarriersNarrowed], t[ComputeBarriersFallback]);
+    }
     const u64 last_flip = r.last_flip;
     const u64 flip_index = r.flip_index;
     const auto last_seen = r.last_seen;

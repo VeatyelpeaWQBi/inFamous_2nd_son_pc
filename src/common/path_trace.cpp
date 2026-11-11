@@ -5,6 +5,8 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <locale>
 #include <memory>
@@ -21,7 +23,8 @@
 namespace Common::PathTrace {
 namespace {
 constexpr u32 MaxThreads = 64;
-constexpr u32 Capacity = 512;
+// Bounded ~18 MiB total: absorb short CPU/I/O scheduling stalls during particle peaks.
+constexpr u32 Capacity = 4096;
 struct Entry {
     u64 sequence, ns, frame, id, a, b, c, d;
     Kind kind;
@@ -52,8 +55,26 @@ constexpr std::array Names{
     "read_return", "flip_request", "flip_prepare", "flip_ready", "flip_consume",
     "flip_present_return", "flip_done",
     "copy_record", "copy_publish_begin", "copy_publish_end", "gpu_dispatch_result", "frame_sample", "tuning_reload",
+    "submit_queued", "submit_driver_begin", "submit_driver_end", "flip_poll",
+    "feedback_checkpoint",
+    "gpu_dispatch_bounds", "gpu_copy_bounds", "gpu_session_bounds",
+    "word_load_result", "word_value_check",
+    "gpu_clock_calibration",
+    "flip_eop_register", "gnm_wait_begin", "gnm_wait_end", "word_prefetch_copy",
+    "gpu_session_workload",
+    "gpu_session_dispatch", "gpu_dispatch_geometry", "gfx_command_census", "read_target_ticks",
+    "flip_caller_sample", "particle_label_write", "particle_label_schedule", "cp_queue_slice",
+    "cp_asc_slice_work", "cp_asc_dispatch_phases", "cp_asc_binding_phases", "cp_asc_buffer_detail",
+    "readback_barrier_scope", "page_protect", "compute_scope_audit", "dispatch_pair_census",
+    "dispatch_pair_shader", "compute_output_range", "draw_batch_census", "indirect_args_census",
+    "readback_wait_scope", "readback_wait_layout", "readback_wait_span", "readback_wait_writer",
+    "compute_protect_scope", "compute_protect_binding", "compute_protect_binding_cost",
+    "draw_prep_slice", "draw_prep_phases_0", "draw_prep_phases_1", "draw_prep_resources",
+    "draw_prep_buffer_detail", "draw_prep_identity", "draw_prep_limit",
+    "draw_prep_phase",
+    "read_prefetch_job", "read_prefetch_batch",
 };
-static_assert(Names.size() == static_cast<u32>(Kind::TuningReload) + 1);
+static_assert(Names.size() == static_cast<u32>(Kind::ReadPrefetchBatch) + 1);
 struct State {
     std::array<Slot, MaxThreads> slots;
     std::atomic<u32> next_slot{0};
@@ -70,6 +91,12 @@ struct State {
     u64 initial_compute_hash{};
     u64 events{}, cutoff_publishers{};
     bool io_failed{};
+    bool page_protect_audit{};
+    bool compute_scope_audit{};
+    bool readback_wait_scope_audit{};
+    bool compute_protect_audit{};
+    bool draw_prep_audit{};
+    std::atomic<bool> draw_prep_cap_hit{};
 
     bool Drain() {
         bool any = false;
@@ -110,6 +137,11 @@ struct State {
              << ",\"gpu_profile_at_start\":" << initial_gpu_profile
              << ",\"compute_hash_at_start\":" << initial_compute_hash
              << ",\"queue_bytes\":" << sizeof(slots)
+             << ",\"draw_prep_audit\":" << (draw_prep_audit ? "true" : "false")
+             << ",\"draw_prep_protocol\":2"
+             << ",\"draw_prep_sample_period\":" << DrawPrepSamplePeriod
+             << ",\"draw_prep_sample_cap\":" << DrawPrepSampleCap
+             << ",\"draw_prep_cap_hit\":" << (draw_prep_cap_hit.load() ? "true" : "false")
              << ",\"guest_frame_semantics\":\"SubmitDone context only; not a causal frame ID\"}\n";
         meta.close();
         if (!meta) throw std::runtime_error("path trace metadata write failed");
@@ -157,10 +189,23 @@ std::atomic<State*> active{nullptr};
 State* retained{}; // Never freed: fault handlers can have loaded active immediately before Stop.
 } // namespace
 
-void Start(const std::filesystem::path& directory) noexcept {
+void Start(const std::filesystem::path& directory, bool paused) noexcept {
     if (retained) return; // One startup-only capture per process.
     try {
         auto state = std::make_unique<State>();
+        const char* draw_audit = std::getenv("IFSS_DRAW_PREP_AUDIT");
+        state->draw_prep_audit = draw_audit && std::strcmp(draw_audit, "1") == 0;
+        const char* audit = std::getenv("IFSS_PAGE_PROTECT_AUDIT");
+        state->page_protect_audit = audit && audit[0] == '1' && audit[1] == '\0';
+        const char* scope_audit = std::getenv("IFSS_COMPUTE_SCOPE_AUDIT");
+        state->compute_scope_audit =
+            scope_audit && scope_audit[0] == '1' && scope_audit[1] == '\0';
+        const char* wait_audit = std::getenv("IFSS_READBACK_WAIT_SCOPE_AUDIT");
+        state->readback_wait_scope_audit =
+            wait_audit && wait_audit[0] == '1' && wait_audit[1] == '\0';
+        const char* protect_audit = std::getenv("IFSS_COMPUTE_PROTECT_AUDIT");
+        state->compute_protect_audit =
+            protect_audit && protect_audit[0] == '1' && protect_audit[1] == '\0';
         state->directory = directory;
         state->file.open(directory / "path-trace.csv", std::ios::trunc);
         state->file.imbue(std::locale::classic());
@@ -173,12 +218,18 @@ void Start(const std::filesystem::path& directory) noexcept {
         State* ptr = state.get();
         state->worker = std::thread([ptr] { ptr->Run(); });
         retained = state.release();
-        active.store(retained, std::memory_order_release);
+        active.store(paused ? nullptr : retained, std::memory_order_release);
         LOG_INFO(Debug, "Critical path trace enabled: bounded {} byte queues, background CSV writer",
                  sizeof(retained->slots));
     } catch (const std::exception& e) {
         LOG_WARNING(Debug, "Critical path trace unavailable: {}", e.what());
     }
+}
+bool Resume() noexcept {
+    if (!retained || !retained->worker.joinable() ||
+        (retained->gate.load(std::memory_order_acquire) & 1)) return false;
+    active.store(retained, std::memory_order_release);
+    return true;
 }
 void Stop() noexcept {
     active.store(nullptr, std::memory_order_release);
@@ -197,10 +248,203 @@ u64 NextId() noexcept {
     State* state = active.load(std::memory_order_acquire);
     return state ? state->next_id.fetch_add(1, std::memory_order_relaxed) : 0;
 }
+bool IsActive() noexcept {
+    return active.load(std::memory_order_acquire) != nullptr;
+}
+namespace {
+thread_local u64 guest_submit_total_ns{};
+thread_local u64 guest_submit_start_ns{};
+std::atomic<u32> flip_caller_tid{};
+std::atomic<u64> sampled_particle_label{};
+}
+
+GuestSubmitScope::GuestSubmitScope() noexcept {
+    if (active.load(std::memory_order_acquire) && guest_submit_start_ns == 0) {
+        guest_submit_start_ns = Perf::NowNs();
+        outer = true;
+    }
+}
+
+GuestSubmitScope::~GuestSubmitScope() {
+    if (outer) {
+        guest_submit_total_ns += Perf::NowNs() - guest_submit_start_ns;
+        guest_submit_start_ns = 0;
+    }
+}
+
+void EmitFlipRegistration(u64 id, u64 buffer_id, u64 flip_arg) noexcept {
+    if (!id) {
+        return;
+    }
+    u64 encoded_cpu_ns = 0;
+#ifdef _WIN32
+    flip_caller_tid.store(GetCurrentThreadId(), std::memory_order_relaxed);
+    FILETIME creation{}, exit{}, kernel{}, user{};
+    if (GetThreadTimes(GetCurrentThread(), &creation, &exit, &kernel, &user)) {
+        const auto ticks = [](FILETIME t) {
+            return (static_cast<u64>(t.dwHighDateTime) << 32) | t.dwLowDateTime;
+        };
+        // Reserve zero for legacy records and failed queries.
+        encoded_cpu_ns = (ticks(kernel) + ticks(user)) * 100 + 1;
+    }
+#endif
+    const u64 submit_ns = guest_submit_total_ns +
+                          (guest_submit_start_ns ? Perf::NowNs() - guest_submit_start_ns : 0);
+    Emit(Kind::FlipEopRegister, id, buffer_id, flip_arg, encoded_cpu_ns, submit_ns + 1);
+}
+bool IsFlipCaller(u32 tid) noexcept {
+    return tid && tid == flip_caller_tid.load(std::memory_order_relaxed) &&
+           active.load(std::memory_order_acquire);
+}
+bool IsSampledParticleLabel(u64 address) noexcept {
+    return address && address == sampled_particle_label.load(std::memory_order_relaxed);
+}
+void EmitFlipCallerSample(u32 tid, u64 rip, u64 frame_return_hint, u64 label_hint,
+                          u32 label_threshold) noexcept {
+    if (label_hint) {
+        sampled_particle_label.store(label_hint, std::memory_order_relaxed);
+    }
+    const u64 caller = tid | (static_cast<u64>(label_threshold) << 32);
+    Emit(Kind::FlipCallerSample, NextId(), caller, rip, frame_return_hint, label_hint);
+}
+bool PageProtectAuditActive() noexcept {
+    const State* state = active.load(std::memory_order_acquire);
+    return state && state->page_protect_audit;
+}
+
+bool ReadbackWaitScopeAuditActive() noexcept {
+    const State* state = active.load(std::memory_order_acquire);
+    return state && state->readback_wait_scope_audit;
+}
+bool DrawPrepAuditActive() noexcept {
+    const State* state = active.load(std::memory_order_acquire);
+    return state && state->draw_prep_audit;
+}
+
+bool SampleComputeProtectScope() noexcept {
+    const State* state = active.load(std::memory_order_acquire);
+    if (!state || !state->compute_protect_audit) {
+        return false;
+    }
+    // Mix the ordinal to avoid taking the same slot in each recurring set of dispatches.
+    static thread_local u64 ordinal{};
+    const u64 sample = ++ordinal * 0x9e3779b97f4a7c15ULL;
+    return (sample >> 61) == 0;
+}
+
+ComputeProtectionScope::ComputeProtectionScope(u64 shader_hash) noexcept
+    : previous{current}, shader{shader_hash} {
+    // Retain real binding footprints only for the families dominating the prior scope audit.
+    binding_detail = shader == 0x9cd53a1f || shader == 0x46fccbf8 || shader == 0x31a66b7c ||
+                     shader == 0xb29d89a7 || shader == 0x4b4988c3 || shader == 0xc214b634;
+    current = this;
+}
+
+ComputeProtectionScope::~ComputeProtectionScope() {
+    FinishBinding();
+    current = previous;
+    Emit(Kind::ComputeProtectScope, NextId(), shader, calls,
+         (u64{same_binding} << 32) | different_binding, total_ns);
+}
+
+void ComputeProtectionScope::FinishBinding() noexcept {
+    if (!binding_detail || binding_calls == 0) {
+        return;
+    }
+    const u64 id = NextId();
+    Emit(Kind::ComputeProtectBinding, id, shader, (u64{binding} << 32) | binding_calls,
+         binding_address, binding_size);
+    Emit(Kind::ComputeProtectBindingCost, id, binding_ns, binding_bytes, binding_min, binding_end);
+    binding_calls = binding_ns = binding_bytes = 0;
+}
+
+void ComputeProtectionScope::Binding(u32 index, bool is_written, u64 address, u64 size) noexcept {
+    FinishBinding();
+    binding = index;
+    written = is_written;
+    binding_address = address;
+    binding_size = size;
+}
+
+void ComputeProtectionScope::Note(u64 address, u64 size, u64 view, bool no_access,
+                                  u64 elapsed_ns) noexcept {
+    if (!written || !no_access) {
+        last_eligible = false;
+        return;
+    }
+    ++calls;
+    total_ns += elapsed_ns;
+    if (binding_detail) {
+        binding_min = binding_calls == 0 ? address : std::min(binding_min, address);
+        binding_end = binding_calls == 0 ? address + size : std::max(binding_end, address + size);
+        ++binding_calls;
+        binding_ns += elapsed_ns;
+        binding_bytes += size;
+    }
+    if (last_eligible && view == last_view &&
+        (last_end == address || address + size == last_address)) {
+        if (last_binding == binding) {
+            ++same_binding;
+        } else {
+            ++different_binding;
+        }
+    }
+    last_eligible = true;
+    last_address = address;
+    last_end = address + size;
+    last_view = view;
+    last_binding = binding;
+}
+
 void Emit(Kind kind, u64 id, u64 a, u64 b, u64 c, u64 d) noexcept {
     if (!id) return;
     State* state = active.load(std::memory_order_acquire);
     if (!state) return;
+    if (state->draw_prep_audit && kind != Kind::DrawPrepSlice &&
+        kind != Kind::DrawPrepPhases0 && kind != Kind::DrawPrepPhases1 &&
+        kind != Kind::DrawPrepResources && kind != Kind::DrawPrepBufferDetail &&
+        kind != Kind::DrawPrepIdentity && kind != Kind::DrawPrepLimit &&
+        kind != Kind::DrawPrepPhase &&
+        kind != Kind::FrameSample && kind != Kind::FlipEopRegister &&
+        kind != Kind::SubmitQueued && kind != Kind::SubmitDriverBegin &&
+        kind != Kind::SubmitDriverEnd) {
+        return;
+    }
+    if (state->draw_prep_audit && kind == Kind::DrawPrepLimit) {
+        state->draw_prep_cap_hit.store(true, std::memory_order_relaxed);
+    }
+    if (state->compute_protect_audit && kind != Kind::ComputeProtectScope &&
+        kind != Kind::ComputeProtectBinding && kind != Kind::ComputeProtectBindingCost &&
+        kind != Kind::FrameSample) {
+        return;
+    }
+    if (state->readback_wait_scope_audit && kind != Kind::ReadbackWaitScope &&
+        kind != Kind::ReadbackWaitLayout && kind != Kind::ReadbackWaitSpan &&
+        kind != Kind::ReadbackWaitWriter && kind != Kind::CopyRecord &&
+        kind != Kind::FrameSample) {
+        return;
+    }
+    if (state->readback_wait_scope_audit && kind == Kind::CopyRecord) {
+        const auto& tuning = Perf::GetTuning();
+        const auto contains_page = [&](u64 address) {
+            const u64 page = address & ~u64{4095};
+            return address && a <= page && page < b;
+        };
+        if (!contains_page(tuning.trace_reads_lo.load(std::memory_order_relaxed)) &&
+            !contains_page(tuning.trace_writer_word.load(std::memory_order_relaxed))) {
+            return;
+        }
+    }
+    if (state->page_protect_audit && kind != Kind::PageProtect && kind != Kind::FrameSample &&
+        kind != Kind::CpQueueSlice) {
+        return;
+    }
+    if (state->compute_scope_audit && kind != Kind::ComputeScopeAudit &&
+        kind != Kind::DispatchPairCensus && kind != Kind::DispatchPairShader &&
+        kind != Kind::ComputeOutputRange && kind != Kind::DrawBatchCensus &&
+        kind != Kind::IndirectArgsCensus && kind != Kind::FrameSample) {
+        return;
+    }
     const u64 gate = state->gate.fetch_add(2, std::memory_order_acq_rel);
     if (gate & 1) {
         state->gate.fetch_sub(2, std::memory_order_release);

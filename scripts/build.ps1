@@ -1,11 +1,29 @@
 ﻿# SPDX-License-Identifier: GPL-2.0-or-later
 [CmdletBinding()]
-param([ValidateSet('RelWithDebInfo','Release','Debug')][string]$Configuration='RelWithDebInfo',[switch]$CleanFirst)
+param([ValidateSet('RelWithDebInfo','Release','Debug')][string]$Configuration='RelWithDebInfo',
+      [switch]$CleanFirst,[switch]$RendererInlineCandidate,
+      [ValidateSet('Off','Train','Use')][string]$RendererPgo='Off',
+      [string]$RendererPgoData)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'tools.ps1')
 . (Join-Path $PSScriptRoot 'build_tools.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 try{
+    if($RendererInlineCandidate -and $Configuration -ne 'RelWithDebInfo'){
+        throw 'RendererInlineCandidate is isolated to the existing RelWithDebInfo configuration.'
+    }
+    if($RendererPgo -ne 'Off' -and ($Configuration -ne 'RelWithDebInfo' -or $RendererInlineCandidate)){
+        throw 'Renderer PGO requires the ordinary RelWithDebInfo configuration.'
+    }
+    $profileData='';$profileHash=$null
+    if($RendererPgo -eq 'Use'){
+        if(-not $RendererPgoData){throw 'Renderer PGO Use requires RendererPgoData.'}
+        $profileData=(Resolve-ProjectChild $root $RendererPgoData).Replace('\','/')
+        if(-not(Test-Path -LiteralPath $profileData -PathType Leaf)){throw 'Missing indexed renderer profile.'}
+        $profileHash=(Get-FileHash -LiteralPath $profileData -Algorithm SHA256).Hash.ToLowerInvariant()
+    }elseif($RendererPgoData){
+        throw 'RendererPgoData requires RendererPgo Use.'
+    }
     $project=Read-JsonUtf8 (Join-Path $root 'project.json')
     $tools=Get-ProjectBuildTools $root
     $build=Resolve-ProjectChild $root ('Build/'+$Configuration)
@@ -44,6 +62,8 @@ try{
         (New-CMakePathArgument 'CMAKE_MAKE_PROGRAM' $tools.CMAKE_MAKE_PROGRAM),'-DCMAKE_EXPORT_COMPILE_COMMANDS=ON',
         '-DFETCHCONTENT_FULLY_DISCONNECTED=ON','-DFETCHCONTENT_UPDATES_DISCONNECTED=ON',
         '-DTRACY_ENABLE=OFF','-DSHADPS4_DIAGNOSTIC_MAP=ON')
+    $arguments+=('-DIFSS_RENDERER_INLINE_CANDIDATE:BOOL='+$(if($RendererInlineCandidate){'ON'}else{'OFF'}))
+    $arguments+=@("-DIFSS_RENDERER_PGO:STRING=$RendererPgo", "-DIFSS_RENDERER_PGO_DATA:FILEPATH=$profileData")
     $vtuneSdk=Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Intel/oneAPI/vtune/latest/sdk'
     $vtuneCommand=Get-Command vtune.exe -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1
     if($vtuneCommand){$vtuneSdk=Join-Path (Split-Path -Parent (Split-Path -Parent $vtuneCommand.Source)) 'sdk'}
@@ -55,12 +75,87 @@ try{
         if(Test-Path -LiteralPath $path -PathType Leaf){$arguments+=(New-CMakePathArgument $item[0] $path)}
     }
     Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND $arguments $root $environment
+    # Record the real commands and require the candidate to affect exactly these units.
+    # A cross-binary comparison must match the complete normalized command manifest;
+    # distinct EXE hashes are never disguised as a same-EXE runtime toggle.
+    $rendererFiles=@('src/video_core/renderer_vulkan/vk_pipeline_cache.cpp',
+        'src/video_core/renderer_vulkan/vk_rasterizer.cpp','src/video_core/buffer_cache/buffer_cache.cpp')
+    $pgoFiles=$rendererFiles+@('src/video_core/amdgpu/liverpool.cpp','src/video_core/page_manager.cpp',
+        'src/video_core/renderer_vulkan/vk_runtime.cpp')
+    $commands=Read-JsonUtf8 (Join-Path $build 'compile_commands.json')
+    $normalized=[Collections.Generic.List[string]]::new();$selected=@();$pgoSelected=@()
+    $pgoExitCommand=$null
+    foreach($entry in @($commands|Sort-Object output,file)){
+        $relative=Get-RelativePath $root $entry.file
+        $command=[string]$entry.command
+        if($relative.Replace('\','/') -in $rendererFiles){
+            if($RendererInlineCandidate){
+                if([regex]::Matches($command,' /Ob2(?= )').Count -ne 1 -or $command -notmatch ' /Ob1 .* /Ob2 '){
+                    throw ('Missing final /Ob2 on the intended renderer unit: '+$relative)
+                }
+                $command=[regex]::Replace($command,' /Ob2(?= )','')
+            }
+            $selected+=@{file=$relative;command=$entry.command;source_sha256=(Get-FileHash -LiteralPath $entry.file -Algorithm SHA256).Hash.ToLowerInvariant()}
+        }
+        if($relative.Replace('\','/') -in $pgoFiles){
+            $pgoSelected+=@{file=$relative;command=$entry.command}
+            if($RendererPgo -eq 'Train'){
+                $flags=' /clang:-fprofile-generate /clang:-fprofile-update=atomic'
+                if(-not $command.Contains($flags+' ')){throw ('Missing training flags: '+$relative)}
+                $command=$command.Replace($flags,'')
+            }elseif($RendererPgo -eq 'Use'){
+                $matchesProfile=[regex]::Matches($command,' (?:"/clang:-fprofile-use=[^"]+"|/clang:-fprofile-use="[^"]+"|/clang:-fprofile-use=\S+)(?= )')
+                if($matchesProfile.Count -ne 1 -or
+                   $matchesProfile[0].Value.Trim().Replace('"','') -cne ("/clang:-fprofile-use=$profileData")){
+                    throw ('Wrong renderer PGO profile in compiler command: '+$relative)
+                }
+                $command=$command.Remove($matchesProfile[0].Index,$matchesProfile[0].Length)
+                $warningsFlag=' /clang:-Werror=backend-plugin'
+                if(-not $command.Contains($warningsFlag+' ')){throw ('Missing profile mismatch diagnostic: '+$relative)}
+                $command=$command.Replace($warningsFlag,'')
+            }
+        }
+        if($relative.Replace('\','/') -eq 'src/emulator.cpp' -and $RendererPgo -eq 'Train'){
+            $exitFlag=' -DIFSS_RENDERER_PGO_TRAINING=1'
+            if(-not $command.Contains($exitFlag+' ')){throw 'Missing renderer profile export on training exit.'}
+            $pgoExitCommand=$entry.command
+            $command=$command.Replace($exitFlag,'')
+        }
+        if($command -match '(?:-fprofile-generate|-fprofile-update|-fprofile-use|-runtime-counter-relocation|IFSS_RENDERER_PGO_TRAINING=)'){
+            throw ('Unexpected renderer PGO compiler flags: '+$relative)
+        }
+        $normalized.Add($entry.output+"`0"+$entry.file+"`0"+$command)
+    }
+    if($selected.Count -ne 3 -or $pgoSelected.Count -ne 6){throw 'The renderer variant command manifest is incomplete.'}
+    if($RendererPgo -eq 'Train' -and -not $pgoExitCommand){throw 'Training exit command was not generated.'}
+    $digest=[Security.Cryptography.SHA256]::Create()
+    try{$commandSha=([BitConverter]::ToString($digest.ComputeHash([Text.Encoding]::UTF8.GetBytes(($normalized -join "`n"))))).Replace('-','').ToLowerInvariant()}
+    finally{$digest.Dispose()}
+    $generated=@(Get-ChildItem -LiteralPath (Join-Path $build 'include') -File -Recurse|Sort-Object FullName|ForEach-Object{
+        @{file=(Get-RelativePath $build $_.FullName);sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
+    })
+    $revisionSourceHash=(Get-FileHash -LiteralPath (Join-Path $build 'src/common/scm_rev.cpp') -Algorithm SHA256).Hash.ToLowerInvariant()
     $compileArguments=@('--build',$build,'--target','shadps4','--parallel','8')
     if($CleanFirst){$compileArguments+='--clean-first'}
     Invoke-ProjectBuildProcess $tools.CMAKE_COMMAND $compileArguments $root $environment
+    if($profileHash -and (Get-FileHash -LiteralPath $profileData -Algorithm SHA256).Hash.ToLowerInvariant() -cne $profileHash){
+        throw 'Indexed renderer profile changed during compilation.'
+    }
     # Failed configure/compile/link commands throw before this activation step.
     $null=Invoke-ProjectNativeTool 'build-identity' @('activate','--configuration',$Configuration,'--source-sha256',$snapshot.source_sha256)
     if($LASTEXITCODE -ne 0){throw 'Native build activation failed; the runtime was not switched.'}
+    $built=Read-JsonUtf8 (Join-Path $build 'build-receipt.json')
+    Write-JsonUtf8 (Join-Path $build 'compiler-variant.json') @{
+        schema=1;candidate='renderer-inline';enabled=[bool]$RendererInlineCandidate
+        configuration=$Configuration;source_sha256=$built.source_sha256;runtime_sha256=$built.runtime_sha256
+        pdb_sha256=$built.pdb_sha256;compiler=$tools.CMAKE_CXX_COMPILER
+        compiler_sha256=(Get-FileHash -LiteralPath $tools.CMAKE_CXX_COMPILER -Algorithm SHA256).Hash.ToLowerInvariant()
+        normalized_commands_sha256=$commandSha;renderer_commands=$selected;generated_headers=$generated
+        generated_revision_sha256=$revisionSourceHash
+        renderer_pgo=$RendererPgo;pgo_commands=$pgoSelected;pgo_data_sha256=$profileHash
+        pgo_exit_command=$pgoExitCommand
+        precision_policy='unchanged';game_started=$false;updated_utc=[DateTime]::UtcNow.ToString('o')
+    }
     Write-Host ('Build succeeded. run.bat and diagnostics now use Build/'+$Configuration+'/inFAMOUS Second Son.exe.')
     Write-Host 'No game or acceptance test was started. Run diagnostics/full.bat yourself to verify runtime fixes.'
 }catch{

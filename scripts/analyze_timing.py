@@ -11,7 +11,14 @@ from pathlib import Path
 KINDS = set("""read_request read_cp_begin read_cp_end read_completion_request read_dependencies
 read_copy read_wait_begin read_wait_end read_fallback_begin read_fallback_end read_return
 flip_request flip_prepare flip_ready flip_consume flip_present_return flip_done copy_record
-copy_publish_begin copy_publish_end gpu_dispatch_result frame_sample tuning_reload""".split())
+copy_publish_begin copy_publish_end gpu_dispatch_result frame_sample tuning_reload
+submit_queued submit_driver_begin submit_driver_end flip_poll feedback_checkpoint
+gpu_dispatch_bounds gpu_copy_bounds gpu_session_bounds word_load_result word_value_check
+flip_eop_register gnm_wait_begin gnm_wait_end word_prefetch_copy gpu_session_workload
+gpu_session_dispatch gpu_dispatch_geometry gfx_command_census readback_barrier_scope page_protect
+compute_scope_audit dispatch_pair_census dispatch_pair_shader compute_output_range draw_batch_census
+indirect_args_census readback_wait_scope readback_wait_layout readback_wait_span
+readback_wait_writer compute_protect_scope compute_protect_binding compute_protect_binding_cost""".split())
 FIELDS = ['thread', 'seq', 'ns', 'guest_frame', 'event', 'id', 'a', 'b', 'c', 'd']
 
 
@@ -181,6 +188,10 @@ def frame_summary(session, start, duration):
 def analyze(session, start=0, duration=None):
     launch = json.loads((session / 'launch.json').read_text(encoding='utf-8-sig'))
     profile = launch.get('timing_profile')
+    if profile is None and launch.get('super_capture_batch'):
+        batch = session.resolve().parents[2] / launch['super_capture_batch'] / 'capture.json'
+        if json.loads(batch.read_text(encoding='utf-8-sig')).get('critical_capture'):
+            profile = 'critical'
     if profile not in ('baseline', 'critical', 'lighting'):
         raise ValueError('session is not an explicit timing profile')
     result = {'schema': 1, 'session': session.name, 'profile': profile,
@@ -275,8 +286,15 @@ def analyze(session, start=0, duration=None):
     copy_links = set()
     published = set()
     producer_states, copy_queues = Counter(), Counter()
+    result['feedback_checkpoints'] = []
     for ident, events in groups.items():
         kinds = {e.kind for e in events}
+        for event in events:
+            if event.kind == 'feedback_checkpoint':
+                result['feedback_checkpoints'].append(dict(
+                    copy_id=ident, recorded_ns=event.ns, shader=hex(event.a),
+                    address=hex(event.b), size=event.c, graphics_writer_tick=event.d,
+                    limitation='CPU recording marker joined to copy_id; not GPU producer-end time'))
         try:
             if any(kind.startswith('read_') for kind in kinds):
                 if not {'read_request', 'read_return'} <= kinds:
@@ -310,7 +328,7 @@ def analyze(session, start=0, duration=None):
                     raise ValueError('publication changed identity, queue or version')
                 publications.append(ordered(begin, end))
                 published.add(ident)
-            elif kinds == {'gpu_dispatch_result'}:
+            elif 'gpu_dispatch_result' in kinds and kinds <= {'gpu_dispatch_result', 'gpu_dispatch_bounds'}:
                 e = one(events, 'gpu_dispatch_result')
                 gpu[(e.a, e.d)].append(e.c)
         except (ValueError, KeyError) as exc:

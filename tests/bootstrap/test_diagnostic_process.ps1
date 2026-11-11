@@ -20,6 +20,15 @@ try{
     if($code -ne 7){throw ('A nonzero phase exit code was lost: '+$code)}
     if([IO.File]::ReadAllText($outputPath).Trim() -ne 'phase-output'){throw 'Phase stdout was not redirected.'}
     if([IO.File]::ReadAllText($errorPath).Trim() -ne 'phase-error'){throw 'Phase stderr was not redirected.'}
+    $timeoutLog=Join-Path $testRoot 'timeout.log';$timedOut=$false
+    try{
+        Invoke-DiagnosticNative (Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe') @(
+            '-NoLogo','-NoProfile','-NonInteractive','-Command',
+            "[Console]::Out.WriteLine('before-timeout'); [Console]::Error.WriteLine('timeout-detail'); Start-Sleep -Seconds 5") $timeoutLog 1000
+    }catch{if($_.Exception.Message -notlike '*timed out after 1000 ms*'){throw};$timedOut=$true}
+    if(-not $timedOut -or -not(Test-Path -LiteralPath $timeoutLog)){throw 'Timed-out helper did not retain its output.'}
+    $timeoutText=[IO.File]::ReadAllText($timeoutLog)
+    if($timeoutText -notmatch 'before-timeout' -or $timeoutText -notmatch 'timeout-detail'){throw 'Helper timeout discarded diagnostic stdout/stderr.'}
     $self=[Diagnostics.Process]::GetCurrentProcess()
     try{
         $identity=Get-ProjectProcessIdentity $self
@@ -35,7 +44,7 @@ try{
     Write-Host 'Windows process identity, exit code and output redirection checks passed.'
 }finally{
     Assert-ProjectPath $projectRoot $testRoot
-    foreach($name in @('output.log','errors.log')){
+    foreach($name in @('output.log','errors.log','timeout.log')){
         $path=Join-Path $testRoot $name
         Assert-ProjectPath $projectRoot $path
         if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path -Force}

@@ -8,14 +8,11 @@ if "%~1"=="" (
     echo Offline only: does not launch the game. Game and other profilers must be stopped.
     exit /b 1
 )
-set "SESS=%~1"
-echo %SESS% | findstr /I /B /C:"state\sessions\" /C:"state/sessions/" >nul
-if errorlevel 1 set "SESS=state/sessions/%SESS%"
-"%PS%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\scripts\resume_super_full.ps1" -Session "%SESS%" %2 %3 %4
+"%PS%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\scripts\resume_super_full.ps1" -Session "%~1" %2 %3 %4
 set "RESULT=%errorlevel%"
 echo.
 if "%RESULT%"=="0" (
-    echo Offline Full VTune recovery succeeded.
+    echo Offline Full VTune command completed. Check diagnostics\recovery\status.json for the final status.
 ) else (
     echo Offline Full VTune recovery FAILED. Exit code: %RESULT%
     echo Check state\sessions\...\diagnostics\recovery\status.json

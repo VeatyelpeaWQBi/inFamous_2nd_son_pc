@@ -7,6 +7,11 @@ if($PSVersionTable.PSVersion.Major -ne 5){throw 'Use the installed Windows Power
 . (Join-Path $PSScriptRoot 'tools.ps1')
 . (Join-Path $PSScriptRoot 'diagnostic_tools.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+if($Session -match '^[A-Za-z0-9][A-Za-z0-9_-]*$'){
+    $Session='state/sessions/'+$Session
+}elseif($Session -match '^state[\\/]sessions[\\/]([A-Za-z0-9][A-Za-z0-9_-]*)[\\/]?$'){
+    $Session='state/sessions/'+$Matches[1]
+}
 $record=Read-ProjectSession $root $Session;$sessionPath=$record.Path;$launch=$record.Launch
 $dir=Join-Path $sessionPath 'diagnostics';$plan=Read-JsonUtf8 (Join-Path $dir 'plan.json')
 if($plan.profile -ne 'full' -or -not $plan.PSObject.Properties['super_capture']){throw 'This is not a Full super session.'}

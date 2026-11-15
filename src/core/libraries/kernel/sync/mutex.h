@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 
 #include "common/types.h"
@@ -50,6 +51,27 @@ public:
     template <class Clock, class Duration>
     bool try_lock_until(const std::chrono::time_point<Clock, Duration>& abs_time) {
 #ifdef _WIN64
+        if (fast) {
+            if (TryLockFast()) {
+                return true;
+            }
+            for (;;) {
+                const auto now = Clock::now();
+                if (abs_time <= now) {
+                    return false;
+                }
+                if (state.exchange(Contended, std::memory_order_acquire) == Unlocked) {
+                    return true;
+                }
+                const auto rel_ms = std::chrono::ceil<std::chrono::milliseconds>(abs_time - now);
+                constexpr s64 MaxFiniteWait = static_cast<s64>(INFINITE) - 1;
+                const DWORD timeout_ms = static_cast<DWORD>(
+                    rel_ms.count() < MaxFiniteWait ? rel_ms.count() : MaxFiniteWait);
+                if (WaitForSingleObjectEx(mtx, timeout_ms, true) == WAIT_TIMEOUT) {
+                    return false;
+                }
+            }
+        }
         for (;;) {
             const auto now = Clock::now();
             if (abs_time <= now) {
@@ -71,7 +93,23 @@ public:
 
 private:
 #ifdef _WIN64
-    HANDLE mtx;
+    // Contended: a thread may be asleep on the event, so unlock must signal it.
+    static constexpr u32 Unlocked = 0;
+    static constexpr u32 Locked = 1;
+    static constexpr u32 Contended = 2;
+
+    bool TryLockFast() noexcept {
+        u32 expected = Unlocked;
+        return state.load(std::memory_order_relaxed) == Unlocked &&
+               state.compare_exchange_strong(expected, Locked, std::memory_order_acquire,
+                                             std::memory_order_relaxed);
+    }
+    void LockContended();
+
+    /// Kernel mutex when the fast path is off; otherwise an auto-reset event.
+    HANDLE mtx{};
+    std::atomic<u32> state{Unlocked};
+    bool fast{};
 #else
     std::timed_mutex mtx;
 #endif

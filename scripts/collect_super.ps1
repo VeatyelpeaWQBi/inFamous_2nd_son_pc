@@ -28,6 +28,7 @@ param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$TrialId,
     [switch]$CandidateBaseline,
     [switch]$NormalRendering,
+    [ValidateSet('off','stats','fast','fast-stats')][string]$GuestMutex='off',
     [ValidatePattern('^(?:[0-9a-fA-F]{1,16})?$')][string]$PerformanceCoreMask='',
     [ValidatePattern('^(?:[0-9a-fA-F]{1,16})?$')][string]$ComputeTimingHash='',
     [ValidateRange(0,20)][int]$ComputeTimingStartSeconds=0,
@@ -107,6 +108,16 @@ if($SecondFeedbackTraceAddress){
     if(-not $secondWord -or ($secondWord -band 3)){throw 'SecondFeedbackTraceAddress must be a nonzero aligned word.'}
     if($secondWord -eq $traceWord){throw 'SecondFeedbackTraceAddress must differ from the primary address.'}
 }
+$guestMutexStats=$GuestMutex -in @('stats','fast-stats')
+$guestMutexFast=$GuestMutex -in @('fast','fast-stats')
+if($GuestMutex -ne 'off'){
+    # One release per process: the mode is fixed at startup, so A and B are separate runs.
+    if(-not $PSBoundParameters.ContainsKey('Rounds')){$Rounds=1}
+    if($FullCapture -or $CpuHotspots -or $RendererPgoTrial -ne 'Off' -or $EnvironmentProbeSeconds -or
+       $Candidate -ne 'none' -or $ProbeCandidate -or $Experiment -ne 'none' -or $auditCount -or $DrawPrepAudit -or $Rounds -ne 1){
+        throw 'Guest mutex options require one native release without another candidate, experiment or audit.'
+    }
+}
 if($CandidateBaseline -and $Candidate -eq 'none'){throw 'CandidateBaseline requires Candidate.'}
 if($Candidate -in @('readback-copy-stage','image-read-transition','feedback-arena','vertex-input-key','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled') -and
    (($CriticalCapture -and $Candidate -notin @('feedback-arena','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled')) -or $Profile -notin @('suite','lightweight'))){
@@ -124,7 +135,7 @@ if($Candidate -ne 'none'){
 if($simpleNative){
     $MinimumWarmup=0;$MaximumWarmup=0
     if(-not $EnvironmentProbeSeconds -and -not $CpuHotspots -and $RendererPgoTrial -eq 'Off' -and $Candidate -eq 'none' -and
-       -not $PSBoundParameters.ContainsKey('Experiment') -and $Profile -in @('suite','lightweight','counters')){
+       $GuestMutex -eq 'off' -and -not $PSBoundParameters.ContainsKey('Experiment') -and $Profile -in @('suite','lightweight','counters')){
         $Experiment='compute-barriers'
     }
     if($Experiment -ne 'none' -and $Rounds % 2 -ne 0){throw 'Native comparison uses A then B: use -Rounds 2 (or an explicitly requested even count).'}
@@ -224,7 +235,7 @@ function Assert-SuperLive {
     if($launcher -and $launcher.HasExited){throw 'The game launcher exited before collection finished; see launcher logs.'}
     if($CriticalCapture -and $record){
         $trace=Join-Path $record.Path 'path-trace.csv'
-        if((Test-Path -LiteralPath $trace) -and (Get-Item -LiteralPath $trace).Length -gt 64MB){throw 'Critical trace exceeded 64 MiB; raw data preserved.'}
+        if((Test-Path -LiteralPath $trace) -and (Get-Item -LiteralPath $trace).Length -gt 128MB){throw 'Critical trace exceeded 128 MiB; raw data preserved.'}
     }
     $volume=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($root))
     if($volume.AvailableFreeSpace -lt 2GB){throw 'Free disk space is below 2 GiB; collection stopped.'}
@@ -532,6 +543,7 @@ try{
         experiment=$Experiment;variant_order=if($Candidate -ne 'none'){'independent single trial'}elseif($Experiment -eq 'none'){'baseline'}else{'AB repeated'}
         candidate=$Candidate;candidate_baseline=[bool]$CandidateBaseline;independent_trial=($Candidate -ne 'none')
         normal_rendering=[bool]$NormalRendering
+        guest_mutex=$GuestMutex
         draw_prep_audit=[bool]$DrawPrepAudit
         observe_environment=[bool]$ObserveEnvironment
         environment_probe_seconds=$EnvironmentProbeSeconds;environment_probe=$null
@@ -543,7 +555,7 @@ try{
     Save-SuperBatch
     Write-Host ('采集批次：'+(Get-RelativePath $root $batchPath))
     if($FullCapture){Write-Host ('复用已有缓存；自动读档、充能及释放 '+$Rounds+' 次，不追加大招预热；新编译单独标记。')}
-    elseif($CriticalCapture){Write-Host 'Critical trace: reuse cache, one release, no additional warmup; stop above 64 MiB.'}
+    elseif($CriticalCapture){Write-Host 'Critical trace: reuse cache, one release, no additional warmup; stop above 128 MiB.'}
     elseif($Experiment -ne 'none'){Write-Host ('简易采集共 '+$Rounds+' 次：A 关闭优化，B 开启优化；单一采集档，复用缓存，不追加预热或自动重跑。')}
     else{Write-Host ('简易采集共 '+$Rounds+' 次；单一采集档，复用缓存，不追加预热或自动重跑。')}
     Write-Host '采集期间请勿移动人物、操作菜单或切换能力。脚本不分析结果，也不回存正式存档。'
@@ -567,6 +579,8 @@ try{
     if($CpuHotspots){$arguments+='-CpuHotspots'}
     if($RendererPgoTrial -ne 'Off'){$arguments+=@('-RendererPgoTrial',$RendererPgoTrial)}
     $arguments+=@(Get-SuperStartupArguments $Candidate ([bool]$CandidateBaseline))
+    if($guestMutexStats){$arguments+='-GuestMutexStats'}
+    if($guestMutexFast){$arguments+='-GuestMutexFast'}
     $launcherOptions=@{
         FilePath=$powerShell;ArgumentList=(($arguments|ForEach-Object{Quote-WindowsArgument $_}) -join ' ')
         WorkingDirectory=$root;WindowStyle='Hidden';PassThru=$true
@@ -611,6 +625,12 @@ try{
         $null=Get-SuperSnapshot
         Update-DiagnosticAutomation $root $session $plan $navigation $navigationClock.Elapsed.TotalSeconds
         Wait-SuperSeconds 2
+    }
+    # The engine reads the mode once at startup and reports what it actually runs.
+    $mutexReceipt=(Get-SuperSnapshot).PSObject.Properties['guest_mutex']
+    if($GuestMutex -ne 'off' -and -not $mutexReceipt){throw 'This engine build does not report the guest mutex mode; rebuild it first.'}
+    if($mutexReceipt -and ([bool]$mutexReceipt.Value.stats -ne $guestMutexStats -or [bool]$mutexReceipt.Value.fast_path -ne $guestMutexFast)){
+        throw 'Guest mutex mode reported by the engine does not match the request.'
     }
     if($Candidate -in @('c73-scan','particle-poll-pause')){
         $gameLog=Join-Path $record.Path 'log/CUSA00309.log'

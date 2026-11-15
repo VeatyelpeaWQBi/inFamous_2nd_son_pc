@@ -29,6 +29,7 @@
 #include "common/path_util.h"
 #include "core/emulator_settings.h"
 #include "core/debug_state.h"
+#include "core/libraries/kernel/threads/mutex_stats.h"
 #include "core/second_son_cheats.h"
 #include "core/second_son_controls.h"
 #include "input/controller.h"
@@ -111,6 +112,30 @@ nlohmann::json ThreadCpuStatus() {
             result[ThreadCpuKeys[i]].update({{"cpu_percent", s.cpu}, {"kernel_percent", s.kernel},
                 {"window_seconds", s.seconds}, {"sample_age_ms", static_cast<double>(now - s.observed_ns) / 1e6}});
         }
+    }
+    return result;
+}
+nlohmann::json GuestMutexCountsStatus(const Libraries::Kernel::GuestMutexCounts& counts) {
+    return {{"locks", counts.locks}, {"try_locks", counts.try_locks},
+        {"try_failures", counts.try_failures},
+        {"wait_count", counts.wait.count}, {"wait_ns", counts.wait.ns},
+        {"hold_count", counts.hold.count}, {"hold_ns", counts.hold.ns}};
+}
+// Cumulative since process start; compare two snapshots to get an interval.
+nlohmann::json GuestMutexStatus() {
+    const auto report = Libraries::Kernel::GetGuestMutexReport(12);
+    nlohmann::json result{{"stats", report.stats}, {"fast_path", report.fast_path},
+        {"fast_path_spins", report.fast_path_spins}};
+    if (!report.stats) return result;
+    result.update({{"bucket_upper_us", {1, 4, 16, 64, 256, 1024, 4096, nullptr}},
+        {"created", report.created}, {"destroyed", report.destroyed},
+        {"all", GuestMutexCountsStatus(report.all)},
+        {"main", GuestMutexCountsStatus(report.main)}});
+    auto& top = result["top"] = nlohmann::json::array();
+    for (const auto& entry : report.top) {
+        top.push_back({{"name", entry.name}, {"address", entry.address}, {"type", entry.type},
+            {"all", GuestMutexCountsStatus(entry.all)},
+            {"main", GuestMutexCountsStatus(entry.main)}});
     }
     return result;
 }
@@ -678,6 +703,7 @@ void Poll(Input::GameController& controller) {
                 {"native_graphics_compute", native_graphics_compute.load(std::memory_order_relaxed)},
             };
             status["thread_cpu"] = ThreadCpuStatus();
+            status["guest_mutex"] = GuestMutexStatus();
             if (tuning.gpu_threads_affinity.load() == Common::Perf::AffinityAuto) {
                 status["gpu_threads_affinity"] = "auto";
             }

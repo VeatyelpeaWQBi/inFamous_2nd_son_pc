@@ -13,6 +13,7 @@ param([ValidateSet('auto','720p','900p','1080p','1440p','1800p','pro4k')][string
       [switch]$FeedbackArenaPoolCandidate,[switch]$SuperPool,
       [switch]$FeedbackArenaTiledCandidate,
       [switch]$VertexInputKeyCandidate,
+      [switch]$GuestMutexStats,[switch]$GuestMutexFast,
       [ValidateSet('Off','Train','Use')][string]$RendererPgoTrial='Off',
       [ValidateSet('none','cpu','gpu','memory','compute','draw','validation','crash','shaders','renderdoc','nsight','vtune','vtune-memory','all','full')][string]$Diagnostic='none',
       [ValidateRange(-1,3600)][int]$DiagnosticDelaySeconds=90,[ValidateRange(10,600)][int]$DiagnosticSeconds=60)
@@ -31,6 +32,11 @@ if(($C73ScanCandidate -or $ParticlePollPauseCandidate -or $AccessUnionCandidate 
     $VertexInputKeyCandidate -or $FeedbackArenaGroupCandidate -or $FeedbackArenaPoolCandidate -or $FeedbackArenaTiledCandidate) -and
    (-not $SuperCapture -or -not $SuperCaptureBatch -or $isDiagnostic)){
     throw 'Experimental patch requires an owned native super capture.'
+}
+# The fast guest mutex may also be played by hand; its counters are read by a capture only.
+if(($GuestMutexStats -or $GuestMutexFast) -and ($Benchmark -or $isDiagnostic -or $isTiming -or $CpuHotspots -or
+    $RendererPgoTrial -ne 'Off' -or ($GuestMutexStats -and (-not $SuperCapture -or -not $SuperCaptureBatch)))){
+    throw 'Guest mutex options require a manual run or an owned native super capture.'
 }
 if($CpuHotspots -and (-not $SuperCapture -or -not $SuperCaptureBatch -or $isDiagnostic -or $CriticalCapture)){
     throw 'CPU control is restricted to an owned native super CPU diagnostic.'
@@ -353,6 +359,8 @@ try{
         manual_super_pool=[bool]$SuperPool
         feedback_arena_tiled_candidate=[bool]$FeedbackArenaTiledCandidate
         vertex_input_key_candidate=[bool]$VertexInputKeyCandidate
+        guest_mutex_stats=[bool]$GuestMutexStats
+        guest_mutex_fast=[bool]$GuestMutexFast
         renderer_pgo=$RendererPgoTrial
         engine_policy='core-v1-v2'
         timing_profile=if($isTiming){$TimingProfile}else{$null};timing_overrides=$timingOverrides;timing_config_overrides=$timingConfigOverrides
@@ -392,6 +400,11 @@ try{
     if($FeedbackArenaCandidate){$start.EnvironmentVariables['IFSS_FEEDBACK_ARENA']='1'}
     $start.EnvironmentVariables.Remove('IFSS_VERTEX_INPUT_KEY')
     if($VertexInputKeyCandidate){$start.EnvironmentVariables['IFSS_VERTEX_INPUT_KEY']='1'}
+    foreach($name in @('IFSS_GUEST_MUTEX_STATS','IFSS_GUEST_MUTEX_FAST','IFSS_GUEST_MUTEX_SPINS')){
+        $start.EnvironmentVariables.Remove($name)
+    }
+    if($GuestMutexStats){$start.EnvironmentVariables['IFSS_GUEST_MUTEX_STATS']='1'}
+    if($GuestMutexFast){$start.EnvironmentVariables['IFSS_GUEST_MUTEX_FAST']='1'}
     $start.EnvironmentVariables.Remove('LLVM_PROFILE_FILE')
     if($RendererPgoTrial -eq 'Train'){
         $start.EnvironmentVariables['LLVM_PROFILE_FILE']=Join-Path $session 'renderer-pgo.profraw'

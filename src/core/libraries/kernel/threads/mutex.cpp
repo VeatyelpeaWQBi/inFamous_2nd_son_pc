@@ -1,7 +1,18 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <bit>
+#include <chrono>
+#include <cstdlib>
+#include <mutex>
+#include <new>
+#include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 #include <fmt/format.h>
 
 #include "common/arch.h"
@@ -9,6 +20,7 @@
 #include "common/types.h"
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/kernel/posix_error.h"
+#include "core/libraries/kernel/threads/mutex_stats.h"
 #include "core/libraries/kernel/threads/pthread.h"
 #include "core/libraries/libs.h"
 
@@ -16,6 +28,230 @@ namespace Libraries::Kernel {
 
 static constexpr u32 MUTEX_ADAPTIVE_SPINS = 2000;
 static std::mutex MutxStaticLock;
+
+namespace {
+
+struct MutexHistogram {
+    std::array<std::atomic<u64>, GuestMutexBuckets> count{};
+    std::array<std::atomic<u64>, GuestMutexBuckets> ns{};
+};
+
+struct MutexCounters {
+    std::atomic<u64> locks{};
+    std::atomic<u64> try_locks{};
+    std::atomic<u64> try_failures{};
+    MutexHistogram wait;
+    MutexHistogram hold;
+};
+
+} // namespace
+
+struct PthreadMutexStats {
+    std::string name;
+    u64 address{};
+    u32 type{};
+    /// Position in the list of live mutexes.
+    size_t index{};
+    /// Written and read by the thread that holds the mutex.
+    u64 acquired_ns{};
+    MutexCounters all;
+    MutexCounters main;
+};
+
+namespace {
+
+thread_local bool IsGuestMainThread{};
+
+bool StatsEnabled() noexcept {
+    static const bool enabled = [] {
+        const char* value = std::getenv("IFSS_GUEST_MUTEX_STATS");
+        return value && value[0] == '1' && value[1] == '\0';
+    }();
+    return enabled;
+}
+
+u64 StatsNowNs() noexcept {
+    return static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count());
+}
+
+/// Every counter except try_failures is written by the thread that holds the guest mutex, so
+/// writers never overlap; the atomics only make the unlocked read of the report well defined.
+void Add(std::atomic<u64>& counter, u64 value) noexcept {
+    counter.store(counter.load(std::memory_order_relaxed) + value, std::memory_order_relaxed);
+}
+
+void Add(MutexHistogram& histogram, u64 ns) noexcept {
+    const u64 us = ns / 1000;
+    const size_t bucket =
+        std::min<size_t>(GuestMutexBuckets - 1, (static_cast<size_t>(std::bit_width(us)) + 1) / 2);
+    Add(histogram.count[bucket], 1);
+    Add(histogram.ns[bucket], ns);
+}
+
+void RecordLock(PthreadMutexStats& stats, u64 wait_begin_ns) noexcept {
+    const u64 now = StatsNowNs();
+    const u64 waited = now - wait_begin_ns;
+    stats.acquired_ns = now;
+    Add(stats.all.locks, 1);
+    Add(stats.all.wait, waited);
+    if (IsGuestMainThread) {
+        Add(stats.main.locks, 1);
+        Add(stats.main.wait, waited);
+    }
+}
+
+void RecordTryLock(PthreadMutexStats& stats, bool acquired) noexcept {
+    if (!acquired) {
+        stats.all.try_failures.fetch_add(1, std::memory_order_relaxed);
+        if (IsGuestMainThread) {
+            stats.main.try_failures.fetch_add(1, std::memory_order_relaxed);
+        }
+        return;
+    }
+    stats.acquired_ns = StatsNowNs();
+    Add(stats.all.try_locks, 1);
+    if (IsGuestMainThread) {
+        Add(stats.main.try_locks, 1);
+    }
+}
+
+void RecordUnlock(PthreadMutexStats& stats) noexcept {
+    const u64 held = StatsNowNs() - stats.acquired_ns;
+    Add(stats.all.hold, held);
+    if (IsGuestMainThread) {
+        Add(stats.main.hold, held);
+    }
+}
+
+void Accumulate(GuestMutexHistogram& total, const MutexHistogram& histogram) noexcept {
+    for (size_t i = 0; i < GuestMutexBuckets; ++i) {
+        total.count[i] += histogram.count[i].load(std::memory_order_relaxed);
+        total.ns[i] += histogram.ns[i].load(std::memory_order_relaxed);
+    }
+}
+
+void Accumulate(GuestMutexCounts& total, const MutexCounters& counters) noexcept {
+    total.locks += counters.locks.load(std::memory_order_relaxed);
+    total.try_locks += counters.try_locks.load(std::memory_order_relaxed);
+    total.try_failures += counters.try_failures.load(std::memory_order_relaxed);
+    Accumulate(total.wait, counters.wait);
+    Accumulate(total.hold, counters.hold);
+}
+
+struct StatsRegistry {
+    std::mutex mutex;
+    std::vector<PthreadMutexStats*> live;
+    u64 created{};
+    u64 destroyed{};
+    GuestMutexCounts retired_all;
+    GuestMutexCounts retired_main;
+};
+
+StatsRegistry& Registry() {
+    // Leaked on purpose: guest threads may still create and destroy mutexes during process exit.
+    static StatsRegistry* const registry = new StatsRegistry;
+    return *registry;
+}
+
+PthreadMutexStats* RegisterStats(const PthreadMutex& mutex, const PthreadMutexT* slot,
+                                 PthreadMutexType type) {
+    auto* stats = new (std::nothrow) PthreadMutexStats{};
+    if (stats == nullptr) {
+        return nullptr;
+    }
+    stats->name = mutex.name;
+    stats->address = reinterpret_cast<u64>(slot);
+    stats->type = static_cast<u32>(type);
+
+    auto& registry = Registry();
+    std::scoped_lock lock{registry.mutex};
+    stats->index = registry.live.size();
+    registry.live.push_back(stats);
+    ++registry.created;
+    return stats;
+}
+
+void RetireStats(PthreadMutexStats* stats) {
+    auto& registry = Registry();
+    {
+        std::scoped_lock lock{registry.mutex};
+        Accumulate(registry.retired_all, stats->all);
+        Accumulate(registry.retired_main, stats->main);
+        registry.live.back()->index = stats->index;
+        registry.live[stats->index] = registry.live.back();
+        registry.live.pop_back();
+        ++registry.destroyed;
+    }
+    delete stats;
+}
+
+} // namespace
+
+void MarkGuestMainThread() noexcept {
+    IsGuestMainThread = true;
+}
+
+GuestMutexReport GetGuestMutexReport(size_t top_count) {
+    GuestMutexReport report;
+    report.stats = StatsEnabled();
+    report.fast_path = GuestMutexFastPathEnabled();
+    report.fast_path_spins = GuestMutexFastPathSpins();
+    if (!report.stats) {
+        return report;
+    }
+
+    auto& registry = Registry();
+    std::scoped_lock lock{registry.mutex};
+    report.created = registry.created;
+    report.destroyed = registry.destroyed;
+    report.all = registry.retired_all;
+    report.main = registry.retired_main;
+
+    struct Ranked {
+        u64 wait_ns;
+        u64 main_wait_ns;
+        const PthreadMutexStats* stats;
+        bool reported;
+    };
+    std::vector<Ranked> ranked;
+    ranked.reserve(registry.live.size());
+    for (const PthreadMutexStats* stats : registry.live) {
+        GuestMutexHistogram all_wait;
+        GuestMutexHistogram main_wait;
+        Accumulate(all_wait, stats->all.wait);
+        Accumulate(main_wait, stats->main.wait);
+        Accumulate(report.all, stats->all);
+        Accumulate(report.main, stats->main);
+        if (const u64 wait_ns = all_wait.TotalNs(); wait_ns != 0) {
+            ranked.push_back({wait_ns, main_wait.TotalNs(), stats, false});
+        }
+    }
+
+    // The mutexes all threads waited longest for, then the ones the main thread waited longest
+    // for: worker threads wait far more in total and would otherwise hide the main thread's.
+    top_count = std::min(top_count, ranked.size());
+    const auto report_first = [&](u64 Ranked::* key) {
+        std::partial_sort(ranked.begin(), ranked.begin() + top_count, ranked.end(),
+                          [key](const Ranked& a, const Ranked& b) { return a.*key > b.*key; });
+        for (size_t i = 0; i < top_count; ++i) {
+            if (ranked[i].*key == 0 || std::exchange(ranked[i].reported, true)) {
+                continue;
+            }
+            const PthreadMutexStats& stats = *ranked[i].stats;
+            auto& entry = report.top.emplace_back();
+            entry.name = stats.name;
+            entry.address = stats.address;
+            entry.type = stats.type;
+            Accumulate(entry.all, stats.all);
+            Accumulate(entry.main, stats.main);
+        }
+    };
+    report_first(&Ranked::wait_ns);
+    report_first(&Ranked::main_wait_ns);
+    return report;
+}
 
 #define THR_MUTEX_INITIALIZER ((PthreadMutex*)NULL)
 #define THR_ADAPTIVE_MUTEX_INITIALIZER ((PthreadMutex*)1)
@@ -81,6 +317,9 @@ static s32 MutexInit(PthreadMutexT* mutex, const PthreadMutexAttr* mutex_attr, c
         pmutex->m_spinloops = MUTEX_ADAPTIVE_SPINS;
         // pmutex->m_yieldloops = _thr_yieldloops;
     }
+    if (StatsEnabled()) [[unlikely]] {
+        pmutex->m_stats = RegisterStats(*pmutex, mutex, attr->m_type);
+    }
 
     *mutex = pmutex;
     return 0;
@@ -119,6 +358,9 @@ s32 PS4_SYSV_ABI posix_pthread_mutex_destroy(PthreadMutexT* mutex) {
         return POSIX_EBUSY;
     }
     *mutex = THR_MUTEX_DESTROYED;
+    if (m->m_stats) [[unlikely]] {
+        RetireStats(m->m_stats);
+    }
     delete m;
     return 0;
 }
@@ -197,6 +439,7 @@ s32 PthreadMutex::Lock(const OrbisKernelTimespec* abstime, u64 usec) {
     if (m_owner.load(std::memory_order_acquire) == curthread) {
         return SelfLock(abstime, usec);
     }
+    const u64 wait_begin_ns = m_stats ? StatsNowNs() : 0;
 
     /*
      * For adaptive mutexes, spin for a bit in the expectation
@@ -209,6 +452,9 @@ s32 PthreadMutex::Lock(const OrbisKernelTimespec* abstime, u64 usec) {
         while (count--) {
             if (m_lock.try_lock()) {
                 m_owner.store(curthread, std::memory_order_release);
+                if (m_stats) [[unlikely]] {
+                    RecordLock(*m_stats, wait_begin_ns);
+                }
                 return 0;
             }
             CPU_SPINWAIT;
@@ -219,6 +465,9 @@ s32 PthreadMutex::Lock(const OrbisKernelTimespec* abstime, u64 usec) {
             std::this_thread::yield();
             if (m_lock.try_lock()) {
                 m_owner.store(curthread, std::memory_order_release);
+                if (m_stats) [[unlikely]] {
+                    RecordLock(*m_stats, wait_begin_ns);
+                }
                 return 0;
             }
         }
@@ -239,6 +488,9 @@ s32 PthreadMutex::Lock(const OrbisKernelTimespec* abstime, u64 usec) {
     }
     if (ret == 0) {
         m_owner.store(curthread, std::memory_order_release);
+        if (m_stats) [[unlikely]] {
+            RecordLock(*m_stats, wait_begin_ns);
+        }
     }
     return ret;
 }
@@ -251,6 +503,9 @@ s32 PthreadMutex::TryLock() {
     const s32 ret = m_lock.try_lock() ? 0 : POSIX_EBUSY;
     if (ret == 0) {
         m_owner.store(curthread, std::memory_order_release);
+    }
+    if (m_stats) [[unlikely]] {
+        RecordTryLock(*m_stats, ret == 0);
     }
     return ret;
 }
@@ -291,6 +546,9 @@ s32 PthreadMutex::Unlock() {
         const bool deferred = True(m_flags & PthreadMutexFlags::Deferred);
         m_flags &= ~PthreadMutexFlags::Deferred;
 
+        if (m_stats) [[unlikely]] {
+            RecordUnlock(*m_stats);
+        }
         m_owner.store(nullptr, std::memory_order_release);
         m_lock.unlock();
 

@@ -335,6 +335,7 @@ set(KERNEL_LIB src/core/libraries/kernel/coredump/coredump.cpp
                src/core/libraries/kernel/threads/exception.h
                src/core/libraries/kernel/threads/exception_codes.h
                src/core/libraries/kernel/threads/mutex.cpp
+               src/core/libraries/kernel/threads/mutex_stats.h
                src/core/libraries/kernel/threads/pthread_attr.cpp
                src/core/libraries/kernel/threads/pthread_clean.cpp
                src/core/libraries/kernel/threads/pthread.cpp

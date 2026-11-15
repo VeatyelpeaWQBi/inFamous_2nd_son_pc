@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 
 #include "common/types.h"
@@ -14,6 +15,13 @@
 #endif
 
 namespace Libraries::Kernel {
+
+/// Experimental, off by default, selected once per process by IFSS_GUEST_MUTEX_FAST=1 (Windows):
+/// a guest mutex takes and releases an uncontended lock in user mode and only enters the kernel
+/// to sleep or to wake a sleeper. The default is one kernel mutex object per guest mutex.
+bool GuestMutexFastPathEnabled() noexcept;
+/// Attempts in user mode before a contended fast path lock sleeps (IFSS_GUEST_MUTEX_SPINS).
+u32 GuestMutexFastPathSpins() noexcept;
 
 class TimedMutex {
 public:
@@ -50,6 +58,27 @@ public:
     template <class Clock, class Duration>
     bool try_lock_until(const std::chrono::time_point<Clock, Duration>& abs_time) {
 #ifdef _WIN64
+        if (fast) {
+            if (TryLockFast()) {
+                return true;
+            }
+            for (;;) {
+                const auto now = Clock::now();
+                if (abs_time <= now) {
+                    return false;
+                }
+                if (state.exchange(Contended, std::memory_order_acquire) == Unlocked) {
+                    return true;
+                }
+                const auto rel_ms = std::chrono::ceil<std::chrono::milliseconds>(abs_time - now);
+                constexpr s64 MaxFiniteWait = static_cast<s64>(INFINITE) - 1;
+                const DWORD timeout_ms = static_cast<DWORD>(
+                    rel_ms.count() < MaxFiniteWait ? rel_ms.count() : MaxFiniteWait);
+                if (WaitForSingleObjectEx(mtx, timeout_ms, true) == WAIT_TIMEOUT) {
+                    return false;
+                }
+            }
+        }
         for (;;) {
             const auto now = Clock::now();
             if (abs_time <= now) {
@@ -71,7 +100,23 @@ public:
 
 private:
 #ifdef _WIN64
+    // Fast path states. Contended: a thread may be asleep on the event, so unlock signals it.
+    static constexpr u32 Unlocked = 0;
+    static constexpr u32 Locked = 1;
+    static constexpr u32 Contended = 2;
+
+    bool TryLockFast() noexcept {
+        u32 expected = Unlocked;
+        return state.load(std::memory_order_relaxed) == Unlocked &&
+               state.compare_exchange_strong(expected, Locked, std::memory_order_acquire,
+                                             std::memory_order_relaxed);
+    }
+    void LockContended();
+
+    /// Kernel mutex by default; auto-reset event of the fast path.
     HANDLE mtx;
+    std::atomic<u32> state{Unlocked};
+    bool fast{};
 #else
     std::timed_mutex mtx;
 #endif

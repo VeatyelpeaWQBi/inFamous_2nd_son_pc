@@ -62,6 +62,8 @@ enum class PthreadMutexProt : u32 {
     Protect = 2,
 };
 
+struct PthreadMutexStats;
+
 struct PthreadMutex {
     std::atomic<Pthread*> m_owner;
     int m_count;
@@ -72,6 +74,8 @@ struct PthreadMutex {
     PthreadMutexFlags m_flags;
     TimedMutex m_lock;
     std::string name;
+    /// Diagnostic counters (mutex_stats.h); null unless enabled and created by the guest.
+    PthreadMutexStats* m_stats{};
 
     [[nodiscard]] PthreadMutexType Type() const noexcept {
         return static_cast<PthreadMutexType>(m_flags & PthreadMutexFlags::TypeMask);

@@ -21,6 +21,7 @@
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/kernel/memory.h"
 #include "core/libraries/kernel/threads.h"
+#include "core/libraries/kernel/threads/mutex_stats.h"
 #include "core/libraries/libc_internal/libc_internal.h"
 #include "core/libraries/sysmodule/sysmodule.h"
 #include "core/libraries/sysmodule/sysmodule_internal.h"
@@ -149,6 +150,7 @@ void Linker::Execute(const std::vector<std::string>& args) {
 
     main_thread.Run([this, module, &args, has_libcinternal](std::stop_token) {
         Common::SetCurrentThreadName("Game:Main");
+        Libraries::Kernel::MarkGuestMainThread();
 
 #ifndef _WIN32 // Clear any existing signal mask for game threads.
         sigset_t emptyset;

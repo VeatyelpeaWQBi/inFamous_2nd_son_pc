@@ -10,6 +10,8 @@ param(
     [ValidateRange(25,90)][int]$ReleaseSeconds=30,
     [switch]$FullCapture,
     [switch]$CriticalCapture,
+    # One critical release with submission GPU timestamps, so read waits can be joined to session bounds.
+    [switch]$GpuSessionJoin,
     [switch]$ReadbackBarrierAudit,
     [switch]$PageProtectAudit,
     [switch]$ComputeScopeAudit,
@@ -24,7 +26,7 @@ param(
     [ValidatePattern('^(?:[0-9a-fA-F]{1,10})?$')][string]$FeedbackTraceAddress='',
     [ValidatePattern('^(?:[0-9a-fA-F]{1,10})?$')][string]$SecondFeedbackTraceAddress='',
     [switch]$ProbeCandidate,
-    [ValidateSet('none','feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter','cpu-placement','compute-recorder','recorder-spin','reg-dump-fast','feedback-word-prefetch','feedback-word-bulk','particle-poll-pause','c73-scan','written-sync','image-sync-once','feedback-page-words','access-union','readback-copy-stage','image-read-transition','buffer-prep-union','feedback-arena','vertex-input-key','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled','writer-footprint','readback-done-page')][string]$Candidate='none',
+    [ValidateSet('none','feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter','cpu-placement','compute-recorder','recorder-spin','reg-dump-fast','feedback-word-prefetch','feedback-word-bulk','particle-poll-pause','c73-scan','written-sync','image-sync-once','feedback-page-words','access-union','readback-copy-stage','image-read-transition','buffer-prep-union','feedback-arena','vertex-input-key','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled','writer-footprint','readback-done-page','readback-done-batch')][string]$Candidate='none',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$TrialId,
     [switch]$CandidateBaseline,
     [switch]$NormalRendering,
@@ -145,6 +147,7 @@ if($simpleNative){
 # Full reuses the persistent cache; one round means one actual super release.
 if($FullCapture){if(-not $PSBoundParameters.ContainsKey('Rounds')){$Rounds=1};$MinimumWarmup=0;$MaximumWarmup=0}
 if($ProbeCandidate -and -not $CriticalCapture){throw 'ProbeCandidate requires CriticalCapture.'}
+if($GpuSessionJoin -and -not $CriticalCapture){throw 'GpuSessionJoin requires CriticalCapture.'}
 if($CriticalCapture){
     if($FullCapture -or $Experiment -ne 'none' -or $Profile -notin @('lightweight','counters')){throw 'Critical capture requires native lightweight/counters, no experiment.'}
     $Rounds=1;$MinimumWarmup=0;$MaximumWarmup=0
@@ -302,6 +305,7 @@ function Set-SuperProfile([string]$Name) {
     if($Name -ne 'lightweight'){$values.perf_log=1}
     if($Name -eq 'compute'){$values.gpu_profile=2}
     if($Name -eq 'graphics'){$values.gpu_profile=3;$values.profile_stacks=1}
+    if($GpuSessionJoin){$values.gpu_profile=1}
     if($Name -eq 'full'){$values.gpu_profile=2;$values.profile_stacks=1}
     if($ComputeTimingHash){
         $values.gpu_profile=if($ComputeTimingStartSeconds){1}else{2}

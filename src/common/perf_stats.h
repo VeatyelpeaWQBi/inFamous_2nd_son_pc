@@ -339,6 +339,9 @@ enum Counter : u32 {
     /// fully GPU-owned page when its writers are done.
     ReadbackDonePageFaults,
     ReadbackDonePageExpands,
+    /// readback_done_batch: done small demand reads joined into one readback-queue submit.
+    ReadbackDoneBatchJoins,
+    ReadbackDoneBatchGroups,
     CounterCount,
 };
 
@@ -395,7 +398,9 @@ inline bool IsLightweightReceipt(Counter counter) {
            counter == WriterFootprintFallbacks ||
            counter == WriterFootprintNarrowed ||
            counter == ReadbackDonePageFaults ||
-           counter == ReadbackDonePageExpands;
+           counter == ReadbackDonePageExpands ||
+           counter == ReadbackDoneBatchJoins ||
+           counter == ReadbackDoneBatchGroups;
 }
 
 inline std::atomic<u64>& LightweightReceipt(Counter counter) {
@@ -404,6 +409,8 @@ inline std::atomic<u64>& LightweightReceipt(Counter counter) {
     static std::atomic<u64> writer_footprint_narrowed{0};
     static std::atomic<u64> readback_done_page_faults{0};
     static std::atomic<u64> readback_done_page_expands{0};
+    static std::atomic<u64> readback_done_batch_joins{0};
+    static std::atomic<u64> readback_done_batch_groups{0};
     switch (counter) {
     case WriterFootprintProven:
         return writer_footprint_proven;
@@ -413,8 +420,12 @@ inline std::atomic<u64>& LightweightReceipt(Counter counter) {
         return writer_footprint_narrowed;
     case ReadbackDonePageFaults:
         return readback_done_page_faults;
-    default:
+    case ReadbackDonePageExpands:
         return readback_done_page_expands;
+    case ReadbackDoneBatchJoins:
+        return readback_done_batch_joins;
+    default:
+        return readback_done_batch_groups;
     }
 }
 
@@ -616,6 +627,9 @@ struct Tuning {
     /// Default off. Guest read faults download a full GPU-owned page when writers are done,
     /// instead of only the first 8 bytes of the fault (see PageManager + BufferCache).
     std::atomic<bool> readback_done_page{false};
+    /// Default off. Small demand reads whose writers are already done share one readback-queue
+    /// submit when several are queued on the command processor (see BufferCache::JoinDoneBatch).
+    std::atomic<bool> readback_done_batch{false};
     /// Only exact module-proven GDS counter footprints; descriptors/queue ownership unchanged.
     std::atomic<bool> gds_counter_scope{false};
     /// Draws without vertices and dispatches without workgroups are left out before their
@@ -1055,6 +1069,10 @@ inline void OnFlip(float draws_per_frame, float dispatches_per_frame) {
     if (t[ReadbackDonePageFaults] || t[ReadbackDonePageExpands]) {
         LOG_INFO(Debug, "Perf readback_done_page: faults {} expands {}",
                  t[ReadbackDonePageFaults], t[ReadbackDonePageExpands]);
+    }
+    if (t[ReadbackDoneBatchJoins] || t[ReadbackDoneBatchGroups]) {
+        LOG_INFO(Debug, "Perf readback_done_batch: joins {} groups {}",
+                 t[ReadbackDoneBatchJoins], t[ReadbackDoneBatchGroups]);
     }
     if (t[CommandSharpsDecoded] || t[CommandSharpsReused] || t[CommandSharpsFallback]) {
         LOG_INFO(Debug, "Perf sharps: decoded {} reused {} fallback {}",

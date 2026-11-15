@@ -291,7 +291,8 @@ private:
 
         /// Submits the copies once the timelines reach their ticks. Returns the readback
         /// semaphore tick signaled when the data is visible to the host.
-        u64 Submit(std::span<const Job> jobs, std::span<const Wait> waits);
+        /// signal_tick 0 allocates the tick here; a reserved tick must be signaled in order.
+        u64 Submit(std::span<const Job> jobs, std::span<const Wait> waits, u64 signal_tick = 0);
 
         Vulkan::Semaphore& Semaphore() noexcept {
             return semaphore;
@@ -391,6 +392,16 @@ private:
     u64 BeginReadback(VAddr device_addr, u64 size, bool is_write,
                       Vulkan::Semaphore*& wait_semaphore, u64& feedback_copy_id, u64 trace_id, bool audit = false);
 
+    /// readback_done_batch: hold a done small demand read until the queued flush submits every
+    /// read that joined. Command processor thread only.
+    u64 JoinDoneBatch(PendingReadback readback, const WindowWriters& writers,
+                      Vulkan::Semaphore*& wait_semaphore, u64& feedback_copy_id, u64 trace_id,
+                      bool audit, VAddr device_addr, u64 size);
+    void FlushDoneBatch();
+    /// Flushes an open done-batch first so its reserved timeline tick is signaled in order.
+    u64 SubmitReadback(std::span<const ReadbackQueue::Job> jobs,
+                       std::span<const ReadbackQueue::Wait> waits);
+
     /// Writes the pending readbacks the GPU has finished to guest memory: in any order, except
     /// after an unfinished earlier readback of the same window. With wait, waits for all of them
     /// and writes them in submission order.
@@ -459,6 +470,15 @@ private:
     RangeSet gpu_modified_ranges;
     RangeSet pending_download_ranges; ///< readback_keep_ranges: downloads in flight.
     std::deque<PendingReadback> pending_readbacks;
+    /// Done small demand reads waiting for one shared readback-queue submit.
+    struct DoneBatch {
+        bool open{};
+        u64 tick{};
+        u64 copy_bytes{};
+        std::array<u64, 2> wait_ticks{};
+        std::deque<PendingReadback> readbacks;
+    };
+    DoneBatch done_batch;
     std::unique_ptr<ReadbackQueue> readback_queue;
     boost::container::static_vector<HotWindow, 64> hot_windows;
     FeedbackPageWriters feedback_writers;

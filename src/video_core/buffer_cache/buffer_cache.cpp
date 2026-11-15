@@ -258,7 +258,8 @@ BufferCache::ReadbackQueue::~ReadbackQueue() {
     std::ignore = instance.GetReadbackQueue().waitIdle();
 }
 
-u64 BufferCache::ReadbackQueue::Submit(std::span<const Job> jobs, std::span<const Wait> waits) {
+u64 BufferCache::ReadbackQueue::Submit(std::span<const Job> jobs, std::span<const Wait> waits,
+                                       u64 signal_tick) {
     // Committed with the tick the submission below signals.
     const vk::CommandBuffer cmdbuf = command_pool.Commit();
     Vulkan::Check(cmdbuf.begin(vk::CommandBufferBeginInfo{
@@ -280,7 +281,9 @@ u64 BufferCache::ReadbackQueue::Submit(std::span<const Job> jobs, std::span<cons
     });
     Vulkan::Check(cmdbuf.end());
 
-    const u64 signal_tick = semaphore.NextTick();
+    if (signal_tick == 0) {
+        signal_tick = semaphore.NextTick();
+    }
     const vk::Semaphore signal_semaphore = semaphore.Handle();
     // The waits make the writes of the submissions up to their ticks available and visible to
     // the copies.
@@ -657,7 +660,7 @@ void BufferCache::BeginRelaxedReadback(VAddr device_addr, u64 size) {
                 .dst = readback.download.buffer->Handle(),
                 .copies = readback.copies,
             };
-            readback.tick = readback_queue->Submit(std::span{&job, 1}, ReadbackWaits(writers));
+            readback.tick = SubmitReadback(std::span{&job, 1}, ReadbackWaits(writers));
             readback.on_readback_queue = true;
         } else {
             WaitComputeWriter(writers);
@@ -1364,7 +1367,7 @@ bool BufferCache::ReadFaultWord(VAddr address, u32& value) {
         const vk::BufferCopy copy{.srcOffset = offset, .dstOffset = private_copy.download.offset, .size = 4};
         const ReadbackQueue::Job job{.src = arena->Handle(), .dst = private_copy.download.buffer->Handle(),
                                     .copies = std::span{&copy, 1}};
-        wait_tick = readback_queue->Submit(std::span{&job, 1}, ReadbackWaits(writers));
+        wait_tick = SubmitReadback(std::span{&job, 1}, ReadbackWaits(writers));
         queued = true;
     });
     if (prefetched_wait_tick) {
@@ -1690,6 +1693,13 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
                             writers.ticks[0], writers.ticks[1], readback.record_seq,
                             (writers.done ? 1 : 0) | (writers.submitted ? 2 : 0) |
                                 (writers.current ? 4 : 0) | (use_queue ? 8 : 0));
+    // Several done demand reads already queued on this thread share one submit. The guest waits
+    // on the reserved tick; the flush command behind them signals it.
+    if (use_queue && writers.done && !is_write && size <= BYTES_PER_PAGE &&
+        Common::Perf::GetTuning().readback_done_batch.load(std::memory_order_relaxed)) {
+        return JoinDoneBatch(std::move(readback), writers, wait_semaphore, feedback_copy_id,
+                             trace_id, audit, device_addr, size);
+    }
     const u64 submit_start = Common::Perf::NowNs();
     if (queue_enabled) {
         Common::Perf::Add(use_queue ? Common::Perf::ReadbackQueueReads
@@ -1701,7 +1711,7 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
             .dst = readback.download.buffer->Handle(),
             .copies = readback.copies,
         };
-        readback.tick = readback_queue->Submit(std::span{&job, 1}, ReadbackWaits(writers));
+        readback.tick = SubmitReadback(std::span{&job, 1}, ReadbackWaits(writers));
         readback.on_readback_queue = true;
         wait_semaphore = &readback_queue->Semaphore();
     } else {
@@ -1732,6 +1742,105 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     pending_readbacks.push_back(std::move(readback));
     Common::Perf::Add(Common::Perf::ReadbackAsync);
     return wait_tick;
+}
+
+u64 BufferCache::SubmitReadback(std::span<const ReadbackQueue::Job> jobs,
+                               std::span<const ReadbackQueue::Wait> waits) {
+    if (done_batch.open) {
+        FlushDoneBatch();
+    }
+    return readback_queue->Submit(jobs, waits, 0);
+}
+
+u64 BufferCache::JoinDoneBatch(PendingReadback readback, const WindowWriters& writers,
+                              Vulkan::Semaphore*& wait_semaphore, u64& feedback_copy_id,
+                              u64 trace_id, bool audit, VAddr device_addr, u64 size) {
+    constexpr size_t MaxReads = 32;
+    constexpr u64 MaxBytes = 256_KB;
+    u64 bytes = 0;
+    for (const auto& copy : readback.copies) {
+        bytes += copy.size;
+    }
+    if (done_batch.open && (done_batch.readbacks.size() >= MaxReads ||
+                            done_batch.copy_bytes + bytes > MaxBytes)) {
+        FlushDoneBatch();
+    }
+    if (!done_batch.open) {
+        done_batch.open = true;
+        done_batch.tick = readback_queue->Semaphore().NextTick();
+        done_batch.wait_ticks = {};
+        done_batch.copy_bytes = 0;
+        // Runs after demand reads already queued, then submits the whole batch.
+        liverpool->SendCommand<false>([this] { FlushDoneBatch(); });
+    }
+    for (u32 queue = 0; queue < 2; ++queue) {
+        done_batch.wait_ticks[queue] = std::max(done_batch.wait_ticks[queue], writers.ticks[queue]);
+    }
+    done_batch.copy_bytes += bytes;
+    const u64 wait_tick = done_batch.tick;
+    readback.tick = wait_tick;
+    readback.on_readback_queue = true;
+    if (audit) [[unlikely]] {
+        TraceReadbackWaitScope(readback, device_addr, size, trace_id);
+    }
+    Common::PathTrace::Emit(Common::PathTrace::Kind::ReadCopy, trace_id, wait_tick, true,
+                            readback.record_seq, readback.trace_id);
+    if (FeedbackLink::IsActive()) [[unlikely]] {
+        FeedbackLink::OnBeginReadback(device_addr, size, readback.window_start, readback.window_end,
+                                      bytes, writers.ticks[0], writers.ticks[1], writers.submitted,
+                                      writers.done, writers.current, wait_tick, trace_id,
+                                      readback.feedback);
+    }
+    feedback_copy_id = readback.feedback.id;
+    done_batch.readbacks.push_back(std::move(readback));
+    wait_semaphore = &readback_queue->Semaphore();
+    Common::Perf::Add(Common::Perf::ReadbackQueueReads);
+    Common::Perf::Add(Common::Perf::ReadbackDoneBatchJoins);
+    Common::Perf::Add(Common::Perf::ReadbackAsync);
+    return wait_tick;
+}
+
+void BufferCache::FlushDoneBatch() {
+    if (!done_batch.open) {
+        return;
+    }
+    std::deque<PendingReadback> readbacks = std::move(done_batch.readbacks);
+    const u64 tick = done_batch.tick;
+    const std::array<u64, 2> wait_ticks = done_batch.wait_ticks;
+    const size_t count = readbacks.size();
+    done_batch.open = false;
+    done_batch.tick = 0;
+    done_batch.copy_bytes = 0;
+    done_batch.wait_ticks = {};
+    if (count == 0) {
+        if (tick != 0) {
+            readback_queue->Submit(std::span<const ReadbackQueue::Job>{},
+                                   std::span<const ReadbackQueue::Wait>{}, tick);
+        }
+        return;
+    }
+    boost::container::static_vector<ReadbackQueue::Job, 32> jobs;
+    for (const auto& readback : readbacks) {
+        jobs.push_back(ReadbackQueue::Job{
+            .src = readback.arena_handle,
+            .dst = readback.download.buffer->Handle(),
+            .copies = readback.copies,
+        });
+    }
+    WindowWriters writers;
+    writers.ticks = wait_ticks;
+    writers.submitted = true;
+    writers.done = true;
+    const u64 submit_start = Common::Perf::NowNs();
+    const u64 signaled = readback_queue->Submit(jobs, ReadbackWaits(writers), tick);
+    Common::Perf::Add(Common::Perf::ReadbackSyncNs, Common::Perf::NowNs() - submit_start);
+    ASSERT(signaled == tick);
+    if (count >= 2) {
+        Common::Perf::Add(Common::Perf::ReadbackDoneBatchGroups);
+    }
+    for (auto& readback : readbacks) {
+        pending_readbacks.push_back(std::move(readback));
+    }
 }
 
 void BufferCache::RetireReadbacks() {
@@ -1959,7 +2068,7 @@ bool BufferCache::PrefetchReadbacksImpl(VAddr only_start, VAddr only_end, u64* r
                     compute_queue->scheduler->GetWorkSemaphore()->KnownGpuTick();
             }
         }
-        const u64 queue_tick = readback_queue->Submit(jobs, ReadbackWaits(queue_writers));
+        const u64 queue_tick = SubmitReadback(jobs, ReadbackWaits(queue_writers));
         if (!traced_jobs.empty()) [[unlikely]] {
             using Common::PathTrace::Emit;
             using Common::PathTrace::Kind;

@@ -31,6 +31,7 @@ FEEDBACK_ACTIVITY = ("feedback_checkpoint_attempts", "feedback_checkpoint_submit
                      "writer_footprint_proven", "writer_footprint_fallbacks",
                      "writer_footprint_narrowed",
                      "readback_done_page_faults", "readback_done_page_expands",
+                     "readback_done_batch_joins", "readback_done_batch_groups",
                      "feedback_writer_hits", "feedback_writer_fallbacks", "feedback_writer_reductions",
                      "feedback_word_attempts", "feedback_word_served", "feedback_word_fallbacks",
                      "feedback_word_bulk_queued",

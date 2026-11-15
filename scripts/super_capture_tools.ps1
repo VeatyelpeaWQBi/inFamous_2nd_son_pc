@@ -61,9 +61,9 @@ function Get-SuperCriticalTraceErrors($Metadata,[switch]$RequireDrawPrep) {
 function Get-SuperFeedbackVariant([string]$Candidate,[switch]$Baseline,[string]$PerformanceCoreMask='',
                                  [switch]$NormalRendering) {
     if($NormalRendering -and $Candidate -ne 'feedback-arena-pool'){throw 'Normal rendering comparison is restricted to the compact pool.'}
-    if($Candidate -notin @('feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter','cpu-placement','compute-recorder','recorder-spin','reg-dump-fast','feedback-word-prefetch','feedback-word-bulk','particle-poll-pause','c73-scan','written-sync','image-sync-once','feedback-page-words','access-union','readback-copy-stage','image-read-transition','buffer-prep-union','feedback-arena','vertex-input-key','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled','writer-footprint','readback-done-page')){throw 'Unknown feedback candidate.'}
+    if($Candidate -notin @('feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter','cpu-placement','compute-recorder','recorder-spin','reg-dump-fast','feedback-word-prefetch','feedback-word-bulk','particle-poll-pause','c73-scan','written-sync','image-sync-once','feedback-page-words','access-union','readback-copy-stage','image-read-transition','buffer-prep-union','feedback-arena','vertex-input-key','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled','writer-footprint','readback-done-page','readback-done-batch')){throw 'Unknown feedback candidate.'}
     $tuning=@{command_buffer_sharps=0;compute_barrier_scope=0
-        readback_feedback_checkpoint=0;readback_feedback_writers=0;readback_word_load=0;readback_writer_footprint=0;readback_done_page=0;asc_queue=0;gds_counter_scope=0;compute_threaded_recording=0}
+        readback_feedback_checkpoint=0;readback_feedback_writers=0;readback_word_load=0;readback_writer_footprint=0;readback_done_page=0;readback_done_batch=0;asc_queue=0;gds_counter_scope=0;compute_threaded_recording=0}
     if($Candidate -eq 'cpu-placement'){
         if($PerformanceCoreMask -notmatch '^[0-9a-fA-F]{1,16}$'){throw 'CPU placement requires an enumerated performance-core mask.'}
         $mask=[Convert]::ToUInt64($PerformanceCoreMask,16)
@@ -96,6 +96,9 @@ function Get-SuperFeedbackVariant([string]$Candidate,[switch]$Baseline,[string]$
     }elseif($Candidate -eq 'readback-done-page'){
         # Default-off. Expands done fully-GPU pages on demand faults; no word-prefetch family.
         $tuning.readback_done_page=[int](-not $Baseline)
+    }elseif($Candidate -eq 'readback-done-batch'){
+        # Default-off. Done small demand reads already queued share one readback-queue submit.
+        $tuning.readback_done_batch=[int](-not $Baseline)
     }elseif($Candidate -eq 'particle-poll-pause'){
         # Selected at process launch, no live tuning.
     }elseif($Candidate -eq 'reg-dump-fast'){

@@ -22,8 +22,10 @@ struct FastPathConfig {
 FastPathConfig ReadFastPathConfig() noexcept {
     FastPathConfig config;
 #ifdef _WIN64
+    // Default on after the 2026-11-15 capture A/B and manual check. IFSS_GUEST_MUTEX_FAST=0
+    // restores the original kernel mutex for an isolated baseline.
     const char* enabled = std::getenv("IFSS_GUEST_MUTEX_FAST");
-    config.enabled = enabled && enabled[0] == '1' && enabled[1] == '\0';
+    config.enabled = !(enabled && enabled[0] == '0' && enabled[1] == '\0');
     if (config.enabled) {
         config.spins = 64;
         if (const char* spins = std::getenv("IFSS_GUEST_MUTEX_SPINS"); spins && *spins) {

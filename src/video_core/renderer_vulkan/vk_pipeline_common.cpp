@@ -51,13 +51,15 @@ void Pipeline::BindCompute(Scheduler& on) const {
     });
 }
 
-void Pipeline::BindResources(DescriptorWrites& set_writes,
-                             const Shader::PushData& push_data) const {
-    BindResources(scheduler, set_writes, push_data);
+void Pipeline::BindResources(std::span<vk::WriteDescriptorSet> set_writes,
+                             const Shader::PushData& push_data,
+                             const DescriptorPayloads& payloads) const {
+    BindResources(scheduler, set_writes, push_data, payloads);
 }
 
-void Pipeline::BindResources(Scheduler& on, DescriptorWrites& set_writes,
-                             const Shader::PushData& push_data) const {
+void Pipeline::BindResources(Scheduler& on, std::span<vk::WriteDescriptorSet> set_writes,
+                             const Shader::PushData& push_data,
+                             const DescriptorPayloads& payloads) const {
     const auto cmdbuf = on.Recorder();
     const auto bind_point =
         IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
@@ -71,7 +73,7 @@ void Pipeline::BindResources(Scheduler& on, DescriptorWrites& set_writes,
     }
 
     if (uses_push_descriptors) {
-        cmdbuf.pushDescriptorSetKHR(bind_point, *pipeline_layout, 0, set_writes);
+        cmdbuf.pushDescriptorSetKHR(bind_point, *pipeline_layout, 0, set_writes, payloads);
         return;
     }
 

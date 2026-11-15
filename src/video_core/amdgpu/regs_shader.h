@@ -229,10 +229,15 @@ static constexpr const BinaryInfo& SearchBinaryInfo(const u32* code) {
             return *info;
         }
     }
-    constexpr u32 signature_size = sizeof(BinaryInfo::signature_ref) / sizeof(u8);
+    constexpr u32 signature_prefix = std::bit_cast<u32>(std::array{
+        BinaryInfo::signature_ref[0], BinaryInfo::signature_ref[1],
+        BinaryInfo::signature_ref[2], BinaryInfo::signature_ref[3]});
     constexpr u32 search_limit = 0x4000;
     const u32* end = code + search_limit;
     for (const u32* it = code; it < end; ++it) {
+        if (*it != signature_prefix) {
+            continue;
+        }
         if (const BinaryInfo* info = std::bit_cast<const BinaryInfo*>(it); info->Valid()) {
             return *info;
         }

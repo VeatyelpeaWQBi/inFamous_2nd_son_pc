@@ -62,6 +62,27 @@ public:
         });
     }
 
+    /// Returns true if every page of the region is GPU modified (lock free).
+    /// Unlike IsRegionGpuModified, missing regions and partial GPU pages fail the whole range.
+    bool IsRegionFullyGpuModified(VAddr cpu_addr, u64 size) noexcept {
+        if (size == 0 || cpu_addr >= MAX_CPU_ADDRESS || size > MAX_CPU_ADDRESS - cpu_addr) {
+            return false;
+        }
+        u64 index = cpu_addr >> HIGHER_PAGE_BITS;
+        u64 offset = cpu_addr & HIGHER_PAGE_MASK;
+        while (size != 0) {
+            const u64 amount = std::min(size, HIGHER_PAGE_SIZE - offset);
+            auto* region = top_tier[index];
+            if (!region || !region->IsRegionFullyGpuModified(offset, amount)) {
+                return false;
+            }
+            ++index;
+            offset = 0;
+            size -= amount;
+        }
+        return true;
+    }
+
     /// Calls func() with the region of the page locked if the page is neither CPU nor GPU modified
     /// (guest memory and the GPU copy hold the same data): a guest write to it waits meanwhile.
     /// Returns whether func was called.
@@ -174,16 +195,20 @@ public:
         if (last - first > 1) {
             return false;
         }
-        for (u64 i = first; i <= last; ++i) {
-            RegionManager* region = top_tier[i];
-            if (!region) {
-                return false;
-            }
-            versions[i - first] = region->CpuVersion();
+        const auto* region = top_tier[first];
+        if (!region) {
+            return false;
         }
+        versions[0] = region->CpuVersion();
         if (first == last) {
             versions[1] = 0;
+            return true;
         }
+        const auto* next = top_tier[last];
+        if (!next) {
+            return false;
+        }
+        versions[1] = next->CpuVersion();
         return true;
     }
 

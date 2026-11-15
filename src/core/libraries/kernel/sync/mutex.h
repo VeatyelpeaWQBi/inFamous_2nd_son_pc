@@ -16,9 +16,9 @@
 
 namespace Libraries::Kernel {
 
-/// Experimental, off by default, selected once per process by IFSS_GUEST_MUTEX_FAST=1 (Windows):
-/// a guest mutex takes and releases an uncontended lock in user mode and only enters the kernel
-/// to sleep or to wake a sleeper. The default is one kernel mutex object per guest mutex.
+/// Windows default: a guest mutex takes and releases an uncontended lock in user mode and only
+/// enters the kernel to sleep or to wake a sleeper. Set IFSS_GUEST_MUTEX_FAST=0 once per process
+/// to restore one kernel mutex object per guest mutex (baseline for A/B).
 bool GuestMutexFastPathEnabled() noexcept;
 /// Attempts in user mode before a contended fast path lock sleeps (IFSS_GUEST_MUTEX_SPINS).
 u32 GuestMutexFastPathSpins() noexcept;

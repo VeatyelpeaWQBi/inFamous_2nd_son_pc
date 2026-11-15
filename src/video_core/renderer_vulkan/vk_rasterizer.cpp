@@ -1181,15 +1181,19 @@ void Rasterizer::DrawImpl(bool is_indexed, u32 index_offset, u64 ordinal) {
     }
 
     // Statistics: draws a fast path for unchanged render state could take.
-    if (const u64 changes = liverpool->ContextRegChanges(); changes == last_draw_context_changes) {
-        Common::Perf::Add(Common::Perf::DrawsSameContext);
-        if (pipeline == last_draw_pipeline) {
-            Common::Perf::Add(Common::Perf::DrawsSamePipeline);
+    if (Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed)) [[unlikely]] {
+        const u64 changes = liverpool->ContextRegChanges();
+        if (last_draw_pipeline && changes == last_draw_context_changes) {
+            Common::Perf::Add(Common::Perf::DrawsSameContext);
+            if (pipeline == last_draw_pipeline) {
+                Common::Perf::Add(Common::Perf::DrawsSamePipeline);
+            }
         }
-    } else {
         last_draw_context_changes = changes;
+        last_draw_pipeline = pipeline;
+    } else if (last_draw_pipeline) {
+        last_draw_pipeline = nullptr;
     }
-    last_draw_pipeline = pipeline;
     measure.Identity(pipeline, regs.num_indices, regs.num_instances.NumInstances());
 
     PrepareRenderState(pipeline);
@@ -1217,7 +1221,8 @@ void Rasterizer::DrawImpl(bool is_indexed, u32 index_offset, u64 ordinal) {
 
     measure.template Next<4>(); // attachment begin, vertex/index preparation and pending barriers
     FinalizeFlatbufUploads();
-    pipeline->BindResources(set_writes, push_data);
+    pipeline->BindResources(std::span{set_writes}.first(set_write_index), push_data,
+                            {buffer_infos, image_infos});
     measure.template Next<5>(); // flat buffer upload and descriptor command construction
     UpdateDynamicState(pipeline, is_indexed);
     scheduler.BeginRendering(state);
@@ -1371,7 +1376,8 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
     }
 
     FinalizeFlatbufUploads();
-    pipeline->BindResources(set_writes, push_data);
+    pipeline->BindResources(std::span{set_writes}.first(set_write_index), push_data,
+                            {buffer_infos, image_infos});
     UpdateDynamicState(pipeline, is_indexed);
     scheduler.BeginRendering(state);
 
@@ -1487,7 +1493,8 @@ void Rasterizer::DispatchDirect() {
         scheduler.EndRendering();
     }
     FinalizeFlatbufUploads();
-    pipeline->BindResources(Sched(), set_writes, push_data);
+    pipeline->BindResources(Sched(), std::span{set_writes}.first(set_write_index), push_data,
+                            {buffer_infos, image_infos});
 
     const auto cmdbuf = Sched().Recorder();
     pipeline->BindCompute(Sched());
@@ -1588,7 +1595,8 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
         scheduler.EndRendering();
     }
     FinalizeFlatbufUploads();
-    pipeline->BindResources(Sched(), set_writes, push_data);
+    pipeline->BindResources(Sched(), std::span{set_writes}.first(set_write_index), push_data,
+                            {buffer_infos, image_infos});
 
     const auto cmdbuf = Sched().Recorder();
     pipeline->BindCompute(Sched());
@@ -1756,7 +1764,6 @@ bool Rasterizer::BindResources(const Pipeline* pipeline, const CommandBufferShar
     }
 
     set_write_index = 0;
-    set_writes.clear();
     buffer_infos.clear();
     image_infos.clear();
     descriptor_image_uses.clear();
@@ -1771,8 +1778,12 @@ bool Rasterizer::BindResources(const Pipeline* pipeline, const CommandBufferShar
         if (!stage) {
             continue;
         }
-        set_writes.resize(set_writes.size() + stage->buffers.size() + stage->images.size() +
-                          stage->samplers.size());
+        // Reuse initialized slots. Only the prefix written by this command is submitted.
+        const size_t required_writes =
+            set_write_index + stage->buffers.size() + stage->images.size() + stage->samplers.size();
+        if (required_writes > set_writes.size()) {
+            set_writes.resize(required_writes);
+        }
         const u64 bind_start = trace_asc_dispatch ? Common::Perf::NowNs() : 0;
         BindBuffers(*stage, binding, push_data, sharps);
         const u64 texture_start = trace_asc_dispatch ? Common::Perf::NowNs() : 0;
@@ -2527,6 +2538,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
         set_write.dstArrayElement = 0;
         set_write.descriptorCount = 1;
         set_write.descriptorType = vk::DescriptorType::eStorageBuffer;
+        set_write.pImageInfo = nullptr;
         set_write.pBufferInfo = &buffer_infos.back();
         ++binding.buffer;
     }
@@ -2671,7 +2683,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
         }
 
         const Shader::MipStorageFallbackMode mip_fallback_mode = image_desc.mip_fallback_mode;
-        const u32 num_bindings = image_desc.NumBindings(stage);
+        const u32 num_bindings = image_desc.NumBindings(tsharp);
 
         for (auto i = 0; i < num_bindings; i++) {
             TexMemo* memo = nullptr;
@@ -2767,8 +2779,9 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
             image_infos.emplace_back(VK_NULL_HANDLE, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);
         } else {
             bool fresh = source.fresh && !is_storage;
-            if (auto& old_image = texture_cache.GetImage(image_id);
-                old_image.binding.needs_rebind) {
+            auto& old_image = texture_cache.GetImage(image_id);
+            const bool needs_rebind = old_image.binding.needs_rebind;
+            if (needs_rebind) {
                 old_image.binding = {};
                 if (source.fresh) {
                     // The memo gave the view only: the full descriptor for the search.
@@ -2790,7 +2803,8 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
 
             bound_images.emplace_back(image_id);
 
-            auto& image = texture_cache.GetImage(image_id);
+            // GetImage already touched the unchanged image in this GC tick.
+            auto& image = needs_rebind ? texture_cache.GetImage(image_id) : old_image;
             // A memoized texture is tracked and up to date: its view is enough (FindTexture
             // would lock the cache to check that again), and the memo remembers it.
             VideoCore::ImageView* image_view = nullptr;
@@ -2886,6 +2900,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
         set_write.descriptorType =
             is_storage ? vk::DescriptorType::eStorageImage : vk::DescriptorType::eSampledImage;
         set_write.pImageInfo = &image_infos[image_info_idx];
+        set_write.pBufferInfo = nullptr;
 
         image_info_idx += array_size;
         image_binding_idx += array_size;
@@ -2950,6 +2965,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
         set_write.descriptorCount = 1;
         set_write.descriptorType = vk::DescriptorType::eSampler;
         set_write.pImageInfo = &image_infos.back();
+        set_write.pBufferInfo = nullptr;
     }
 }
 

@@ -233,6 +233,7 @@ private:
                         u64 first_resume_ns = 0);
 
     void ProcessCommands();
+    void ProcessPendingCommands();
     void Process(std::stop_token stoken);
 
     /// Remembers values the command processor wrote at small addresses (labels, fences), so a
@@ -312,11 +313,9 @@ private:
     u32 gpu_tid;
 #endif
     s32 curr_qid{-1};
-    /// Packets and commands processed by the command processor thread, used to tell work from
-    /// spinning on unsatisfied waits. Only accessed by that thread, counted at every packet: on
-    /// a cache line of its own, away from the fields guest threads write when they submit
-    /// (counting there waited for that line to come back from their cores).
-    alignas(64) u64 processed_packets{};
+    /// Whether the command processor handled a packet or callback since the last time sample.
+    /// Only accessed by that thread, on a separate cache line from guest submission fields.
+    alignas(64) bool processed_work{};
     /// Graphics packets processed since the graphics queue last gave way to compute work. Only
     /// accessed by the command processor thread.
     u32 gfx_packets_since_yield{};

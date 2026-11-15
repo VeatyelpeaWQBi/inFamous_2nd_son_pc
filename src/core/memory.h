@@ -155,7 +155,7 @@ struct VirtualMemoryArea {
         return true;
     }
 
-    void ForEachPhysArea(u64 offset, u64 size, auto&& func) {
+    void ForEachPhysArea(u64 offset, u64 size, auto&& func) const {
         if (size == 0) {
             return;
         }
@@ -248,7 +248,13 @@ public:
         return size_to_validate <= 0;
     }
 
-    u64 ClampRangeSize(VAddr virtual_addr, u64 size);
+    u64 ClampRangeSize(VAddr virtual_addr, u64 size) {
+        // Small buffer ranges do not need a VMA lookup.
+        if (size < 1_GB) [[likely]] {
+            return size;
+        }
+        return ClampLargeRangeSize(virtual_addr, size);
+    }
 
     void SetPrtArea(u32 id, VAddr address, u64 size);
 
@@ -320,6 +326,8 @@ public:
     void InvalidateMemory(VAddr addr, u64 size) const;
 
 private:
+    u64 ClampLargeRangeSize(VAddr virtual_addr, u64 size);
+
     VMAHandle FindVMA(VAddr target) {
         return std::prev(vma_map.upper_bound(target));
     }
@@ -332,7 +340,7 @@ private:
         return std::prev(fmem_map.upper_bound(target));
     }
 
-    bool HasPhysicalBacking(VirtualMemoryArea vma) {
+    bool HasPhysicalBacking(const VirtualMemoryArea& vma) {
         return vma.type == VMAType::Direct || vma.type == VMAType::Flexible ||
                vma.type == VMAType::Pooled;
     }

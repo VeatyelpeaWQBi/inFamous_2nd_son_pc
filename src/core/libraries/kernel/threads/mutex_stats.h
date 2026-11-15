@@ -11,8 +11,8 @@
 
 namespace Libraries::Kernel {
 
-/// Diagnostic, off by default, selected once per process by IFSS_GUEST_MUTEX_STATS=1: every guest
-/// pthread mutex records how long threads waited for it and how long it was held.
+/// Diagnostic, off by default (`IFSS_GUEST_MUTEX_STATS=1`): every guest pthread mutex records how
+/// long threads waited for it and how long it was held. Independent of the fast-path default.
 /// Durations fall into buckets below 1, 4, 16, 64, 256, 1024 and 4096 us, and one from there up.
 constexpr size_t GuestMutexBuckets = 8;
 

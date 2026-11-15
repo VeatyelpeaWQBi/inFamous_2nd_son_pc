@@ -17,8 +17,14 @@ template <std::size_t MaxBytes>
 class RuntimeSnapshot {
 public:
     bool Matches(std::span<const std::byte> input) const noexcept {
+        return Matches(input, [](const std::byte* lhs, const std::byte* rhs, std::size_t size) {
+            return std::memcmp(lhs, rhs, size) == 0;
+        });
+    }
+
+    bool Matches(std::span<const std::byte> input, auto equal) const noexcept {
         return valid && input.size() == bytes.size() &&
-               (input.empty() || std::memcmp(input.data(), bytes.data(), input.size()) == 0);
+               (input.empty() || equal(input.data(), bytes.data(), input.size()));
     }
 
     bool Capture(std::span<const std::byte> input) {

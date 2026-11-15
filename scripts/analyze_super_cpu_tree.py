@@ -70,7 +70,7 @@ def summarize(rows, expected_cpu):
         for name in row['path']:
             if name.startswith('AmdGpu::Liverpool::ProcessCompute'):
                 context = 'guest compute queue'; break
-            if name == 'Vulkan::Rasterizer::Draw':
+            if name == 'Vulkan::Rasterizer::Draw' or name.startswith('Vulkan::Rasterizer::DrawImpl<'):
                 context = 'graphics direct draw'; break
             if name in ('Vulkan::Rasterizer::DrawIndirect', 'Vulkan::Rasterizer::DrawIndirectCount'):
                 context = 'graphics indirect draw'; break
@@ -93,12 +93,22 @@ def summarize(rows, expected_cpu):
 
 def analyze(directory):
     state = json.loads((directory / 'status.json').read_text(encoding='utf-8-sig'))
-    if state['status'] != 'recovered' or not state['raw_unchanged']:
-        raise ValueError('A verified recovered CPU result is required')
+    recovered = state['status'] == 'recovered' and state.get('raw_unchanged') is True
+    collected = (state['status'] == 'collected' and state.get('vtune_exit_code') == 0
+                 and state.get('warm') is True and state.get('meter_consumed') is True)
+    if not (recovered or collected):
+        raise ValueError('A verified warm CPU capture or recovered CPU result is required')
+    cpu_directory = directory.parent if recovered else directory
+    session = cpu_directory.parents[1]
+    if collected:
+        launch = json.loads((session / 'launch.json').read_text(encoding='utf-8-sig'))
+        if (not launch['complete'] or launch['exit_code'] != 0
+                or launch['runtime_sha256'] != state['runtime_sha256']
+                or launch['pid'] != state['target_pid']):
+            raise ValueError('CPU collector does not match a successful game launch')
     output = {'session': state['session'], 'runtime_sha256': state['runtime_sha256'],
               'sampling_mode': state['sampling_mode'], 'target_pid': state['target_pid'], 'phases': {}}
-    session = directory.parents[2]
-    with (directory.parent / 'summary.csv').open(encoding='utf-8-sig', newline='') as handle:
+    with (cpu_directory / 'summary.csv').open(encoding='utf-8-sig', newline='') as handle:
         summary = {row['Metric Name']: row['Metric Value'] for row in csv.DictReader(handle)}
     start = datetime.datetime.strptime(summary['Collection start time'], '%H:%M:%S %d/%m/%Y UTC').replace(tzinfo=datetime.timezone.utc)
     start_ns = int(start.timestamp()) * 1_000_000_000
@@ -110,7 +120,8 @@ def analyze(directory):
             continue
         rows = tree_rows(path.read_text(encoding='utf-8-sig'))
         result = summarize(rows, phase['cp_cpu_seconds'])
-        result['cp_tid'] = phase['cp_tid']
+        result['cp_tid'] = phase['cp_tid'] if recovered else collected_cp_tid(
+            cpu_directory / (phase['name'] + '-hotspots.csv'), state['target_pid'], phase)
         result['tree_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
         result['window_seconds'] = phase['end_seconds'] - phase['begin_seconds']
         result['cp_cpu_per_wall_second'] = result['cp_self_seconds'] / result['window_seconds']
@@ -129,6 +140,25 @@ def analyze(directory):
     if not output['phases']:
         raise ValueError('No existing top-down report')
     return output
+
+
+def collected_cp_tid(path, pid, phase):
+    with path.open(encoding='utf-8-sig', newline='') as handle:
+        target = [row for row in csv.DictReader(handle) if row['PID'] == str(pid)]
+    if phase['cp_identity'] == 'thread-name':
+        tids = {row['TID'] for row in target if 'GpuCommandProcessor' in row['Thread']}
+    elif phase['cp_identity'] == 'unique-ProcessGraphics-TID':
+        tids = {row['TID'] for row in target if row['Function'] == 'AmdGpu::Liverpool::ProcessGraphics'}
+    else:
+        raise ValueError(f"Unknown CP identity source: {phase['cp_identity']}")
+    if len(tids) != 1 or not next(iter(tids)):
+        raise ValueError('No unique command processor TID in the collected hotspots report')
+    tid, = tids
+    rows = [row for row in target if row['TID'] == tid]
+    seconds = sum(number(row['CPU Time']) for row in rows)
+    if len(rows) != phase['cp_rows'] or not math.isclose(seconds, phase['cp_cpu_seconds'], abs_tol=0.0002):
+        raise ValueError('Collected hotspots do not match the CP receipt')
+    return tid
 
 
 def self_test():

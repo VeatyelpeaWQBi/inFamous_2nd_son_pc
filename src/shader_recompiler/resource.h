@@ -179,11 +179,15 @@ struct ImageResource {
         return true;
     }
 
-    u32 NumBindings(const auto& info) const {
-        const AmdGpu::Image tsharp = GetSharp(info);
+    constexpr u32 NumBindings(const AmdGpu::Image& tsharp) const noexcept {
         return (mip_fallback_mode == MipStorageFallbackMode::DynamicIndex)
                    ? (tsharp.last_level - tsharp.base_level + 1)
                    : 1;
+    }
+
+    u32 NumBindings(const auto& info) const {
+        return mip_fallback_mode == MipStorageFallbackMode::DynamicIndex ? NumBindings(GetSharp(info))
+                                                                        : 1;
     }
 };
 using ImageResourceList = boost::container::static_vector<ImageResource, NUM_IMAGES>;

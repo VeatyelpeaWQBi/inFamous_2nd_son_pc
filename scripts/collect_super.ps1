@@ -24,11 +24,11 @@ param(
     [ValidatePattern('^(?:[0-9a-fA-F]{1,10})?$')][string]$FeedbackTraceAddress='',
     [ValidatePattern('^(?:[0-9a-fA-F]{1,10})?$')][string]$SecondFeedbackTraceAddress='',
     [switch]$ProbeCandidate,
-    [ValidateSet('none','feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter','cpu-placement','compute-recorder','recorder-spin','reg-dump-fast','feedback-word-prefetch','feedback-word-bulk','particle-poll-pause','c73-scan','written-sync','image-sync-once','feedback-page-words','access-union','readback-copy-stage','image-read-transition','buffer-prep-union','feedback-arena','vertex-input-key','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled','writer-footprint')][string]$Candidate='none',
+    [ValidateSet('none','feedback-checkpoint','feedback-writers','feedback-word','feedback-async','gds-counter','cpu-placement','compute-recorder','recorder-spin','reg-dump-fast','feedback-word-prefetch','feedback-word-bulk','particle-poll-pause','c73-scan','written-sync','image-sync-once','feedback-page-words','access-union','readback-copy-stage','image-read-transition','buffer-prep-union','feedback-arena','vertex-input-key','feedback-arena-group','feedback-arena-pool','feedback-arena-tiled','writer-footprint','readback-done-page')][string]$Candidate='none',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$TrialId,
     [switch]$CandidateBaseline,
     [switch]$NormalRendering,
-    [ValidateSet('off','stats','fast','fast-stats')][string]$GuestMutex='off',
+    [ValidateSet('default','legacy','stats','legacy-stats','off','fast','fast-stats')][string]$GuestMutex='default',
     [ValidatePattern('^(?:[0-9a-fA-F]{1,16})?$')][string]$PerformanceCoreMask='',
     [ValidatePattern('^(?:[0-9a-fA-F]{1,16})?$')][string]$ComputeTimingHash='',
     [ValidateRange(0,20)][int]$ComputeTimingStartSeconds=0,
@@ -108,9 +108,11 @@ if($SecondFeedbackTraceAddress){
     if(-not $secondWord -or ($secondWord -band 3)){throw 'SecondFeedbackTraceAddress must be a nonzero aligned word.'}
     if($secondWord -eq $traceWord){throw 'SecondFeedbackTraceAddress must differ from the primary address.'}
 }
-$guestMutexStats=$GuestMutex -in @('stats','fast-stats')
-$guestMutexFast=$GuestMutex -in @('fast','fast-stats')
-if($GuestMutex -ne 'off'){
+# Fast path is the engine default. legacy/off restore the old kernel mutex; stats need isolation.
+$guestMutexStats=$GuestMutex -in @('stats','legacy-stats','fast-stats')
+$guestMutexLegacy=$GuestMutex -in @('legacy','legacy-stats','off')
+$guestMutexFastExplicit=$GuestMutex -in @('fast','fast-stats')
+if($GuestMutex -ne 'default'){
     # One release per process: the mode is fixed at startup, so A and B are separate runs.
     if(-not $PSBoundParameters.ContainsKey('Rounds')){$Rounds=1}
     if($FullCapture -or $CpuHotspots -or $RendererPgoTrial -ne 'Off' -or $EnvironmentProbeSeconds -or
@@ -135,7 +137,7 @@ if($Candidate -ne 'none'){
 if($simpleNative){
     $MinimumWarmup=0;$MaximumWarmup=0
     if(-not $EnvironmentProbeSeconds -and -not $CpuHotspots -and $RendererPgoTrial -eq 'Off' -and $Candidate -eq 'none' -and
-       $GuestMutex -eq 'off' -and -not $PSBoundParameters.ContainsKey('Experiment') -and $Profile -in @('suite','lightweight','counters')){
+       $GuestMutex -eq 'default' -and -not $PSBoundParameters.ContainsKey('Experiment') -and $Profile -in @('suite','lightweight','counters')){
         $Experiment='compute-barriers'
     }
     if($Experiment -ne 'none' -and $Rounds % 2 -ne 0){throw 'Native comparison uses A then B: use -Rounds 2 (or an explicitly requested even count).'}
@@ -580,7 +582,8 @@ try{
     if($RendererPgoTrial -ne 'Off'){$arguments+=@('-RendererPgoTrial',$RendererPgoTrial)}
     $arguments+=@(Get-SuperStartupArguments $Candidate ([bool]$CandidateBaseline))
     if($guestMutexStats){$arguments+='-GuestMutexStats'}
-    if($guestMutexFast){$arguments+='-GuestMutexFast'}
+    if($guestMutexLegacy){$arguments+='-GuestMutexLegacy'}
+    elseif($guestMutexFastExplicit){$arguments+='-GuestMutexFast'}
     $launcherOptions=@{
         FilePath=$powerShell;ArgumentList=(($arguments|ForEach-Object{Quote-WindowsArgument $_}) -join ' ')
         WorkingDirectory=$root;WindowStyle='Hidden';PassThru=$true
@@ -628,8 +631,9 @@ try{
     }
     # The engine reads the mode once at startup and reports what it actually runs.
     $mutexReceipt=(Get-SuperSnapshot).PSObject.Properties['guest_mutex']
-    if($GuestMutex -ne 'off' -and -not $mutexReceipt){throw 'This engine build does not report the guest mutex mode; rebuild it first.'}
-    if($mutexReceipt -and ([bool]$mutexReceipt.Value.stats -ne $guestMutexStats -or [bool]$mutexReceipt.Value.fast_path -ne $guestMutexFast)){
+    $expectFast=-not $guestMutexLegacy
+    if(($GuestMutex -ne 'default' -or $guestMutexStats) -and -not $mutexReceipt){throw 'This engine build does not report the guest mutex mode; rebuild it first.'}
+    if($mutexReceipt -and ([bool]$mutexReceipt.Value.stats -ne $guestMutexStats -or [bool]$mutexReceipt.Value.fast_path -ne $expectFast)){
         throw 'Guest mutex mode reported by the engine does not match the request.'
     }
     if($Candidate -in @('c73-scan','particle-poll-pause')){

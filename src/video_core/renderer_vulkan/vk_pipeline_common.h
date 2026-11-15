@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <span>
+
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/compile_readiness.h"
@@ -26,6 +28,7 @@ class Instance;
 class Scheduler;
 class DescriptorHeap;
 class DriverPipelineCache;
+struct DescriptorPayloads;
 
 class Pipeline {
 public:
@@ -59,13 +62,13 @@ public:
         return is_compute;
     }
 
-    using DescriptorWrites = std::vector<vk::WriteDescriptorSet>;
-    void BindResources(DescriptorWrites& set_writes, const Shader::PushData& push_data) const;
+    void BindResources(std::span<vk::WriteDescriptorSet> set_writes,
+                       const Shader::PushData& push_data, const DescriptorPayloads& payloads) const;
     /// Binds on the given scheduler's command buffer (another queue, asc_queue); only for a
     /// pipeline using push descriptors (descriptor sets are recycled with this pipeline's
     /// scheduler).
-    void BindResources(Scheduler& on, DescriptorWrites& set_writes,
-                       const Shader::PushData& push_data) const;
+    void BindResources(Scheduler& on, std::span<vk::WriteDescriptorSet> set_writes,
+                       const Shader::PushData& push_data, const DescriptorPayloads& payloads) const;
 
     /// Retained compute work waits at command replay, preserving every dispatch and its order.
     void BindCompute(Scheduler& on) const;

@@ -48,6 +48,24 @@ static void BoundedInputs() {
     Check(!inputs.Matches(small), "snapshot does not alias mutable source storage");
 }
 
+static void CustomComparison() {
+    VideoCore::RuntimeSnapshot<16> snapshot;
+    std::array<std::byte, 16> bytes{};
+    unsigned calls = 0;
+    const auto equal = [&](const std::byte* lhs, const std::byte* rhs, std::size_t size) {
+        ++calls;
+        return std::memcmp(lhs, rhs, size) == 0;
+    };
+    Check(!snapshot.Matches(bytes, equal), "invalid snapshot bypasses custom comparison");
+    Check(snapshot.Capture({}) && snapshot.Matches({}, equal), "empty comparison bypasses callback");
+    Check(snapshot.Capture(bytes), "capture full input for custom comparison");
+    Check(!snapshot.Matches(std::span{bytes}.first(8), equal), "size mismatch bypasses comparison");
+    Check(calls == 0, "callback only receives nonempty same-size valid input");
+    Check(snapshot.Matches(bytes, equal), "custom comparison matches exact bytes");
+    bytes.back() = std::byte{1};
+    Check(!snapshot.Matches(bytes, equal) && calls == 2, "custom comparison rejects changed bytes");
+}
+
 static void UploadLifetime() {
     VideoCore::RuntimeUploadMemo<16> upload;
     std::array<std::byte, 8> contents{};
@@ -69,6 +87,7 @@ static void UploadLifetime() {
 int main() {
     InputChanges();
     BoundedInputs();
+    CustomComparison();
     UploadLifetime();
     std::cout << "PASS: runtime input changes, bounded ownership, upload submission/queue/wrap\n";
 }

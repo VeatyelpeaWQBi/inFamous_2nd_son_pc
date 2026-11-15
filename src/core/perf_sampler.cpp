@@ -75,6 +75,7 @@ void ApplyGameProfile(std::string_view serial) {
     t.readback_feedback_checkpoint.store(false, relaxed);
     t.readback_feedback_writers.store(false, relaxed);
     t.readback_word_load.store(false, relaxed);
+    t.readback_done_page.store(false, relaxed);
     t.readback_writer_footprint.store(false, relaxed);
     t.gds_counter_scope.store(false, relaxed);
     t.skip_empty_draws.store(true, relaxed);
@@ -111,19 +112,29 @@ void PollTuning(bool startup) {
     if (has_file && write_time == last_write) {
         return;
     }
+    std::ifstream file{path};
+    if (!file) {
+        return;
+    }
+    // A transient read failure must leave this timestamp eligible for the next poll.
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(file, line);) {
+        lines.push_back(std::move(line));
+    }
+    if (file.bad() || !file.eof()) {
+        return;
+    }
     has_file = true;
     last_write = write_time;
 
     auto& tuning = Common::Perf::GetTuning();
     const bool capture = Core::Benchmark::CaptureEnabled();
-    std::ifstream file{path};
-    std::string line;
     const auto trim = [](std::string text) {
         const auto first = text.find_first_not_of(" \t\r");
         const auto last = text.find_last_not_of(" \t\r");
         return first == std::string::npos ? std::string{} : text.substr(first, last - first + 1);
     };
-    while (std::getline(file, line)) {
+    for (std::string& line : lines) {
         const auto comment = line.find('#');
         if (comment != std::string::npos) {
             line.resize(comment);
@@ -192,6 +203,8 @@ void PollTuning(bool startup) {
             tuning.readback_word_page_cluster.store(value != "0", std::memory_order_relaxed);
         } else if (key == "readback_word_load") {
             tuning.readback_word_load.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "readback_done_page") {
+            tuning.readback_done_page.store(value != "0", std::memory_order_relaxed);
         } else if (key == "readback_writer_footprint") {
             tuning.readback_writer_footprint.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gds_counter_scope") {

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include <bit>
 #include <functional>
 #include <shared_mutex>
 #include <unordered_map>
@@ -219,7 +220,8 @@ public:
     /// when the stage was looked up by the command processor: the scout's precomputed resource
     /// lookups (Tuning::bind_prefetch) apply to the info's bindings.
     const AmdGpu::ScoutStage* TakenScoutStage(const Shader::Info& info) const noexcept {
-        for (size_t i = 0; i < taken_scout_infos.size(); ++i) {
+        for (u32 stages = taken_scout_mask; stages != 0; stages &= stages - 1) {
+            const auto i = std::countr_zero(stages);
             if (taken_scout_infos[i] == &info) {
                 return taken_scout_stages[i];
             }
@@ -333,6 +335,7 @@ private:
     std::unordered_set<u64> xray_dumped; ///< Shaders whose code the frame x-ray wrote.
     std::array<const Shader::Info*, MaxShaderStages> infos{};
     /// The stages of the current draw taken from the scout (TakeScoutedStage), by stage.
+    u32 taken_scout_mask{};
     std::array<const Shader::Info*, MaxShaderStages> taken_scout_infos{};
     std::array<const AmdGpu::ScoutStage*, MaxShaderStages> taken_scout_stages{};
     std::array<vk::ShaderModule, MaxShaderStages> modules{};

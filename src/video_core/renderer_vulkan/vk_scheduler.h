@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -904,7 +905,8 @@ public:
 
     void pushDescriptorSetKHR(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout,
                               u32 set,
-                              vk::ArrayProxy<const vk::WriteDescriptorSet> const& writes) const {
+                              vk::ArrayProxy<const vk::WriteDescriptorSet> const& writes,
+                              const DescriptorPayloads& payloads = {}) const {
         if (scheduler && scheduler->GetDynamicState().binds.SkipDescriptors(
                              bind_point, layout, set, {writes.data(), writes.size()})) {
             return;
@@ -916,8 +918,17 @@ public:
         CommandStream& s = scheduler->Stream();
         const u32 count = writes.size();
         vk::WriteDescriptorSet* const copies = s.Copy(writes.data(), count);
-        for (u32 i = 0; i < count; ++i) {
-            CopyDescriptorWrite(s, copies[i]);
+        bool bulk_copied = false;
+        if (count >= 4 && (!payloads.buffers.empty() || !payloads.images.empty())) {
+            bulk_copied = CopyDescriptorPayloads(s, {copies, count}, payloads);
+            if (!bulk_copied) {
+                std::copy_n(writes.data(), count, copies);
+            }
+        }
+        if (!bulk_copied) {
+            for (u32 i = 0; i < count; ++i) {
+                CopyDescriptorWrite(s, copies[i]);
+            }
         }
         s.Record([=](vk::CommandBuffer c) {
             c.pushDescriptorSetKHR(bind_point, layout, set, count, copies);
@@ -1295,6 +1306,48 @@ private:
     /// The command buffer to record in now, or null to record into the stream.
     [[nodiscard]] vk::CommandBuffer Direct() const noexcept {
         return scheduler ? scheduler->DirectCommandBuffer() : fixed;
+    }
+
+    /// Rasterizer writes refer to successive ranges of two contiguous arrays.
+    /// Keep the generic copy for any write that does not follow that layout.
+    static bool CopyDescriptorPayloads(CommandStream& stream,
+                                       std::span<vk::WriteDescriptorSet> writes,
+                                       const DescriptorPayloads& payloads) {
+        const auto* buffers = stream.Copy(payloads.buffers.data(), payloads.buffers.size());
+        const auto* images = stream.Copy(payloads.images.data(), payloads.images.size());
+        size_t buffer_offset = 0;
+        size_t image_offset = 0;
+        for (auto& write : writes) {
+            const size_t count = write.descriptorCount;
+            if (count == 0 || write.pNext || write.pTexelBufferView) {
+                return false;
+            }
+            switch (write.descriptorType) {
+            case vk::DescriptorType::eStorageBuffer:
+                if (count > payloads.buffers.size() - buffer_offset ||
+                    write.pBufferInfo != payloads.buffers.data() + buffer_offset ||
+                    write.pImageInfo) {
+                    return false;
+                }
+                write.pBufferInfo = buffers + buffer_offset;
+                buffer_offset += count;
+                break;
+            case vk::DescriptorType::eSampledImage:
+            case vk::DescriptorType::eStorageImage:
+            case vk::DescriptorType::eSampler:
+                if (count > payloads.images.size() - image_offset ||
+                    write.pImageInfo != payloads.images.data() + image_offset ||
+                    write.pBufferInfo) {
+                    return false;
+                }
+                write.pImageInfo = images + image_offset;
+                image_offset += count;
+                break;
+            default:
+                return false;
+            }
+        }
+        return true;
     }
 
     static void CopyDescriptorWrite(CommandStream& s, vk::WriteDescriptorSet& write) {

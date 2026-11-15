@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <utility>
 #include <boost/preprocessor/stringize.hpp>
 
 #include "common/assert.h"
@@ -90,9 +91,15 @@ Liverpool::~Liverpool() {
     process_thread.join();
 }
 
-void Liverpool::ProcessCommands() {
+inline void Liverpool::ProcessCommands() {
+    if (num_commands) [[unlikely]] {
+        ProcessPendingCommands();
+    }
+}
+
+void Liverpool::ProcessPendingCommands() {
     // Process incoming commands with high priority
-    while (num_commands) {
+    do {
         Common::UniqueFunction<void> callback{};
         {
             std::scoped_lock lk{submit_mutex};
@@ -101,8 +108,8 @@ void Liverpool::ProcessCommands() {
             --num_commands;
         }
         callback();
-        ++processed_packets;
-    }
+        processed_work = true;
+    } while (num_commands);
 }
 
 void Liverpool::Process(std::stop_token stoken) {
@@ -124,19 +131,31 @@ void Liverpool::Process(std::stop_token stoken) {
         // Awake time is split between processing packets and spinning on unsatisfied waits
         // (WAIT_REG_MEM, semaphores...). It is accumulated locally and published at least every
         // millisecond, as the thread can stay awake for many frames.
-        u64 time_mark = Common::Perf::NowNs();
-        u64 packets_mark = processed_packets;
+        const auto& perf_log = Common::Perf::GetTuning().perf_log;
+        u64 time_mark = perf_log.load(std::memory_order_relaxed) ? Common::Perf::NowNs() : 0;
+        processed_work = false;
         u64 work_ns = 0;
         u64 spin_ns = 0;
         const auto account_time = [&](bool publish) {
+            if (!perf_log.load(std::memory_order_relaxed)) {
+                time_mark = work_ns = spin_ns = blocked_ns = 0;
+                return;
+            }
             const u64 now = Common::Perf::NowNs();
+            if (time_mark == 0) {
+                // Logging may be enabled while the command queue is still active.
+                // Do not charge earlier unmeasured work or label waits to the first sample.
+                time_mark = now;
+                processed_work = false;
+                blocked_ns = 0;
+                return;
+            }
             // Sleeping on a flip label inside a packet is waiting, not work.
             const u64 blocked = std::min(blocked_ns, now - time_mark);
             blocked_ns = 0;
             spin_ns += blocked;
-            (processed_packets != packets_mark ? work_ns : spin_ns) += now - time_mark - blocked;
+            (std::exchange(processed_work, false) ? work_ns : spin_ns) += now - time_mark - blocked;
             time_mark = now;
-            packets_mark = processed_packets;
             if (publish || work_ns + spin_ns >= 1'000'000) {
                 Common::Perf::Add(Common::Perf::GpuBusyNs, work_ns);
                 Common::Perf::Add(Common::Perf::GpuSpinNs, spin_ns);
@@ -179,7 +198,7 @@ void Liverpool::Process(std::stop_token stoken) {
                 trace_asc_dispatch_count = 0;
                 if (rasterizer) rasterizer->BeginAscDispatchBudget();
             }
-            if (curr_qid != GfxQueueId) {
+            if (curr_qid != GfxQueueId && perf_log.load(std::memory_order_relaxed)) {
                 const u64 resume_start = Common::Perf::NowNs();
                 task.resume();
                 Common::Perf::Add(Common::Perf::AscBusyNs, Common::Perf::NowNs() - resume_start);
@@ -235,7 +254,7 @@ void Liverpool::Process(std::stop_token stoken) {
                 rasterizer->Flush();
             }
             submit_done = false;
-            ++processed_packets;
+            processed_work = true;
         }
         account_time(true);
         Common::Perf::GpuThreadCpu().store(Common::Perf::CurrentCpu(), std::memory_order_relaxed);
@@ -249,7 +268,7 @@ Liverpool::Task Liverpool::ProcessCeUpdate(std::span<const u32> ccb) {
 
     while (!ccb.empty()) {
         ProcessCommands();
-        ++processed_packets;
+        processed_work = true;
 
         const auto* header = reinterpret_cast<const PM4Header*>(ccb.data());
         const u32 type = header->type;
@@ -349,10 +368,20 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
     // not cross into the next 4 KB page, where each page of commands missed the caches).
     const bool prefetch_commands =
         Common::Perf::GetTuning().bind_prefetch.load(std::memory_order_relaxed);
+    const auto& perf_log = Common::Perf::GetTuning().perf_log;
+    const auto write_context_regs = [&](u32 reg_addr, const void* payload, size_t bytes) {
+        auto* const dst = &regs.reg_array[reg_addr];
+        // The serial only serves the consecutive-draw statistics. While those are off, a write
+        // invalidates the earlier observation without comparing the register values.
+        if (!perf_log.load(std::memory_order_relaxed) || std::memcmp(dst, payload, bytes) != 0) {
+            ++context_reg_changes;
+        }
+        std::memcpy(dst, payload, bytes);
+    };
     constexpr size_t CommandPrefetchDwords = 128;
     while (!dcb.empty()) {
         ProcessCommands();
-        ++processed_packets;
+        processed_work = true;
         if (prefetch_commands && dcb.size() > CommandPrefetchDwords) {
             VideoCore::PrefetchLine(dcb.data() + CommandPrefetchDwords);
         }
@@ -489,11 +518,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
                 const auto reg_addr = Regs::ConfigRegWordOffset + set_data->reg_offset;
                 const auto* payload = reinterpret_cast<const u32*>(header + 2);
-                if (std::memcmp(&regs.reg_array[reg_addr], payload, (count - 1) * sizeof(u32)) !=
-                    0) {
-                    ++context_reg_changes;
-                }
-                std::memcpy(&regs.reg_array[reg_addr], payload, (count - 1) * sizeof(u32));
+                write_context_regs(reg_addr, payload, (count - 1) * sizeof(u32));
                 break;
             }
             case PM4ItOpcode::SetContextReg: {
@@ -501,11 +526,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 const auto reg_addr = Regs::ContextRegWordOffset + set_data->reg_offset;
                 const auto* payload = reinterpret_cast<const u32*>(header + 2);
 
-                if (std::memcmp(&regs.reg_array[reg_addr], payload, (count - 1) * sizeof(u32)) !=
-                    0) {
-                    ++context_reg_changes;
-                }
-                std::memcpy(&regs.reg_array[reg_addr], payload, (count - 1) * sizeof(u32));
+                write_context_regs(reg_addr, payload, (count - 1) * sizeof(u32));
 
                 // In the case of HW, render target memory has alignment as color block operates on
                 // tiles. There is no information of actual resource extents stored in CB context
@@ -591,12 +612,8 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             }
             case PM4ItOpcode::SetUconfigReg: {
                 const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
-                if (std::memcmp(&regs.reg_array[Regs::UconfigRegWordOffset + set_data->reg_offset],
-                                header + 2, (count - 1) * sizeof(u32)) != 0) {
-                    ++context_reg_changes;
-                }
-                std::memcpy(&regs.reg_array[Regs::UconfigRegWordOffset + set_data->reg_offset],
-                            header + 2, (count - 1) * sizeof(u32));
+                write_context_regs(Regs::UconfigRegWordOffset + set_data->reg_offset, header + 2,
+                                   (count - 1) * sizeof(u32));
                 break;
             }
             case PM4ItOpcode::SetPredication: {
@@ -1015,7 +1032,9 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 const u64* wait_addr = wait_reg_mem->Address<u64*>();
                 if (vo_port->IsVoLabel(wait_addr) &&
                     num_submits == mapped_queues[GfxQueueId].submits.size()) {
-                    const u64 wait_start = Common::Perf::NowNs();
+                    const bool measure_wait =
+                        Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed);
+                    const u64 wait_start = measure_wait ? Common::Perf::NowNs() : 0;
                     // Commands from guest threads (readbacks waiting for this thread) are still
                     // served while the label is not written. Compute work submitted meanwhile
                     // runs at once (the PS4 runs it alongside): wait by yielding to it then.
@@ -1031,7 +1050,9 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                             break;
                         }
                     }
-                    blocked_ns += Common::Perf::NowNs() - wait_start;
+                    if (measure_wait) {
+                        blocked_ns += Common::Perf::NowNs() - wait_start;
+                    }
                     if (satisfied) {
                         // Written by the presentation, not by the guest CPU: no new upload epoch.
                         Common::Perf::Add(Common::Perf::EpochVoWaitsSkipped);
@@ -1152,7 +1173,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid, u6
     size_t acb_size = acb.size_bytes();
     while (!acb.empty()) {
         ProcessCommands();
-        ++processed_packets;
+        processed_work = true;
         // asc_queue: the dispatches, copies and fills of this queue run on the compute queue.
         if (rasterizer) {
             rasterizer->SetAsyncCompute(true);

@@ -940,6 +940,8 @@ bool BufferCache::CollectReadback(const Buffer* arena, PendingReadback& readback
         // Align up to avoid cache conflicts
         total_size_bytes += Common::AlignUp(size, 64ULL);
     };
+    // The tracker and the range sets visit guest addresses in ascending order.
+    // FinishReadback uses this order to walk the dirty pages without rescanning them.
     memory_tracker->ForEachDownloadRange<false>(
         readback.window_start, readback.window_end - readback.window_start,
         [&](u64 address, u64 range_size) {
@@ -1550,6 +1552,21 @@ u64 BufferCache::BeginReadback(VAddr device_addr, u64 size, bool is_write,
     // Readbacks the GPU has finished are written first, the requested data may be among them.
     CompleteReadbacks(false);
 
+    // readback_done_page: a small demand read whose page is fully GPU-owned and whose writers
+    // are already done downloads the whole page once, so later 8-byte faults on it do not each
+    // pay another CP round. Mixed CPU/GPU pages stay at the exact request size.
+    if (!is_write && size != 0 && size <= BYTES_PER_PAGE &&
+        Common::Perf::GetTuning().readback_done_page.load(std::memory_order_relaxed)) {
+        const VAddr page = Common::AlignDown(device_addr, BYTES_PER_PAGE);
+        if (memory_tracker->IsRegionFullyGpuModified(page, BYTES_PER_PAGE) &&
+            WindowWritersOf(page, BYTES_PER_PAGE).done) {
+            gpu_modified_ranges.Add(page, BYTES_PER_PAGE);
+            device_addr = page;
+            size = BYTES_PER_PAGE;
+            Common::Perf::Add(Common::Perf::ReadbackDonePageExpands);
+        }
+    }
+
     const u32 first_block = device_addr >> block_shift;
     const u32 last_block = (device_addr + size - 1) >> block_shift;
     const auto* arena = GetArena(first_block, last_block);
@@ -2052,7 +2069,8 @@ void BufferCache::FinishReadback(size_t index) {
         Common::PathTrace::Emit(Common::PathTrace::Kind::CopyPublishEnd, readback.trace_id,
                                 readback.tick, readback.on_readback_queue, readback.record_seq);
     };
-    const u64 finish_start = Common::Perf::NowNs();
+    const bool measure_finish = Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed);
+    const u64 finish_start = measure_finish ? Common::Perf::NowNs() : 0;
     if (readback.demand_page_prefetch) {
         Common::Perf::Add(Common::Perf::ReadbackPagePrefetchFinished);
     }
@@ -2070,16 +2088,22 @@ void BufferCache::FinishReadback(size_t index) {
 
     if (!readback.copies.empty()) {
         readback.download.Invalidate();
+        auto page = pages.begin();
         for (const auto& copy : readback.copies) {
             const VAddr copy_start = readback.arena_base + copy.srcOffset;
             const VAddr copy_end = copy_start + copy.size;
             const u8* src = readback.download.mapped + (copy.dstOffset - readback.download.offset);
-            for (const auto& [start, end] : pages) {
+            for (; page != pages.end() && page->first < copy_end; ++page) {
+                const auto [start, end] = *page;
                 const VAddr lo = std::max(copy_start, start);
                 const VAddr hi = std::min(copy_end, end);
                 if (lo < hi) {
                     memory->TryWriteBacking(std::bit_cast<u8*>(lo), src + (lo - copy_start),
                                             hi - lo);
+                }
+                if (end > copy_end) {
+                    // The next copy can still intersect this run of pages.
+                    break;
                 }
             }
         }
@@ -2167,7 +2191,9 @@ void BufferCache::FinishReadback(size_t index) {
         const u64 finish_qpc = Common::Perf::NowNs();
         FeedbackLink::OnFinishReadback(readback.feedback.id, finish_qpc);
     }
-    Common::Perf::Add(Common::Perf::ReadbackSyncNs, Common::Perf::NowNs() - finish_start);
+    if (measure_finish) {
+        Common::Perf::Add(Common::Perf::ReadbackSyncNs, Common::Perf::NowNs() - finish_start);
+    }
 }
 
 void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {
@@ -2309,7 +2335,8 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                 }
                 Common::Perf::Add(Common::Perf::StreamBarrierAvoided);
             }
-        } else if ((++stream_clean_sample & 15) == 0 && !is_texel_buffer &&
+        } else if (tuning.perf_log.load(std::memory_order_relaxed) &&
+                   (++stream_clean_sample & 15) == 0 && !is_texel_buffer &&
                    memory_tracker->IsRegionCpuClean(device_addr, size, stable_frames)) {
             // Statistics only (one binding in 16): copies stream_static would avoid.
             Common::Perf::Add(Common::Perf::StreamCleanCopies, 16);

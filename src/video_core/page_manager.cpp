@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <bit>
 #include <utility>
 #include "common/adaptive_mutex.h"
 #include "common/assert.h"
@@ -242,6 +243,42 @@ struct PageManager::Impl {
         }
     }
 
+    void DeferWriteWatchers(u64 base_page, const Bounds& bounds, const RegionBits& write_mask,
+                            LateProtect& late) {
+        const auto append_page = [](auto& ranges, u64 page) {
+            if (!ranges.empty() && ranges.back().second == page) {
+                ++ranges.back().second;
+            } else {
+                ranges.emplace_back(page, page + 1);
+            }
+        };
+        for (u64 index = bounds.start_word; index <= bounds.end_word; ++index) {
+            u64 pages = write_mask[index];
+            if (index == bounds.start_word) {
+                pages &= ~u64{0} << bounds.start_page;
+            }
+            if (index == bounds.end_word) {
+                pages &= ~u64{0} >> (PAGES_PER_WORD - 1 - bounds.end_page);
+            }
+            while (pages) {
+                const u64 page = base_page + index * PAGES_PER_WORD + std::countr_zero(pages);
+                pages &= pages - 1;
+                auto* state = cached_pages.find(page);
+                if (!state) {
+                    continue;
+                }
+                locks[page].lock();
+                append_page(late.locked, page);
+                const bool needs_protection = state->GetPage<false>() == 0;
+                state->Update(PageOp::Track);
+                if (needs_protection) {
+                    state->protect_pending = 1;
+                    append_page(*t_deferred_protect, page);
+                }
+            }
+        }
+    }
+
     void UpdatePageWatchersForRegion(VAddr base_addr, const Bounds& bounds,
                                      const RegionBits& write_mask, const RegionBits& read_mask,
                                      PageOp write_op, PageOp read_op) {
@@ -266,6 +303,12 @@ struct PageManager::Impl {
         auto& late = t_late_protect;
         if (late.active && !late.locked.empty()) {
             ApplyLateProtect();
+        }
+        if (defer && read_op == PageOp::None && late.active) {
+            // Only write-mask pages may require new protection. Pending protection
+            // outside it belongs to an earlier upload job, which keeps its own ranges.
+            DeferWriteWatchers(base_page, bounds, write_mask, late);
+            return;
         }
         const auto release_pending = [&] {
             if (range_pages > 0) {
@@ -603,7 +646,15 @@ struct SignalImpl : public PageManager::Impl {
                 }
             }
 #endif
-            const bool handled = rasterizer->ReadMemory(addr, size, is_gpu_thread, rip);
+            // Default: only the first 8 bytes of the fault. readback_done_page: the rest of the
+            // page in one demand read so a done writer clears the whole GPU-owned page once.
+            u64 read_size = size;
+            if (!is_gpu_thread &&
+                Common::Perf::GetTuning().readback_done_page.load(std::memory_order_relaxed)) {
+                read_size = PageManager::GetNextPageAddr(addr) - addr;
+                Common::Perf::Add(Common::Perf::ReadbackDonePageFaults);
+            }
+            const bool handled = rasterizer->ReadMemory(addr, read_size, is_gpu_thread, rip);
             if (handled) {
                 Common::Perf::Add(Common::Perf::FaultReads);
                 Core::PerfSampler::RecordReadback(addr, rip);

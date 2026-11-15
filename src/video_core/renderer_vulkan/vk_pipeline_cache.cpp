@@ -13,6 +13,9 @@
 #include <vector>
 #include <boost/container/small_vector.hpp>
 #include <xxhash.h>
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
 
 #include "common/hash.h"
 #include "common/scope_exit.h"
@@ -439,7 +442,7 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(HwStage stage, SwStag
         info.props.fp_round_mode32 = program.settings.fp_round_mode32;
         info.props.fp_round_mode16_64 = program.settings.fp_round_mode64;
     };
-    info.Initialize(stage, l_stage);
+    // The common builder initializes info before handing off Local, Hull and Compute.
     switch (stage) {
     case HwStage::Local: {
         BuildCommon(regs.ls_program);
@@ -453,6 +456,8 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(HwStage stage, SwStag
         BuildCommon(regs.hs_program);
         break;
     case HwStage::Geometry:
+        // An unsupported geometry topology can fail after partially filling info.
+        info.Initialize(stage, l_stage);
         UNREACHABLE();
         break;
     case HwStage::Compute: {
@@ -1194,6 +1199,7 @@ bool PipelineCache::TakeScoutedStage(Shader::HwStage stage_in, Shader::SwStage s
     modules[stage_out_idx] = perm.module;
     taken_scout_infos[stage_out_idx] = &info;
     taken_scout_stages[stage_out_idx] = scouted;
+    taken_scout_mask |= 1u << stage_out_idx;
     graphics_key.stage_hashes[stage_out_idx] =
         HashCombine(scouted->params_hash, u64{scouted->perm_idx});
     Common::Perf::Add(Common::Perf::SpecCalls);
@@ -1234,7 +1240,7 @@ bool PipelineCache::RefreshGraphicsStages() {
 
     infos.fill(nullptr);
     modules.fill(nullptr);
-    taken_scout_infos.fill(nullptr);
+    taken_scout_mask = 0;
 
     bind_stage(HwStage::Fragment, SwStage::Fragment);
 
@@ -1325,7 +1331,7 @@ bool PipelineCache::RefreshGraphicsStages() {
 }
 
 bool PipelineCache::RefreshComputeKey() {
-    taken_scout_infos.fill(nullptr);
+    taken_scout_mask = 0;
     Shader::Backend::Bindings binding{};
     const auto& cs_pgm = liverpool->GetCsRegs();
     const auto cs_params = GetStageParams(cs_pgm);
@@ -1384,6 +1390,29 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
 
 namespace {
 
+#if defined(__AVX2__)
+bool EqualSelectionInputs(const std::byte* lhs, const std::byte* rhs, size_t size) noexcept {
+    constexpr size_t width = sizeof(__m256i);
+    if (size < width) {
+        return std::memcmp(lhs, rhs, size) == 0;
+    }
+    const auto equal_block = [](const std::byte* lhs, const std::byte* rhs) {
+        const auto x = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(lhs));
+        const auto y = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(rhs));
+        const auto diff = _mm256_xor_si256(x, y);
+        return _mm256_testz_si256(diff, diff) != 0;
+    };
+    const size_t tail = size - width;
+    for (size_t offset = 0; offset < tail; offset += width) {
+        if (!equal_block(lhs + offset, rhs + offset)) {
+            return false;
+        }
+    }
+    // Compare the final complete block, overlapping the previous one if necessary.
+    return equal_block(lhs + tail, rhs + tail);
+}
+#endif
+
 /// Permutation memo key: the fields of the resource descriptors the specialization reads
 /// (Shader::StageSpecialization), the fetch shader code, the runtime info and the start
 /// bindings. Addresses and sizes are left out, so that a shader bound with other buffers and
@@ -1392,19 +1421,34 @@ template <typename InfoT>
 void SpecializationInputs(const InfoT& info, const Shader::Backend::Bindings& binding,
                           boost::container::small_vector<u32, 160>& words,
                           CommandBufferSharps* sharps = nullptr) {
-    words.push_back(binding.unified);
-    words.push_back(binding.buffer);
+    const u32* code = nullptr;
+    uintptr_t address = 0;
+    size_t code_words = 0;
     if (info.has_fetch_shader) {
         // The fetch shader tells the vertex attributes (their descriptors are checked against
         // the permutation found, see VertexAttributesMatch): its code, up to the end of its page.
-        const u32* code;
         std::memcpy(&code, &info.user_data[info.fetch_shader_sgpr_base], sizeof(code));
-        const auto address = reinterpret_cast<uintptr_t>(code);
+        address = reinterpret_cast<uintptr_t>(code);
         const u64 room = (0x1000 - (address & 0xFFF)) / sizeof(u32);
-        const u64 count = std::min<u64>(room, 48);
-        words.push_back(static_cast<u32>(address));
-        words.push_back(static_cast<u32>(address >> 32));
-        words.insert(words.end(), code, code + count);
+        code_words = std::min<u64>(room, 48);
+    }
+    // Each descriptor contributes a fixed number of words. Allocate the complete key before
+    // filling it so resource-heavy stages do not grow the vector one field at a time.
+    const size_t offset = words.size();
+    const size_t fetch_words = info.has_fetch_shader ? 2 + code_words : 0;
+    const size_t resource_words = info.buffers.size() * 3 + info.images.size() * 5 +
+                                  info.fmasks.size() * 2 + info.samplers.size();
+    words.resize(offset + 2 + fetch_words + resource_words, boost::container::default_init);
+    auto* out = words.data() + offset;
+    *out++ = binding.unified;
+    *out++ = binding.buffer;
+    if (info.has_fetch_shader) {
+        *out++ = static_cast<u32>(address);
+        *out++ = static_cast<u32>(address >> 32);
+        if (code_words != 0) {
+            std::memcpy(out, code, code_words * sizeof(u32));
+            out += code_words;
+        }
     }
     size_t resource_index = 0;
     for (const auto& desc : info.buffers) {
@@ -1415,29 +1459,30 @@ void SpecializationInputs(const InfoT& info, const Shader::Backend::Bindings& bi
         }
         ++resource_index;
         const auto* raw = reinterpret_cast<const u32*>(&sharp);
-        words.push_back(static_cast<bool>(sharp));
-        words.push_back(raw[1] & ~0xFFu); // Stride, swizzle enable (not the address).
-        words.push_back(raw[3]);          // Formats, swizzles, index stride, element size.
+        *out++ = static_cast<bool>(sharp);
+        *out++ = raw[1] & ~0xFFu; // Stride, swizzle enable (not the address).
+        *out++ = raw[3];          // Formats, swizzles, index stride, element size.
     }
     for (const auto& desc : info.images) {
         const auto sharp = desc.GetSharp(info);
         const auto* raw = reinterpret_cast<const u32*>(&sharp);
-        words.push_back(static_cast<bool>(sharp));
-        words.push_back(raw[1] & ~0x3Fu); // Formats (not the address).
-        words.push_back(raw[3]);          // Swizzles, levels, type.
-        words.push_back(raw[4]);
-        words.push_back(raw[5]);
+        *out++ = static_cast<bool>(sharp);
+        *out++ = raw[1] & ~0x3Fu; // Formats (not the address).
+        *out++ = raw[3];          // Swizzles, levels, type.
+        *out++ = raw[4];
+        *out++ = raw[5];
     }
     for (const auto& desc : info.fmasks) {
         const auto sharp = desc.GetSharp(info);
         const auto* raw = reinterpret_cast<const u32*>(&sharp);
-        words.push_back(static_cast<bool>(sharp));
-        words.push_back(raw[2]); // Width and height.
+        *out++ = static_cast<bool>(sharp);
+        *out++ = raw[2]; // Width and height.
     }
     for (const auto& desc : info.samplers) {
         const auto sharp = desc.GetSharp(info);
-        words.push_back(static_cast<u32>(sharp.raw0 & ((1u << 15) | (1u << 20))));
+        *out++ = static_cast<u32>(sharp.raw0 & ((1u << 15) | (1u << 20)));
     }
+    DEBUG_ASSERT(out == words.data() + words.size());
 }
 
 u64 SpecializationKey(std::span<const u32> words, const Shader::RuntimeInfo& runtime_info) {
@@ -1518,7 +1563,7 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
             Common::Perf::Add(Common::Perf::ScoutHits);
         }
     }
-    Shader::RuntimeInfo runtime_info = [&] {
+    const Shader::RuntimeInfo& runtime_info = [&]() -> const Shader::RuntimeInfo& {
         if (scouted != nullptr) {
             runtime_infos[u32(sw_stage)] = scouted->GetRuntimeInfo();
             return runtime_infos[u32(sw_stage)];
@@ -1534,8 +1579,9 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         auto new_program_ptr = std::make_unique<Program>(hw_stage, sw_stage, params);
         Program* const program = new_program_ptr.get();
         auto start = binding;
-        const auto module = CompileModule(program->info, runtime_info, params.code, 0, binding);
-        auto spec = Shader::StageSpecialization(program->info, runtime_info, profile, start);
+        auto compile_runtime = runtime_info;
+        const auto module = CompileModule(program->info, compile_runtime, params.code, 0, binding);
+        auto spec = Shader::StageSpecialization(program->info, compile_runtime, profile, start);
         const auto perm_hash = HashCombine(params.hash, 0);
 
         RegisterShaderMeta(program->info, spec.fetch_shader_data, spec, perm_hash, 0);
@@ -1595,7 +1641,7 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         sharps->Begin(&info, resource_refresh_serial, info.buffers.size());
     }
     boost::container::small_vector<u32, 160> selection_words;
-    const auto runtime_bytes = std::as_bytes(std::span{&runtime_info, 1});
+    auto runtime_bytes = std::as_bytes(std::span{&runtime_info, 1});
     const auto reuse_permutation = [&](u32 perm) {
         if (sharps) {
             sharps->Publish();
@@ -1613,7 +1659,12 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         const auto input_bytes = std::as_bytes(
             std::span<const u32>{selection_words.data(), selection_words.size()});
         const u32 perm = program->selection_perm;
-        if (program->selection_inputs.Matches(input_bytes) &&
+#if defined(__AVX2__)
+        const bool same_inputs = program->selection_inputs.Matches(input_bytes, EqualSelectionInputs);
+#else
+        const bool same_inputs = program->selection_inputs.Matches(input_bytes);
+#endif
+        if (same_inputs &&
             program->selection_runtime.Matches(runtime_bytes) && perm < program->modules.size() &&
             program->modules[perm].module &&
             VertexAttributesMatch(info, runtime_info, program->modules[perm].spec)) {
@@ -1660,12 +1711,17 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
     const auto it = std::ranges::find_if(program->modules, [&](const Program::Module& permutation) {
         return permutation.module && permutation.spec == spec;
     });
+    std::optional<Shader::RuntimeInfo> compiled_runtime;
     if (it == program->modules.end()) {
         if (hw_stage == HwStage::Compute) {
             Common::Perf::Add(Common::Perf::ComputeNewPermutations);
         }
         auto new_info = Shader::Info(hw_stage, sw_stage, params);
-        module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding);
+        auto& compile_runtime = compiled_runtime.emplace(runtime_info);
+        module = CompileModule(new_info, compile_runtime, params.code, perm_idx, binding);
+        // Translation can refine the runtime info. The selection memo records the refined bytes
+        // after compilation, while the graphics pipeline retains the original stage inputs.
+        runtime_bytes = std::as_bytes(std::span{&compile_runtime, 1});
         // Runtime permutations compile into temporary Info, while every pipeline reads the
         // program's shared Info. An unknown/different module must invalidate its GDS proof too.
         info.gds_counter_plan.Observe(new_info.gds_counter_plan.flat_word);

@@ -10,6 +10,8 @@ RECENT_CANDIDATES = {
                        "feedback_early_complete_fallbacks"),
     "writer-footprint": ("readback_writer_footprint", "writer_footprint_narrowed",
                          "writer_footprint_proven", "writer_footprint_fallbacks"),
+    "readback-done-page": ("readback_done_page", "readback_done_page_expands",
+                           "readback_done_page_faults"),
 }
 
 
@@ -268,7 +270,8 @@ def qualify(a, b, candidate, profile, performance_core_mask=None, normal_renderi
                             "feedback-arena-group": (None, None),
                             "feedback-arena-pool": (None, None),
                             "feedback-arena-tiled": (None, None), "runtime-context": (None, None),
-                            "early-complete": (None, None), "writer-footprint": (None, None)}[candidate]
+                            "early-complete": (None, None), "writer-footprint": (None, None),
+                            "readback-done-page": (None, None)}[candidate]
         if candidate in RECENT_CANDIDATES:
             _, active_counter, *other_counters = RECENT_CANDIDATES[candidate]
             counters = (active_counter, *other_counters)

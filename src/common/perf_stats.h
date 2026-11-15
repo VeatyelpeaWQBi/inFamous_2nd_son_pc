@@ -335,6 +335,10 @@ enum Counter : u32 {
     FeedbackWriterHits,
     FeedbackWriterFallbacks,
     FeedbackWriterReductions,
+    /// readback_done_page: fault sized to the page remainder, and GPU copies expanded to a
+    /// fully GPU-owned page when its writers are done.
+    ReadbackDonePageFaults,
+    ReadbackDonePageExpands,
     CounterCount,
 };
 
@@ -389,20 +393,28 @@ inline ThreadCounters* LocalCounters(bool& shared) {
 inline bool IsLightweightReceipt(Counter counter) {
     return counter == WriterFootprintProven ||
            counter == WriterFootprintFallbacks ||
-           counter == WriterFootprintNarrowed;
+           counter == WriterFootprintNarrowed ||
+           counter == ReadbackDonePageFaults ||
+           counter == ReadbackDonePageExpands;
 }
 
 inline std::atomic<u64>& LightweightReceipt(Counter counter) {
     static std::atomic<u64> writer_footprint_proven{0};
     static std::atomic<u64> writer_footprint_fallbacks{0};
     static std::atomic<u64> writer_footprint_narrowed{0};
+    static std::atomic<u64> readback_done_page_faults{0};
+    static std::atomic<u64> readback_done_page_expands{0};
     switch (counter) {
     case WriterFootprintProven:
         return writer_footprint_proven;
     case WriterFootprintFallbacks:
         return writer_footprint_fallbacks;
-    default:
+    case WriterFootprintNarrowed:
         return writer_footprint_narrowed;
+    case ReadbackDonePageFaults:
+        return readback_done_page_faults;
+    default:
+        return readback_done_page_expands;
     }
 }
 
@@ -601,6 +613,9 @@ struct Tuning {
     std::atomic<bool> readback_word_page_cluster{false};
     /// O02 writer-footprint switch; default off. No Draft A/B / SetWriteTick semantics until O02_candidate.
     std::atomic<bool> readback_writer_footprint{false};
+    /// Default off. Guest read faults download a full GPU-owned page when writers are done,
+    /// instead of only the first 8 bytes of the fault (see PageManager + BufferCache).
+    std::atomic<bool> readback_done_page{false};
     /// Only exact module-proven GDS counter footprints; descriptors/queue ownership unchanged.
     std::atomic<bool> gds_counter_scope{false};
     /// Draws without vertices and dispatches without workgroups are left out before their
@@ -1036,6 +1051,10 @@ inline void OnFlip(float draws_per_frame, float dispatches_per_frame) {
         LOG_INFO(Debug, "Perf feedback: checkpoint attempts {} submits {} writer hits {} fallback {} reduced {}",
                  t[FeedbackCheckpointAttempts], t[FeedbackCheckpointSubmits],
                  t[FeedbackWriterHits], t[FeedbackWriterFallbacks], t[FeedbackWriterReductions]);
+    }
+    if (t[ReadbackDonePageFaults] || t[ReadbackDonePageExpands]) {
+        LOG_INFO(Debug, "Perf readback_done_page: faults {} expands {}",
+                 t[ReadbackDonePageFaults], t[ReadbackDonePageExpands]);
     }
     if (t[CommandSharpsDecoded] || t[CommandSharpsReused] || t[CommandSharpsFallback]) {
         LOG_INFO(Debug, "Perf sharps: decoded {} reused {} fallback {}",

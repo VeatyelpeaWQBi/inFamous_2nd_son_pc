@@ -7,6 +7,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -15,6 +16,11 @@
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace Vulkan {
+
+struct DescriptorPayloads {
+    std::span<const vk::DescriptorBufferInfo> buffers;
+    std::span<const vk::DescriptorImageInfo> images;
+};
 
 /**
  * Vulkan commands recorded by the command processor thread and replayed later on a command
@@ -130,37 +136,46 @@ private:
 
     static constexpr size_t BlockSize = 64 * 1024;
 
-    void* Allocate(size_t size, size_t align) {
-        if (size > BlockSize / 2) {
-            // Large data (long barrier or copy lists) gets a block of its own.
+    inline void* Allocate(size_t size, size_t align) {
+        const size_t offset = (block_offset + align - 1) & ~(align - 1);
+        if (size <= BlockSize / 2 && align <= alignof(std::max_align_t) &&
+            current_block && offset + size <= BlockSize) [[likely]] {
+            block_offset = offset + size;
+            return current_block + offset;
+        }
+        return AllocateBlock(size, align);
+    }
+
+    void* AllocateBlock(size_t size, size_t align) {
+        if (size > BlockSize / 2 || align > alignof(std::max_align_t)) {
+            // Large data or data needing extra alignment gets a block of its own.
             auto& block = large_blocks.emplace_back(std::make_unique<std::byte[]>(size + align));
             void* pointer = block.get();
             size_t space = size + align;
             return std::align(align, size, pointer, space);
         }
-        while (true) {
-            if (block_index == blocks.size()) {
-                blocks.emplace_back(std::make_unique<std::byte[]>(BlockSize));
-            }
-            const size_t offset = (block_offset + align - 1) & ~(align - 1);
-            if (offset + size <= BlockSize) {
-                block_offset = offset + size;
-                return blocks[block_index].get() + offset;
-            }
+        if (current_block) {
             ++block_index;
-            block_offset = 0;
         }
+        if (block_index == blocks.size()) {
+            blocks.emplace_back(std::make_unique<std::byte[]>(BlockSize));
+        }
+        current_block = blocks[block_index].get();
+        block_offset = size;
+        return current_block;
     }
 
     void Rewind() {
         block_index = 0;
         block_offset = 0;
+        current_block = blocks.empty() ? nullptr : blocks.front().get();
         large_blocks.clear();
         draw_run = {};
     }
 
     std::vector<std::unique_ptr<std::byte[]>> blocks;
     std::vector<std::unique_ptr<std::byte[]>> large_blocks;
+    std::byte* current_block{};
     size_t block_index{};
     size_t block_offset{};
     CommandBase* first{};

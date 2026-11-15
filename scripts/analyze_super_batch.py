@@ -22,13 +22,15 @@ def stats(values):
     return dict(n=len(values), fps=1000 / statistics.mean(values),
                 mean_ms=statistics.mean(values), p95_ms=ordered[math.ceil(len(values)*.95)-1],
                 p99_ms=ordered[math.ceil(len(values)*.99)-1], max_ms=max(values),
-                over50=sum(v > 50 for v in values), over100=sum(v > 100 for v in values))
+                over50=sum(v > 50 for v in values), over100=sum(v > 100 for v in values),
+                near50_ms=sum(47 <= v < 53 for v in values))
 
 
 FEEDBACK_ACTIVITY = ("feedback_checkpoint_attempts", "feedback_checkpoint_submits",
                      "feedback_early_complete_submits", "feedback_early_complete_fallbacks",
                      "writer_footprint_proven", "writer_footprint_fallbacks",
                      "writer_footprint_narrowed",
+                     "readback_done_page_faults", "readback_done_page_expands",
                      "feedback_writer_hits", "feedback_writer_fallbacks", "feedback_writer_reductions",
                      "feedback_word_attempts", "feedback_word_served", "feedback_word_fallbacks",
                      "feedback_word_bulk_queued",
@@ -320,6 +322,7 @@ def main():
     args.output.write_text(json.dumps(dict(sessions=results, limitations=[
         "Log contexts follow the last logged command; samples can straddle boundaries.",
         "Inclusive CPU stack percentages overlap and must never be added.",
+        "near50_ms counts intervals in [47, 53) ms, regardless of which side of 50 ms they fall on.",
         "Heavy diagnostic FPS is not a normal-game performance baseline."
     ]), ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
     for session in results:

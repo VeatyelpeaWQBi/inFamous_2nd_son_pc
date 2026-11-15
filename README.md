@@ -14,7 +14,8 @@
 | --- | --- | --- |
 | `main` | 与 `develop` 同步的当前源码基线，包含 V1/V2、最终 V3-03/V3-07 和开发诊断设施；不是未经修改的上游原版 | 构建后运行 `run.bat` |
 | `develop` | 当前开发分支，与 `main` 保持相同的已采用优化和功能逻辑 | 构建后运行 `run.bat` |
-| `release/optimization-v3` | 保留 V1/V2 和已采用的 V3-03/V3-07，移除 V3 实验开关、自动化对比脚本、采样器和调试面板，供发布游玩 | 直接打开 `inFAMOUS Second Son.exe`，进入启动菜单 |
+| `release/optimization-v4` | 当前发布分支：在 V3 上保留光照、显卡选择和读档提示修复，并默认启用客人互斥锁快路径 | 直接打开 `inFAMOUS Second Son.exe`，进入启动菜单 |
+| `release/optimization-v3` | 上一版发布基线，保留用于对照 | 直接打开 `inFAMOUS Second Son.exe`，进入启动菜单 |
 | `release/optimization-v2` | 不含 V3 的历史 V2 发布基线，保留用于回归对照 | 直接打开 `inFAMOUS Second Son.exe`，进入启动菜单 |
 
 V1/V2 和最终采用的 V3 优化已成为引擎固定逻辑，无需开关：
@@ -27,12 +28,15 @@ V1/V2 和最终采用的 V3 优化已成为引擎固定逻辑，无需开关：
 | V2：实际 CPU 读页预取 | 根据已发生的 CPU 读取选择预取页，减少无效回读；保留大小、有效期、版本与完成检查 |
 | V3-03：NV raw access chains | 在设备明确支持 `VK_NV_raw_access_chains` 和对应特性时转换符合条件的 SPIR-V 内存访问；缓存区分转换变体，不支持时保持原始路径 |
 | V3-07：有界连续写入区间 | 连续三个相邻页发生写保护异常后，最多向前开放 64 页；遇到 GPU 未回读数据立即停止，并同步失效纹理、上传最新内容和恢复保护 |
+| 客人互斥锁快路径 | 无竞争的加锁和开锁在用户态完成，只在线程需要睡眠或被唤醒时进入内核。客人递归锁仍由原有持有者检查处理 |
 
 精确回读、SDR、完整粒子及着色器／管线缓存继续保留。已核验游戏构建还使用分辨率、光照列表容量、4K 曝光缓冲容量和防冻结补丁。宽松回读会影响粒子及亮度，不能用其帧数代替完整画面的性能。
 
 本分支包含读档后场景发黑的光照修复：保留原光照资源检查，仅在资源完整安装且语言可用时允许激活被误拒绝的配置。固定地址补丁只用于兼容清单中标题、01.07 版本及完整程序 SHA256 均匹配的构建，不修改任务、能力或存档。开发构建已覆盖异常霓虹存档、正常烟气存档，以及城市 7 套／村庄 2 套配置和城市 21 次切换；Release V3 合入后需重新构建并进行游戏回归，剧情自然天气流程尚未完整验证。已发布的旧包不会自动获得修复。
 
-V3 调研的 12 个候选中，正式内核只保留具有稳定正收益的 V3-03 和 V3-07。其他候选未达到收益、稳定性或正确性要求，已从运行时代码和用户入口删除；开发记录保留其结论，避免重复尝试。Release 中两项优化默认启用，不依赖 BAT、环境变量或用户开关。
+V3 调研的 12 个候选中，正式内核只保留具有稳定正收益的 V3-03 和 V3-07。其他候选未达到收益、稳定性或正确性要求，已从运行时代码和用户入口删除；开发记录保留其结论，避免重复尝试。Release 中已采用的优化默认启用，不依赖 BAT 或玩家开关。
+
+客人互斥锁快路径同样默认启用。对照是同一开发构建、同一存档与 Pro 4K 场景：9–12 秒约从 32.7 FPS（30.6 ms）到 43 FPS（23 ms），2–4 秒约从 31.9 FPS 到 35 FPS；4–8 秒变化很小，该窗口主要受命令处理器限制。这不是全游戏最低帧率。如需回到原来的内核互斥体，可在进程环境中设置 `IFSS_GUEST_MUTEX_FAST=0`。采集用的等待统计没有进入本发布分支。
 
 ### 测试平台与运行表现
 
@@ -112,7 +116,7 @@ portable 附带 `MSVCP140.dll`、`MSVCP140_ATOMIC_WAIT.dll`、`VCRUNTIME140.dll`
 
 ### 从 Release 分支构建与打包
 
-V3 发布先切换 `release/optimization-v3`，再执行对应入口；`release/optimization-v2` 仅用于历史回归对照：
+当前发布先切换 `release/optimization-v4`，再执行对应入口。`release/optimization-v3` 与 `release/optimization-v2` 仅用于历史对照：
 
 | 版本 | 构建 | 打包 | 输出 |
 | --- | --- | --- | --- |
@@ -190,7 +194,8 @@ You must supply the game files. Neither the repository nor the release packages 
 | --- | --- | --- |
 | `main` | Current source baseline synchronized with `develop`, including V1/V2, final V3-03/V3-07 and development diagnostics; not unmodified upstream | Build, then run `run.bat` |
 | `develop` | Current development branch with the same accepted optimizations and functional behavior as `main` | Build, then run `run.bat` |
-| `release/optimization-v3` | Retains V1/V2 and accepted V3-03/V3-07 while removing V3 experiment switches, automated comparison scripts, samplers and debug panels for regular play | Open `inFAMOUS Second Son.exe` directly to enter the launch menu |
+| `release/optimization-v4` | Current release: V3 plus the lighting, GPU-selection and load-prompt fixes, with the guest-mutex fast path enabled by default | Open `inFAMOUS Second Son.exe` directly to enter the launch menu |
+| `release/optimization-v3` | Previous release baseline, retained for comparison | Open `inFAMOUS Second Son.exe` directly to enter the launch menu |
 | `release/optimization-v2` | Historical V2 release baseline without V3, retained for regression comparisons | Open `inFAMOUS Second Son.exe` directly to enter the launch menu |
 
 V1/V2 and the accepted V3 optimizations are built into the engine and require no switches:
@@ -203,12 +208,15 @@ V1/V2 and the accepted V3 optimizations are built into the engine and require no
 | V2: prefetch based on actual CPU page reads | Selects pages from observed CPU reads to reduce unnecessary readback; retains size, age, version and completion checks |
 | V3-03: NV raw access chains | Converts eligible SPIR-V memory accesses only when the device explicitly supports `VK_NV_raw_access_chains` and its feature; cache variants remain separate and unsupported devices keep the original path |
 | V3-07: bounded sequential write ranges | After write-protection faults on three adjacent pages, opens at most 64 pages ahead; stops before unread GPU data, invalidates matching textures, uploads current content and restores protection |
+| Guest-mutex fast path | Uncontended locks and unlocks stay in user mode and enter the kernel only to sleep or wake a waiter. Guest recursive locking still uses the existing owner check |
 
 Precise readback, SDR, complete particle effects, and shader/pipeline caches are retained. Verified game builds also use resolution, light-list capacity, 4K exposure-buffer capacity and anti-freeze patches. Relaxed readback can affect particles and brightness; its FPS does not represent performance with complete rendering.
 
 This branch includes the cold-load lighting fix: preserve the original resource check and allow rejected profiles only when their content is fully installed and language-eligible. Fixed-address patches require a matching title, version 01.07 and full executable SHA256 in the compatibility manifest; story, abilities and save data are unchanged. Development validation covered the affected neon save, a normal smoke save, seven city and two village profiles, and 21 city transitions. Rebuild and run game regression checks after this Release V3 backport; the complete story-driven weather sequence remains unverified. Previously published packages do not gain the fix automatically.
 
-Of the 12 investigated V3 candidates, the production engine retains only V3-03 and V3-07, which produced stable positive results. Candidates that failed performance, stability or correctness requirements have been removed from runtime code and user-facing entries; their research conclusions are retained to avoid repeating the same experiments. Both accepted optimizations are enabled by default in Release and require no BAT file, environment variable or user switch.
+Of the 12 investigated V3 candidates, the production engine retains only V3-03 and V3-07, which produced stable positive results. Candidates that failed performance, stability or correctness requirements have been removed from runtime code and user-facing entries; their research conclusions are retained to avoid repeating the same experiments. Accepted Release optimizations are enabled by default and require no BAT file or player switch.
+
+The guest-mutex fast path is also enabled by default. On one development build, the same save and Pro 4K scene, 9–12 seconds moved from about 32.7 FPS (30.6 ms) to about 43 FPS (23 ms), and 2–4 seconds from about 31.9 FPS to about 35 FPS. The 4–8 second window changed little because it is limited by the command processor. This is not a whole-game minimum. Set `IFSS_GUEST_MUTEX_FAST=0` to restore the original kernel mutex. Capture-only wait statistics are not part of this release branch.
 
 ### Test platform and observed performance
 
@@ -289,7 +297,7 @@ portable includes `MSVCP140.dll`, `MSVCP140_ATOMIC_WAIT.dll`, `VCRUNTIME140.dll`
 
 ### Building and packaging the Release branch
 
-For a V3 release, switch to `release/optimization-v3`, then use the matching entries. `release/optimization-v2` is retained only for historical regression comparisons:
+For the current release, switch to `release/optimization-v4`, then use the matching entries. `release/optimization-v3` and `release/optimization-v2` are retained only for historical comparison:
 
 | Edition | Build | Package | Output |
 | --- | --- | --- | --- |

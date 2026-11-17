@@ -1232,9 +1232,18 @@ bool PipelineCache::RefreshGraphicsStages() {
         if (TakeScoutedStage(stage_in, stage_out, *pgm, binding)) {
             return true;
         }
+        const bool time_stage = Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed);
+        const u64 params_start = time_stage ? Common::Perf::NowNs() : 0;
         const auto params = GetStageParams(*pgm);
+        if (time_stage) {
+            Common::Perf::Add(Common::Perf::StageParamsNs, Common::Perf::NowNs() - params_start);
+        }
+        const u64 program_start = time_stage ? Common::Perf::NowNs() : 0;
         std::tie(infos[stage_out_idx], modules[stage_out_idx], key.stage_hashes[stage_out_idx]) =
             GetProgram(stage_in, stage_out, params, binding);
+        if (time_stage) {
+            Common::Perf::Add(Common::Perf::StageProgramNs, Common::Perf::NowNs() - program_start);
+        }
         return true;
     };
 
@@ -1541,6 +1550,7 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
                                                 Shader::Backend::Bindings& binding) {
     ++resource_refresh_serial;
     Common::Perf::Add(Common::Perf::SpecCalls);
+    const bool time_stage = Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed);
     // Scout: the stage lookup precomputed for this draw, if its inputs are those of the draw
     // the command processor is at (the scout decides from its own copy of the registers).
     const AmdGpu::ScoutStage* scouted = nullptr;
@@ -1563,6 +1573,7 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
             Common::Perf::Add(Common::Perf::ScoutHits);
         }
     }
+    const u64 runtime_start = time_stage ? Common::Perf::NowNs() : 0;
     const Shader::RuntimeInfo& runtime_info = [&]() -> const Shader::RuntimeInfo& {
         if (scouted != nullptr) {
             runtime_infos[u32(sw_stage)] = scouted->GetRuntimeInfo();
@@ -1570,6 +1581,9 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         }
         return BuildRuntimeInfo(hw_stage, sw_stage);
     }();
+    if (time_stage) {
+        Common::Perf::Add(Common::Perf::StageRuntimeNs, Common::Perf::NowNs() - runtime_start);
+    }
     auto it_pgm = program_cache.find(params.hash);
     const bool new_program = it_pgm == program_cache.end();
     if (new_program) {
@@ -1602,11 +1616,15 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
     auto& info = program->info;
     info.pgm_base = params.Base(); // Needs to be actualized for inline cbuffer address fixup
     info.user_data = params.user_data;
+    const u64 flat_start = time_stage ? Common::Perf::NowNs() : 0;
     if (scouted != nullptr && scouted->flat_size == info.srt_info.flattened_bufsize_dw) {
         info.flattened_ud_buf.assign(scouted->flat, scouted->flat + scouted->flat_size);
     } else {
         scouted = nullptr;
         info.RefreshFlatBuf();
+    }
+    if (time_stage) {
+        Common::Perf::Add(Common::Perf::StageFlatNs, Common::Perf::NowNs() - flat_start);
     }
     Common::Perf::Add(Common::Perf::SpecFlatDwords, info.flattened_ud_buf.size());
     if (Common::Perf::FrameDumpActive().load(std::memory_order_relaxed)) [[unlikely]] {
@@ -1655,19 +1673,28 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         return std::make_tuple(&info, module.module, HashCombine(params.hash, u64{perm}));
     };
     if (exact_memo) {
+        const u64 select_start = time_stage ? Common::Perf::NowNs() : 0;
         SpecializationInputs(info, binding, selection_words, sharps);
+        if (time_stage) {
+            Common::Perf::Add(Common::Perf::StageSelectNs, Common::Perf::NowNs() - select_start);
+        }
         const auto input_bytes = std::as_bytes(
             std::span<const u32>{selection_words.data(), selection_words.size()});
         const u32 perm = program->selection_perm;
+        const u64 match_start = time_stage ? Common::Perf::NowNs() : 0;
 #if defined(__AVX2__)
         const bool same_inputs = program->selection_inputs.Matches(input_bytes, EqualSelectionInputs);
 #else
         const bool same_inputs = program->selection_inputs.Matches(input_bytes);
 #endif
-        if (same_inputs &&
-            program->selection_runtime.Matches(runtime_bytes) && perm < program->modules.size() &&
-            program->modules[perm].module &&
-            VertexAttributesMatch(info, runtime_info, program->modules[perm].spec)) {
+        const bool same_permutation =
+            same_inputs && program->selection_runtime.Matches(runtime_bytes) &&
+            perm < program->modules.size() && program->modules[perm].module &&
+            VertexAttributesMatch(info, runtime_info, program->modules[perm].spec);
+        if (time_stage) {
+            Common::Perf::Add(Common::Perf::StageMatchNs, Common::Perf::NowNs() - match_start);
+        }
+        if (same_permutation) {
             Common::Perf::Add(Common::Perf::SelectionMemoHits);
             return reuse_permutation(perm);
         }

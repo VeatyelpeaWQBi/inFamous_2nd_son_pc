@@ -13,6 +13,7 @@
 #include "common/perf_stats.h"
 #include "common/recursive_lock.h"
 #include "common/shared_first_mutex.h"
+#include "video_core/amdgpu/regs_shader.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -570,10 +571,18 @@ private:
     std::array<SamplerMemo, 1024> sampler_memos{};
     /// bind_prefetch: the last scout entry whose lookups were prefetched.
     const AmdGpu::ScoutDraw* last_prefetched_draw{};
-    /// Statistics (DrawsSameContext): the context register changes and pipeline of the last
-    /// draw.
+    /// Statistics (DrawsSameContext): the context register changes, pipeline, and enabled
+    /// stage program registers of the last draw. Guest memory pointed to by user data is not
+    /// stored.
     u64 last_draw_context_changes{~u64{0}};
     const GraphicsPipeline* last_draw_pipeline{};
+    bool last_draw_stage_valid{};
+    u32 last_draw_stage_enable{};
+    struct LastDrawStage {
+        u64 address{};
+        AmdGpu::UserData user_data{};
+    };
+    std::array<LastDrawStage, 6> last_draw_stages{};
     vk::ImageAspectFlags attachment_feedback_loop{};
     bool needs_barrier{};
     bool gds_broad_conflict{}; // This command only; diagnostics distinguish hits from saved barriers.

@@ -220,9 +220,31 @@ enum Counter : u32 {
     PrefetchedDraws,
     ScoutTexKeys,
     // Draws without context register change since the draw before, and with its pipeline
-    // (what a fast path for such draws could skip).
+    // (what a fast path for such draws could skip). DrawsSameStageRegs also requires the
+    // enabled stages' program address and user-data words to match. Guest memory those
+    // words point at is not included.
     DrawsSameContext,
     DrawsSamePipeline,
+    DrawsSameStageRegs,
+    // Time inside an already-found stage program: refreshing the flattened user-data
+    // table, and building the specialization words that confirm the permutation.
+    StageFlatNs,
+    StageSelectNs,
+    // Whole stage lookup around those two pieces: reading the shader header, and GetProgram.
+    StageParamsNs,
+    StageProgramNs,
+    // Inside GetProgram, outside the flatten and specialization-word extract:
+    // building runtime info, and comparing it with the remembered permutation.
+    StageRuntimeNs,
+    StageMatchNs,
+    // ObtainBuffer page walks for a small read: GPU ownership, then CPU-clean for an in-place bind.
+    ObtainGpuNs,
+    ObtainCleanNs,
+    // Uploading a buffer the stream path did not answer.
+    ObtainSyncNs,
+    // Whole BindTextures call, only while the performance log is on.
+    BindTexCalls,
+    BindTexNs,
     // Render and depth targets found again from the registers of the draw before (rt_memo),
     // and the others.
     RtMemoHits,
@@ -236,6 +258,8 @@ enum Counter : u32 {
     ReadbackProducerSubmitted,
     ReadbackProducerQueued,
     ReadbackProducerCurrent,
+    // Demand readbacks whose CP visit found nothing left to download.
+    ReadbackCpEmpty,
     // readback_queue: guest readbacks copied by the readback queue, those copied by the graphics
     // command buffer because their data was not submitted yet, and readbacks written to guest
     // memory before an earlier one (different window) still in flight.
@@ -946,9 +970,11 @@ inline void OnFlip(float draws_per_frame, float dispatches_per_frame) {
              "binds left out: pipelines {}/{} constants {}/{} vertex inputs {}/{} "
              "descriptors {}/{} | shader params memo {}/{} | empty draws {} dispatches {} | "
              "scout fast {} | pipeline key memo {} | bind prefetch draws {} scout texture "
-             "keys {} | draws with the context of the draw before {} with its pipeline {} | "
+             "keys {} | draws with the context of the draw before {} with its pipeline {} "
+             "stage regs {} flat {:.1f} ms select {:.1f} ms params {:.1f} ms program {:.1f} ms "
+             "runtime {:.1f} ms match {:.1f} ms obtain gpu {:.1f} ms clean {:.1f} ms sync {:.1f} ms tex {:.1f} ms | "
              "rt memo {}/{} | late protects {} | readback producers done {} submitted {} "
-             "queued {} current {}, queue reads {} fallbacks {} out of order {} | gpu busy "
+             "queued {} current {} empty {}, queue reads {} fallbacks {} out of order {} | gpu busy "
              "{:.0f}% submissions {} ({:.2f} ms avg, in flight {:.1f} avg) with readbacks {} "
              "({:.2f} ms avg) compute {} ({:.1f} ms) | relaxed readbacks {} (pages refreshed {} "
              "left {}) | asc queue dispatches {} fallbacks {} submits {} waits gfx {} compute {} "
@@ -1003,9 +1029,14 @@ inline void OnFlip(float draws_per_frame, float dispatches_per_frame) {
              t[VertexInputSets], t[DescriptorPushesSkipped], t[DescriptorPushes],
              t[ParamsMemoHits], t[ParamsMemoMisses], t[EmptyDraws], t[EmptyDispatches],
              t[ScoutFast], t[PipelineKeyMemoHits], t[PrefetchedDraws], t[ScoutTexKeys],
-             t[DrawsSameContext], t[DrawsSamePipeline], t[RtMemoHits], t[RtMemoMisses],
+             t[DrawsSameContext], t[DrawsSamePipeline], t[DrawsSameStageRegs], ms(t[StageFlatNs]),
+             ms(t[StageSelectNs]), ms(t[StageParamsNs]), ms(t[StageProgramNs]),              ms(t[StageRuntimeNs]),
+             ms(t[StageMatchNs]), ms(t[ObtainGpuNs]),              ms(t[ObtainCleanNs]), ms(t[ObtainSyncNs]), ms(t[BindTexNs]),
+             t[RtMemoHits],
+             t[RtMemoMisses],
              t[LateProtects], t[ReadbackProducerDone], t[ReadbackProducerSubmitted],
-             t[ReadbackProducerQueued], t[ReadbackProducerCurrent], t[ReadbackQueueReads],
+             t[ReadbackProducerQueued], t[ReadbackProducerCurrent], t[ReadbackCpEmpty],
+             t[ReadbackQueueReads],
              t[ReadbackQueueFallbacks], t[ReadbackOutOfOrder], pct(t[GpuProfileBusyNs]),
              t[GpuProfileSessions],
              t[GpuProfileSessions] ? ms(t[GpuProfileSessionNs]) /

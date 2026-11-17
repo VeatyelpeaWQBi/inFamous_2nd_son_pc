@@ -1183,16 +1183,47 @@ void Rasterizer::DrawImpl(bool is_indexed, u32 index_offset, u64 ordinal) {
     // Statistics: draws a fast path for unchanged render state could take.
     if (Common::Perf::GetTuning().perf_log.load(std::memory_order_relaxed)) [[unlikely]] {
         const u64 changes = liverpool->ContextRegChanges();
+        const auto& stage_enable = regs.stage_enable;
+        // Address only. The previous capture compared address and user data together and
+        // matched nothing; user data is recorded below but not required for this count.
+        bool same_program_address = last_draw_stage_valid &&
+                                    static_cast<u32>(stage_enable.raw) == last_draw_stage_enable;
+        if (same_program_address) {
+            for (u32 stage = 0; stage < last_draw_stages.size(); ++stage) {
+                if (!stage_enable.IsStageEnabled(stage)) {
+                    continue;
+                }
+                const auto* program = regs.ProgramForStage(stage);
+                if (program == nullptr || program->address != last_draw_stages[stage].address) {
+                    same_program_address = false;
+                    break;
+                }
+            }
+        }
         if (last_draw_pipeline && changes == last_draw_context_changes) {
             Common::Perf::Add(Common::Perf::DrawsSameContext);
             if (pipeline == last_draw_pipeline) {
                 Common::Perf::Add(Common::Perf::DrawsSamePipeline);
             }
+            if (same_program_address) {
+                Common::Perf::Add(Common::Perf::DrawsSameStageRegs);
+            }
         }
         last_draw_context_changes = changes;
         last_draw_pipeline = pipeline;
-    } else if (last_draw_pipeline) {
+        last_draw_stage_enable = static_cast<u32>(stage_enable.raw);
+        last_draw_stage_valid = true;
+        for (u32 stage = 0; stage < last_draw_stages.size(); ++stage) {
+            if (!stage_enable.IsStageEnabled(stage)) {
+                continue;
+            }
+            if (const auto* program = regs.ProgramForStage(stage)) {
+                last_draw_stages[stage].address = program->address;
+            }
+        }
+    } else if (last_draw_pipeline || last_draw_stage_valid) {
         last_draw_pipeline = nullptr;
+        last_draw_stage_valid = false;
     }
     measure.Identity(pipeline, regs.num_indices, regs.num_instances.NumInstances());
 
@@ -2612,6 +2643,7 @@ void Rasterizer::FinalizeFlatbufUploads() {
 }
 
 void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding) {
+    Common::Perf::ScopedTimer tex_timer{Common::Perf::BindTexCalls, Common::Perf::BindTexNs};
     image_bindings.clear();
     image_sources.clear();
     const u32 first_image_idx = image_infos.size();

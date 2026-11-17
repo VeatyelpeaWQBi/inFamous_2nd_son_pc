@@ -772,6 +772,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
         if (wait_tick == 0) {
             trace_nothing = true;
             path_nothing = true;
+            Common::Perf::Add(Common::Perf::ReadbackCpEmpty);
             return;
         }
         WaitReadback(device_addr, wait_semaphore, wait_tick, path_id, 0, feedback_copy_id);
@@ -2402,8 +2403,18 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                                                         bool is_written, bool is_texel_buffer,
                                                         u64 writer_shader,
                                                         std::optional<WrittenRange> written) {
+    const auto& tuning_now = Common::Perf::GetTuning();
+    const bool time_obtain = tuning_now.perf_log.load(std::memory_order_relaxed);
+    bool gpu_data = false;
+    if (!is_written && size <= STREAM_THRESHOLD) {
+        const u64 gpu_start = time_obtain ? Common::Perf::NowNs() : 0;
+        gpu_data = HasGpuData(device_addr, size);
+        if (time_obtain) {
+            Common::Perf::Add(Common::Perf::ObtainGpuNs, Common::Perf::NowNs() - gpu_start);
+        }
+    }
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
-    if (!is_written && size <= STREAM_THRESHOLD && !HasGpuData(device_addr, size)) {
+    if (!is_written && size <= STREAM_THRESHOLD && !gpu_data) {
         const auto& tuning = Common::Perf::GetTuning();
         const u32 stable_frames = tuning.stream_static_frames.load(std::memory_order_relaxed);
         StreamCopy* reuse = nullptr;
@@ -2426,8 +2437,14 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             }
         }
         if (tuning.stream_static.load(std::memory_order_relaxed)) {
-            if (!is_texel_buffer &&
-                memory_tracker->IsRegionCpuClean(device_addr, size, stable_frames)) {
+            if (!is_texel_buffer) {
+                const u64 clean_start = time_obtain ? Common::Perf::NowNs() : 0;
+                const bool cpu_clean =
+                    memory_tracker->IsRegionCpuClean(device_addr, size, stable_frames);
+                if (time_obtain) {
+                    Common::Perf::Add(Common::Perf::ObtainCleanNs, Common::Perf::NowNs() - clean_start);
+                }
+                if (cpu_clean) {
                 // The GPU copy of these pages is up to date: no copy or upload is needed to read
                 // them there (the binding is then tracked for barriers like any arena range).
                 const u64 first_block = device_addr >> block_shift;
@@ -2443,6 +2460,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                     return {arena, arena_offset};
                 }
                 Common::Perf::Add(Common::Perf::StreamBarrierAvoided);
+                }
             }
         } else if (tuning.perf_log.load(std::memory_order_relaxed) &&
                    (++stream_clean_sample & 15) == 0 && !is_texel_buffer &&
@@ -2536,7 +2554,11 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             memory_tracker->AreWrittenPagesCurrent(device_addr, size)) {
             Common::Perf::GetFeedbackActivity().written_sync_skips.fetch_add(1, std::memory_order_relaxed);
         } else {
+            const u64 sync_start = time_obtain ? Common::Perf::NowNs() : 0;
             synced_from_image = SynchronizeMemory(arena, device_addr, size, is_written, is_texel_buffer);
+            if (time_obtain) {
+                Common::Perf::Add(Common::Perf::ObtainSyncNs, Common::Perf::NowNs() - sync_start);
+            }
         }
         if (is_texel_buffer && !is_written && !OnComputeQueue()) {
             if (tuning.image_sync_once.load(std::memory_order_relaxed)) {

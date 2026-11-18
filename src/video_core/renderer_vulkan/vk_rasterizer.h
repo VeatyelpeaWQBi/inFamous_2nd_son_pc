@@ -333,7 +333,10 @@ private:
     void DrawImpl(bool is_indexed, u32 index_offset, u64 ordinal);
     bool draw_prep_audit_requested{};
     bool draw_prep_cap_reported{};
-    u64 draw_prep_ordinal{}, draw_prep_samples{};
+    u64 draw_prep_ordinal{}, draw_prep_samples{}, draw_prep_dispatch_ordinal{};
+    // Set only for a direct draw that is not one of the nine phase samples.
+    bool trace_draw_buffer_detail{};
+    std::array<u64, 4> draw_prep_buffer_detail{}; // obtain, invalidate, hazard, full bind
 
     class DispatchBudgetScope {
     public:

@@ -85,6 +85,12 @@ public:
                           bool check_read_access = false);
 
     void FlushBarriers();
+    /// Tags the next FlushBarriers. Buffer-only flushes are counted by this origin.
+    enum class BarrierOrigin : u8 {
+        Other, Submit, Draw, Compute, Copy, Image,
+        Transit, Upload, Download, Blit, Clear, Samples, Feedback, Present, Tile
+    };
+    void FlushFor(BarrierOrigin origin);
     void FlushComputeBarriers(bool recent_conflict = true);
     bool ObserveComputeScope() const;
     bool HasRecentComputeConflict(const VideoCore::Buffer* handle, u64 offset, u64 size,
@@ -101,6 +107,7 @@ private:
     VideoCore::BufferAccessTracker<const VideoCore::Buffer*> buffer_access;
     VideoCore::Image::Barriers image_barriers;
     vk::MemoryBarrier2 memory_barrier{};
+    BarrierOrigin barrier_origin{BarrierOrigin::Other};
     std::unique_ptr<ReadbackBarrierAudit> readback_barrier_audit;
     std::unique_ptr<ComputeScopeAudit> compute_scope_audit;
     vk::PipelineStageFlags2 readback_write_stages{};

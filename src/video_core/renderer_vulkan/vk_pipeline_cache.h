@@ -332,6 +332,14 @@ private:
     /// Pipeline key memo (pipeline_key_memo): the key and pipeline of the last draw.
     GraphicsPipelineKey last_graphics_key{};
     GraphicsPipeline* last_graphics_pipeline{};
+    /// pipeline_flat_reuse: last direct VS+PS draw whose key inputs matched.
+    u64 reuse_regs_hash{};
+    u64 reuse_spec_hash{};
+    u64 reuse_ps_addr{};
+    u64 reuse_vs_addr{};
+    bool reuse_valid{};
+    const GraphicsPipeline* TryReuseGraphicsPipeline();
+    void RememberGraphicsReuse(const GraphicsPipeline* pipeline);
     std::unordered_set<u64> xray_dumped; ///< Shaders whose code the frame x-ray wrote.
     std::array<const Shader::Info*, MaxShaderStages> infos{};
     /// The stages of the current draw taken from the scout (TakeScoutedStage), by stage.

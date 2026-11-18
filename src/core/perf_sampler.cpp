@@ -81,6 +81,8 @@ void ApplyGameProfile(std::string_view serial) {
     t.gds_counter_scope.store(false, relaxed);
     t.skip_empty_draws.store(true, relaxed);
     t.pipeline_key_memo.store(true, relaxed);
+    t.pipeline_flat_reuse.store(true, relaxed);
+    t.pending_image_merge.store(false, relaxed);
     t.bind_prefetch.store(true, relaxed);
     t.gpu_threads_affinity.store(Common::Perf::AffinityAuto, relaxed);
     t.rt_memo.store(true, relaxed);
@@ -228,6 +230,10 @@ void PollTuning(bool startup) {
             tuning.pipeline_key_memo.store(value != "0", std::memory_order_relaxed);
         } else if (key == "bind_prefetch") {
             tuning.bind_prefetch.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "pipeline_flat_reuse") {
+            tuning.pipeline_flat_reuse.store(value != "0", std::memory_order_relaxed);
+        } else if (key == "pending_image_merge") {
+            tuning.pending_image_merge.store(value != "0", std::memory_order_relaxed);
         } else if (key == "gpu_threads_affinity") {
             tuning.gpu_threads_affinity.store(value == "auto"
                                                   ? Common::Perf::AffinityAuto

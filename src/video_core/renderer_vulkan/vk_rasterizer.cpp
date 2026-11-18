@@ -826,7 +826,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     scheduler.AllowThreadedRecording();
 
     scheduler.SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
-        runtime.FlushBarriers();
+        runtime.FlushFor(Vulkan::Runtime::BarrierOrigin::Submit);
         buffer_cache.SubmitPendingArenaBinds(info);
     });
     pipeline_cache.SetPipelineDrainCallback([this] {
@@ -875,7 +875,7 @@ bool Rasterizer::UseComputeQueue(const ComputePipeline* pipeline) {
             .index = 1,
         };
         compute_scheduler->SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
-            compute_runtime->FlushBarriers();
+            compute_runtime->FlushFor(Vulkan::Runtime::BarrierOrigin::Submit);
             buffer_cache.SubmitPendingArenaBinds(info);
             buffer_cache.WaitArenaBinds(info);
         });
@@ -1130,6 +1130,19 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
                 case 7: return DrawImpl<7>(is_indexed, index_offset, ordinal);
                 case 8: return DrawImpl<8>(is_indexed, index_offset, ordinal);
                 }
+            } else if ((ordinal & 1023) == 512) {
+                // Not one of the nine phase samples. Clocks here must not land in that budget.
+                draw_prep_buffer_detail = {};
+                trace_draw_buffer_detail = true;
+                DrawImpl<-1>(is_indexed, index_offset, 0);
+                trace_draw_buffer_detail = false;
+                if (draw_prep_buffer_detail[3] != 0) {
+                    using namespace Common::PathTrace;
+                    Emit(Kind::DrawPrepBufferDetail, NextId(), draw_prep_buffer_detail[0],
+                         draw_prep_buffer_detail[1], draw_prep_buffer_detail[2],
+                         draw_prep_buffer_detail[3]);
+                }
+                return;
             }
         }
     }
@@ -1247,7 +1260,7 @@ void Rasterizer::DrawImpl(bool is_indexed, u32 index_offset, u64 ordinal) {
     }
 
     if (needs_barrier) {
-        runtime.FlushBarriers();
+        runtime.FlushFor(Vulkan::Runtime::BarrierOrigin::Draw);
     }
 
     measure.template Next<4>(); // attachment begin, vertex/index preparation and pending barriers
@@ -1403,7 +1416,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
     }
 
     if (needs_barrier) {
-        runtime.FlushBarriers();
+        runtime.FlushFor(Vulkan::Runtime::BarrierOrigin::Draw);
     }
 
     FinalizeFlatbufUploads();
@@ -1459,6 +1472,45 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
 }
 
 void Rasterizer::DispatchDirect() {
+    bool time_dispatch = false;
+    u64 dispatch_begin = 0;
+    // Sampled calls only. [0] after pipeline/HLE, [1] after BindResources, [2] after record.
+    u64 dispatch_mark[3]{};
+    u32 dispatch_marks = 0;
+    if (draw_prep_audit_requested && Common::PathTrace::DrawPrepAuditActive()) [[unlikely]] {
+        time_dispatch = (draw_prep_dispatch_ordinal++ & 255) == 0;
+        if (time_dispatch) {
+            dispatch_begin = Common::Perf::NowNs();
+        }
+    }
+    SCOPE_EXIT {
+        if (time_dispatch) {
+            const u64 end = Common::Perf::NowNs();
+            const auto span = [](u64 from, u64 to) -> u32 {
+                if (to < from) {
+                    return 0;
+                }
+                const u64 elapsed = to - from;
+                return elapsed > 0xffffffffu ? 0xffffffffu : static_cast<u32>(elapsed);
+            };
+            const u64 after_pipeline = dispatch_marks > 0 ? dispatch_mark[0] : end;
+            const u64 after_bind = dispatch_marks > 1 ? dispatch_mark[1] : end;
+            const u64 after_record = dispatch_marks > 2 ? dispatch_mark[2] : end;
+            // c: pipeline then bind. d: record then retire. a/b stay the whole call.
+            const u64 pipeline_bind = (u64{span(dispatch_begin, after_pipeline)} << 32) |
+                                      span(after_pipeline, after_bind);
+            const u64 record_retire =
+                (u64{span(after_bind, after_record)} << 32) | span(after_record, end);
+            using namespace Common::PathTrace;
+            Emit(Kind::DrawPrepDispatch, NextId(), dispatch_begin, end, pipeline_bind,
+                 record_retire);
+        }
+    };
+    auto mark_dispatch = [&] {
+        if (time_dispatch && dispatch_marks < 3) {
+            dispatch_mark[dispatch_marks++] = Common::Perf::NowNs();
+        }
+    };
     RENDERER_TRACE;
     if (dispatch_pair_census) [[unlikely]] {
         ++dispatch_pair_census->serial;
@@ -1494,6 +1546,7 @@ void Rasterizer::DispatchDirect() {
     }
 
     budget.Next();
+    mark_dispatch();
     // asc_queue: the dispatch, its bindings and uploads go to the compute queue.
     const ComputeQueueScope queue_scope{*this, UseComputeQueue(pipeline)};
     if (!BindResources(pipeline, sharps)) {
@@ -1505,6 +1558,7 @@ void Rasterizer::DispatchDirect() {
                                 cs_program.dim_z, on_compute_queue ? " cq" : ""));
     }
     budget.Next();
+    mark_dispatch();
 
     if (needs_barrier) {
         auto& rt = Rt();
@@ -1570,6 +1624,7 @@ void Rasterizer::DispatchDirect() {
     Sched().ProfileDispatchEnd();
     DebugState.IncDispatch();
     budget.Next();
+    mark_dispatch();
 
     if (g_dump.frames_left != 0) [[unlikely]] {
         DumpAfter(pipeline);
@@ -1617,7 +1672,7 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
     budget.Next();
 
     if (needs_barrier) {
-        Rt().FlushBarriers();
+        Rt().FlushFor(Vulkan::Runtime::BarrierOrigin::Compute);
     } else if (gds_broad_conflict) {
         Core::Benchmark::NoteGdsCounterBarrierAvoided();
     }
@@ -1781,6 +1836,8 @@ void Rasterizer::PrefetchTexMemo(u64 key) const noexcept {
     VideoCore::PrefetchLine(reinterpret_cast<const u8*>(entry) + sizeof(TexMemo) - 1);
 }
 
+
+
 bool Rasterizer::BindResources(const Pipeline* pipeline, const CommandBufferSharps* sharps) {
     gds_broad_conflict = false;
     if (IsComputeImageCopy(pipeline) || IsComputeMetaClear(pipeline) ||
@@ -1815,9 +1872,12 @@ bool Rasterizer::BindResources(const Pipeline* pipeline, const CommandBufferShar
         if (required_writes > set_writes.size()) {
             set_writes.resize(required_writes);
         }
-        const u64 bind_start = trace_asc_dispatch ? Common::Perf::NowNs() : 0;
+        const bool time_draw_buffers = trace_draw_buffer_detail;
+        const u64 bind_start =
+            (trace_asc_dispatch || time_draw_buffers) ? Common::Perf::NowNs() : 0;
         BindBuffers(*stage, binding, push_data, sharps);
-        const u64 texture_start = trace_asc_dispatch ? Common::Perf::NowNs() : 0;
+        const u64 texture_start =
+            (trace_asc_dispatch || time_draw_buffers) ? Common::Perf::NowNs() : 0;
         BindTextures(*stage, binding);
         if (trace_asc_dispatch) {
             asc_dispatch_budget.buffers_ns += texture_start - bind_start;
@@ -1825,6 +1885,9 @@ bool Rasterizer::BindResources(const Pipeline* pipeline, const CommandBufferShar
             if (trace_buffer_detail) {
                 asc_dispatch_budget.buffer_detail[3] += texture_start - bind_start;
             }
+        }
+        if (time_draw_buffers) {
+            draw_prep_buffer_detail[3] += texture_start - bind_start;
         }
         uses_dma |= stage->uses_dma;
     }
@@ -2512,7 +2575,8 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                     Common::Perf::Add(written ? Common::Perf::WriterFootprintProven
                                               : Common::Perf::WriterFootprintFallbacks);
                 }
-                const u64 obtain_start = trace_buffer_detail ? Common::Perf::NowNs() : 0;
+                const bool time_obtain = trace_buffer_detail || trace_draw_buffer_detail;
+                const u64 obtain_start = time_obtain ? Common::Perf::NowNs() : 0;
                 if (protect_scope) [[unlikely]] {
                     protect_scope->Binding(binding.buffer, desc.is_written,
                                            vsharp.base_address, size);
@@ -2523,8 +2587,10 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                 if (protect_scope) [[unlikely]] {
                     protect_scope->Binding(0, false);
                 }
-                if (trace_buffer_detail) {
-                    asc_dispatch_budget.buffer_detail[0] += Common::Perf::NowNs() - obtain_start;
+                if (time_obtain) {
+                    const u64 elapsed = Common::Perf::NowNs() - obtain_start;
+                    if (trace_buffer_detail) asc_dispatch_budget.buffer_detail[0] += elapsed;
+                    if (trace_draw_buffer_detail) draw_prep_buffer_detail[0] += elapsed;
                 }
                 const u64 offset_aligned = Common::AlignDown(offset, alignment);
                 const u64 adjust = offset - offset_aligned;
@@ -2535,7 +2601,9 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                 push_data.AddOffset(binding.buffer, adjust);
                 buffer_infos.emplace_back(buffer->Handle(), offset_aligned, size + adjust);
                 if (desc.is_written) {
-                    const u64 invalidate_start = trace_buffer_detail ? Common::Perf::NowNs() : 0;
+                    const bool time_invalidate =
+                        trace_buffer_detail || trace_draw_buffer_detail;
+                    const u64 invalidate_start = time_invalidate ? Common::Perf::NowNs() : 0;
                     const VAddr inv_addr = written ? written->address : vsharp.base_address;
                     const u64 inv_size = written ? written->size : size;
                     // Raw storage-buffer writes can also make an aliased cached image stale.
@@ -2544,9 +2612,10 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                     if (!skipped_writes.empty()) {
                         ClearSkippedWrites(inv_addr, inv_size);
                     }
-                    if (trace_buffer_detail) {
-                        asc_dispatch_budget.buffer_detail[1] +=
-                            Common::Perf::NowNs() - invalidate_start;
+                    if (time_invalidate) {
+                        const u64 elapsed = Common::Perf::NowNs() - invalidate_start;
+                        if (trace_buffer_detail) asc_dispatch_budget.buffer_detail[1] += elapsed;
+                        if (trace_draw_buffer_detail) draw_prep_buffer_detail[1] += elapsed;
                     }
                 }
                 // The stream buffer is only written by the CPU before submission, its reads
@@ -2554,10 +2623,13 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                 if (buffer != &buffer_cache.GetStreamBuffer()) {
                     bound_buffers.emplace_back(buffer, offset, size, desc.is_written,
                                                vsharp.base_address);
-                    const u64 hazard_start = trace_buffer_detail ? Common::Perf::NowNs() : 0;
+                    const bool time_hazard = trace_buffer_detail || trace_draw_buffer_detail;
+                    const u64 hazard_start = time_hazard ? Common::Perf::NowNs() : 0;
                     needs_barrier |= Rt().IsBufferAccessed(buffer, offset, size, desc.is_written);
-                    if (trace_buffer_detail) {
-                        asc_dispatch_budget.buffer_detail[2] += Common::Perf::NowNs() - hazard_start;
+                    if (time_hazard) {
+                        const u64 elapsed = Common::Perf::NowNs() - hazard_start;
+                        if (trace_buffer_detail) asc_dispatch_budget.buffer_detail[2] += elapsed;
+                        if (trace_draw_buffer_detail) draw_prep_buffer_detail[2] += elapsed;
                     }
                 }
             }
@@ -3033,7 +3105,11 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         if (image->binding.is_bound) {
             ASSERT_MSG(!image->binding.force_general,
                        "Having image both as storage and render target is unsupported");
-            runtime.FlushBarriers();
+            // The sample transition is still unsubmitted. Merging keeps it in the batch when
+            // the attachment uses the same layout; otherwise Transit submits it itself.
+            if (!Common::Perf::GetTuning().pending_image_merge.load(std::memory_order_relaxed)) {
+                runtime.FlushFor(Vulkan::Runtime::BarrierOrigin::Feedback);
+            }
             needs_barrier |=
                 runtime.Transit(image,
                                 instance.IsAttachmentFeedbackLoopLayoutSupported()

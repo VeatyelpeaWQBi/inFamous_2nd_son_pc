@@ -27,6 +27,7 @@ enum class Kind : u32 {
     DrawPrepIdentity, DrawPrepLimit,
     DrawPrepPhase,
     ReadPrefetchJob, ReadPrefetchBatch,
+    DrawPrepDispatch,
 };
 // Explicit startup-only diagnostic. No allocation, file I/O, mutex, or wait in Emit/NextId.
 // IDs identify one request, NOT one rendered frame. guest_frame is contextual SubmitDone count.

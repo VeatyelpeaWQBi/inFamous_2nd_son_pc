@@ -37,7 +37,11 @@ param(
     [ValidatePattern('^(?:[0-9a-fA-F]{1,16})?$')][string]$TraceShaderHash='',
     [ValidateSet('hardware-memory')][string]$VtuneCpuMode='hardware-memory',
     [ValidateRange(1,20)][int]$PeakSeconds=5,
-    [ValidateSet('none','prefetch-off','window64','window2048','sampler-off','buffer-sharps','compute-barriers')][string]$Experiment='none'
+    [ValidateSet('none','prefetch-off','window64','window2048','sampler-off','buffer-sharps','compute-barriers')][string]$Experiment='none',
+    [ValidateSet('default','off')][string]$BindPrefetch='default',
+    [ValidateSet('default','on')][string]$PipelineReuse='default',
+    [ValidateSet('default','on')][string]$GdsScope='default',
+    [ValidateSet('default','on')][string]$ImageMerge='default'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -58,11 +62,13 @@ if($NormalRendering -and ((-not $simpleNative -and -not $DrawPrepAudit) -or $Cpu
     throw 'Normal rendering comparison requires one compact-pool lightweight trial.'
 }
 $auditCount=[int][bool]$ReadbackBarrierAudit+[int][bool]$PageProtectAudit+[int][bool]$ComputeScopeAudit+[int][bool]$ReadbackWaitScopeAudit+[int][bool]$ComputeProtectAudit
+$drawPrepPool = $Candidate -eq 'feedback-arena-pool' -and $NormalRendering -and -not $CandidateBaseline
+$drawPrepBaseline = $Candidate -eq 'none' -and -not $NormalRendering -and -not $CandidateBaseline
 if($DrawPrepAudit -and ($auditCount -ne 0 -or -not $CriticalCapture -or $FullCapture -or
     $CpuHotspots -or $ProbeCandidate -or $Profile -ne 'lightweight' -or
-    $Candidate -ne 'feedback-arena-pool' -or $CandidateBaseline -or $Rounds -ne 1 -or
-    $Experiment -ne 'none' -or -not $NormalRendering -or $ComputeTimingHash -or $TraceShaderHash)){
-    throw 'Draw preparation audit requires one compact-pool critical release with normal rendering.'
+    $Rounds -ne 1 -or $Experiment -ne 'none' -or $ComputeTimingHash -or $TraceShaderHash -or
+    -not ($drawPrepPool -or $drawPrepBaseline))){
+    throw 'Draw preparation audit requires one critical lightweight release, on the current default or on the compact pool with normal rendering.'
 }
 if($auditCount -and
     (-not $CriticalCapture -or $FullCapture -or $CpuHotspots -or $Profile -ne 'lightweight' -or
@@ -303,6 +309,10 @@ function Set-SuperProfile([string]$Name) {
     $values=@{perf_log=0;profile_stacks=0;gpu_profile=0;path_trace=0;dump_frames=0
         gpu_profile_compute_hash='0';gpu_profile_compute_limit=0;gpu_profile_draw_hash='0';gpu_profile_draw_limit=0}
     if($Name -ne 'lightweight'){$values.perf_log=1}
+    if($BindPrefetch -eq 'off'){$values.bind_prefetch=0}
+    if($PipelineReuse -eq 'on'){$values.pipeline_flat_reuse=1}
+    if($GdsScope -eq 'on'){$values.gds_counter_scope=1}
+    if($ImageMerge -eq 'on'){$values.pending_image_merge=1}
     if($Name -eq 'compute'){$values.gpu_profile=2}
     if($Name -eq 'graphics'){$values.gpu_profile=3;$values.profile_stacks=1}
     if($GpuSessionJoin){$values.gpu_profile=1}

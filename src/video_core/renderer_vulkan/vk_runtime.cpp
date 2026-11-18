@@ -278,7 +278,7 @@ void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* 
     }
     if (!narrowed && (source_conflict || destination_conflict)) {
         Common::Perf::Add(Common::Perf::CopyBarrierFlushes);
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Copy);
     }
 
     const bool traced_copy = scheduler.ProfileReadbackBegin(trace_copy_id);
@@ -327,7 +327,7 @@ void Runtime::FillBuffer(const VideoCore::Buffer* dst, u64 offset, u64 size, u32
     scheduler.EndRendering();
 
     if (IsBufferAccessed(dst, offset, size, true)) {
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Copy);
     }
 
     const auto cmdbuf = scheduler.Recorder();
@@ -341,7 +341,7 @@ void Runtime::InlineData(VideoCore::Buffer* dst, u64 offset, u32 value) {
     scheduler.EndRendering();
 
     if (IsBufferAccessed(dst, offset, sizeof(value), true)) {
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Copy);
     }
 
     const auto cmdbuf = scheduler.Recorder();
@@ -359,7 +359,7 @@ void Runtime::WriteOcclusionResults(const VideoCore::Buffer* dst, u64 offset, u3
     const u64 size = u64{num_pairs} * 2 * sizeof(u64);
     scheduler.EndRendering();
     if (IsBufferAccessed(dst, offset, size, true)) {
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Copy);
     }
 
     // Begin counters 0 and end counters valid: the guest sums end - begin over the pairs.
@@ -374,7 +374,7 @@ void Runtime::WriteOcclusionResults(const VideoCore::Buffer* dst, u64 offset, u3
     }
 
     // The sample counts replace the low halves of end counters written above.
-    FlushBarriers();
+    FlushFor(BarrierOrigin::Copy);
     const u32 num_copies = std::min<u32>(static_cast<u32>(queries.size()), num_pairs);
     for (u32 i = 0; i < num_copies; ++i) {
         cmdbuf.copyQueryPoolResults(pool, queries[i], 1, dst->Handle(),
@@ -412,11 +412,75 @@ bool Runtime::Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
         }
     }
     // A dependency-info array does not order two transitions of the same image.
-    // Submit the earlier transition before recording another one against its new state.
+    // The same layout and range can widen the barrier that is still waiting. A different
+    // layout still has to submit the earlier transition first.
     if (std::ranges::any_of(image_barriers, [image](const auto& barrier) {
             return barrier.image == image->GetImage();
         })) {
-        FlushBarriers();
+        const bool merge =
+            Common::Perf::GetTuning().pending_image_merge.load(std::memory_order_relaxed) &&
+            image->backing->subresource_states.empty();
+        vk::ImageMemoryBarrier2* pending = nullptr;
+        u32 matches = 0;
+        if (merge) {
+            const auto covers_whole_image = [&](const vk::ImageSubresourceRange& range) {
+                if (range.aspectMask != image->aspect_mask) {
+                    return false;
+                }
+                const bool full_mips =
+                    range.baseMipLevel == 0 &&
+                    (range.levelCount == VK_REMAINING_MIP_LEVELS ||
+                     range.levelCount == image->info.resources.levels);
+                const bool full_layers =
+                    range.baseArrayLayer == 0 &&
+                    (range.layerCount == VK_REMAINING_ARRAY_LAYERS ||
+                     range.layerCount == image->info.resources.layers);
+                return full_mips && full_layers;
+            };
+            // A view of every mip and layer is stored as VK_REMAINING, even when the caller
+            // passed that full range explicitly. Treat the two spellings as the same range.
+            const bool request_is_whole =
+                !subres_range || (subres_range->base == VideoCore::SubresourceBase{} &&
+                                  subres_range->extent == image->info.resources);
+            const auto same_range = [&](const vk::ImageSubresourceRange& range) {
+                if (request_is_whole) {
+                    return covers_whole_image(range);
+                }
+                return range.aspectMask == image->aspect_mask &&
+                       range.baseMipLevel == subres_range->base.level &&
+                       range.levelCount == subres_range->extent.levels &&
+                       range.baseArrayLayer == subres_range->base.layer &&
+                       range.layerCount == subres_range->extent.layers;
+            };
+            for (auto& barrier : image_barriers) {
+                if (barrier.image != image->GetImage() || barrier.newLayout != dst_layout ||
+                    !same_range(barrier.subresourceRange)) {
+                    continue;
+                }
+                pending = &barrier;
+                ++matches;
+            }
+        }
+        if (matches == 1 && pending != nullptr) {
+            // Vertex and index binds recorded before the draw flush do not use this image.
+            // The draw itself is after that flush, so widening this unsubmitted barrier is
+            // still before every image command. Tracked state stays the later use, matching
+            // a second transition that had been submitted on its own.
+            pending->dstStageMask |= dst_stage;
+            pending->dstAccessMask |= dst_access;
+            auto& state = image->backing->state;
+            state.layout = dst_layout;
+            state.access_mask = dst_access;
+            state.pl_stage = dst_stage;
+            image->backing->last_partial.valid = false;
+            ++image->backing->state_version;
+            Common::Perf::Add(Common::Perf::PendingImageMerges);
+            return false;
+        }
+        if (merge) {
+            Common::Perf::Add(Common::Perf::PendingImageMergeMisses);
+        }
+        FlushFor(BarrierOrigin::Transit);
     }
     const size_t prev_num_barriers = static_cast<size_t>(image_barriers.size());
     image->GetBarriers(image_barriers, dst_layout, dst_access, dst_stage, subres_range);
@@ -436,7 +500,7 @@ void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
         needs_flush |= IsBufferAccessed(src, copy.bufferOffset, copy_size);
     }
     if (needs_flush) {
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Upload);
     }
 
     const auto cmdbuf = scheduler.Recorder();
@@ -465,7 +529,7 @@ void Runtime::DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
         needs_flush |= IsBufferAccessed(dst, copy.bufferOffset, copy_size, true);
     }
     if (needs_flush) {
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Download);
     }
 
     auto cmdbuf = scheduler.Recorder();
@@ -567,7 +631,7 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
     needs_flush |= Transit(dst, vk::ImageLayout::eTransferDstOptimal,
                            vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite);
     if (needs_flush) {
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Blit);
     }
 
     auto cmdbuf = scheduler.Recorder();
@@ -611,7 +675,7 @@ void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
                            vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite);
     needs_flush |= IsBufferAccessed(buffer, offset, copy_size);
     if (needs_flush) {
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Blit);
     }
 
     auto cmdbuf = scheduler.Recorder();
@@ -679,7 +743,7 @@ void Runtime::CopyMip(VideoCore::Image* src, VideoCore::Image* dst, u32 mip, u32
     needs_flush |= Transit(dst, vk::ImageLayout::eTransferDstOptimal,
                            vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite);
     if (needs_flush) {
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Blit);
     }
 
     const auto cmdbuf = scheduler.Recorder();
@@ -713,7 +777,7 @@ void Runtime::CopyColorAndDepth(VideoCore::Image* src, VideoCore::Image* dst) {
                                    vk::PipelineStageFlagBits2::eLateFragmentTests,
                                vk::AccessFlagBits2::eDepthStencilAttachmentWrite);
         if (needs_flush) {
-            FlushBarriers();
+            FlushFor(BarrierOrigin::Blit);
         }
 
         blit_helper->ReinterpretColorAsMsDepth(
@@ -734,7 +798,7 @@ void Runtime::CopyDepthStencil(VideoCore::Image* src, VideoCore::Image* dst,
     needs_flush |= Transit(dst, vk::ImageLayout::eTransferDstOptimal,
                            vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite);
     if (needs_flush) {
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Blit);
     }
 
     const auto aspect_mask = src->aspect_mask & dst->aspect_mask;
@@ -780,7 +844,7 @@ void Runtime::ResolveImage(VideoCore::Image* src, VideoCore::Image* dst,
     needs_flush |= Transit(dst, vk::ImageLayout::eTransferDstOptimal, dst_stage,
                            vk::AccessFlagBits2::eTransferWrite);
     if (needs_flush) {
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Blit);
     }
 
     const auto cmdbuf = scheduler.Recorder();
@@ -839,7 +903,7 @@ void Runtime::ClearImage(VideoCore::Image* dst, const VideoCore::SubresourceRang
         Transit(dst, vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eClear,
                 vk::AccessFlagBits2::eTransferWrite, range);
     if (needs_flush) {
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Clear);
     }
 
     const vk::ImageSubresourceRange vk_range = {
@@ -918,7 +982,7 @@ void Runtime::SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool c
                 .layerCount = image->info.resources.layers,
             },
         });
-        FlushBarriers();
+        FlushFor(BarrierOrigin::Samples);
 
         // Copy between ms and non ms backing images
         blit_helper->CopyBetweenMsImages(
@@ -1049,6 +1113,11 @@ void Runtime::FlushComputeBarriers(bool recent_conflict) {
     if (enabled) {
         Common::Perf::Add(Common::Perf::ComputeBarriersFallback);
     }
+    FlushFor(BarrierOrigin::Compute);
+}
+
+void Runtime::FlushFor(BarrierOrigin origin) {
+    barrier_origin = origin;
     FlushBarriers();
 }
 
@@ -1065,10 +1134,97 @@ void Runtime::FlushBarriers() {
     }
 
     if (!dep_info.memoryBarrierCount && !dep_info.imageMemoryBarrierCount) {
+        barrier_origin = BarrierOrigin::Other;
         return;
     }
     if (dep_info.memoryBarrierCount) {
         Common::Perf::Add(Common::Perf::BufferBarrierFlushes);
+    }
+    if (scheduler.IsRendering()) {
+        Common::Perf::Add(Common::Perf::PassBreakFlushes);
+    }
+    const auto origin = barrier_origin;
+    barrier_origin = BarrierOrigin::Other;
+    if (!image_barriers.empty()) {
+        Common::Perf::Add(Common::Perf::ImageBarrierFlushes);
+        switch (origin) {
+        case BarrierOrigin::Submit:
+            Common::Perf::Add(Common::Perf::ImageFlushSubmit);
+            break;
+        case BarrierOrigin::Draw:
+            Common::Perf::Add(Common::Perf::ImageFlushDraw);
+            break;
+        case BarrierOrigin::Compute:
+            Common::Perf::Add(Common::Perf::ImageFlushCompute);
+            break;
+        case BarrierOrigin::Copy:
+            Common::Perf::Add(Common::Perf::ImageFlushCopy);
+            break;
+        case BarrierOrigin::Image:
+            Common::Perf::Add(Common::Perf::ImageFlushImage);
+            break;
+        case BarrierOrigin::Other:
+            Common::Perf::Add(Common::Perf::ImageFlushOther);
+            break;
+        case BarrierOrigin::Transit:
+            Common::Perf::Add(Common::Perf::ImageFlushTransit);
+            break;
+        case BarrierOrigin::Upload:
+            Common::Perf::Add(Common::Perf::ImageFlushUpload);
+            break;
+        case BarrierOrigin::Download:
+            Common::Perf::Add(Common::Perf::ImageFlushDownload);
+            break;
+        case BarrierOrigin::Blit:
+            Common::Perf::Add(Common::Perf::ImageFlushBlit);
+            break;
+        case BarrierOrigin::Clear:
+            Common::Perf::Add(Common::Perf::ImageFlushClear);
+            break;
+        case BarrierOrigin::Samples:
+            Common::Perf::Add(Common::Perf::ImageFlushSamples);
+            break;
+        case BarrierOrigin::Feedback:
+            Common::Perf::Add(Common::Perf::ImageFlushFeedback);
+            break;
+        case BarrierOrigin::Present:
+            Common::Perf::Add(Common::Perf::ImageFlushPresent);
+            break;
+        case BarrierOrigin::Tile:
+            Common::Perf::Add(Common::Perf::ImageFlushTile);
+            break;
+        }
+    } else if (dep_info.memoryBarrierCount) {
+        Common::Perf::Add(Common::Perf::BufferOnlyFlushes);
+        switch (origin) {
+        case BarrierOrigin::Submit:
+            Common::Perf::Add(Common::Perf::BufferFlushSubmit);
+            break;
+        case BarrierOrigin::Draw:
+            Common::Perf::Add(Common::Perf::BufferFlushDraw);
+            break;
+        case BarrierOrigin::Compute:
+            Common::Perf::Add(Common::Perf::BufferFlushCompute);
+            break;
+        case BarrierOrigin::Copy:
+            Common::Perf::Add(Common::Perf::BufferFlushCopy);
+            break;
+        case BarrierOrigin::Image:
+            Common::Perf::Add(Common::Perf::BufferFlushImage);
+            break;
+        case BarrierOrigin::Other:
+        case BarrierOrigin::Transit:
+        case BarrierOrigin::Upload:
+        case BarrierOrigin::Download:
+        case BarrierOrigin::Blit:
+        case BarrierOrigin::Clear:
+        case BarrierOrigin::Samples:
+        case BarrierOrigin::Feedback:
+        case BarrierOrigin::Present:
+        case BarrierOrigin::Tile:
+            Common::Perf::Add(Common::Perf::BufferFlushOther);
+            break;
+        }
     }
 
     scheduler.EndRendering();

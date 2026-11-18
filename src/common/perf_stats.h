@@ -366,6 +366,44 @@ enum Counter : u32 {
     /// readback_done_batch: done small demand reads joined into one readback-queue submit.
     ReadbackDoneBatchJoins,
     ReadbackDoneBatchGroups,
+    /// pipeline_flat_reuse: direct VS+PS draws that kept the same key inputs.
+    PipelineReuseHits,
+    PipelineReuseMisses,
+    /// FlushBarriers while a render pass is open, and the kind of barrier recorded.
+    PassBreakFlushes,
+    ImageBarrierFlushes,
+    BufferOnlyFlushes,
+    /// Buffer-only FlushBarriers, split by the call that asked for it.
+    BufferFlushSubmit,
+    BufferFlushDraw,
+    BufferFlushCompute,
+    BufferFlushCopy,
+    BufferFlushImage,
+    BufferFlushOther,
+    /// Image FlushBarriers, split by the call that asked for it.
+    ImageFlushSubmit,
+    ImageFlushDraw,
+    ImageFlushCompute,
+    ImageFlushCopy,
+    ImageFlushImage,
+    ImageFlushOther,
+    /// Finer split of FlushFor that used to be lumped into Image.
+    ImageFlushTransit,
+    ImageFlushUpload,
+    ImageFlushDownload,
+    ImageFlushBlit,
+    ImageFlushClear,
+    ImageFlushSamples,
+    ImageFlushFeedback,
+    ImageFlushPresent,
+    ImageFlushTile,
+    /// BeginRendering actually opened a pass, or kept the one already open.
+    RenderPassBegins,
+    RenderPassKeeps,
+    /// pending_image_merge: a second transition of the same image and layout widened the
+    /// barrier already waiting, instead of submitting it first. Misses still submitted it.
+    PendingImageMerges,
+    PendingImageMergeMisses,
     CounterCount,
 };
 
@@ -424,7 +462,37 @@ inline bool IsLightweightReceipt(Counter counter) {
            counter == ReadbackDonePageFaults ||
            counter == ReadbackDonePageExpands ||
            counter == ReadbackDoneBatchJoins ||
-           counter == ReadbackDoneBatchGroups;
+           counter == ReadbackDoneBatchGroups ||
+           counter == PipelineReuseHits ||
+           counter == PipelineReuseMisses ||
+           counter == PassBreakFlushes ||
+           counter == ImageBarrierFlushes ||
+           counter == BufferOnlyFlushes ||
+           counter == BufferFlushSubmit ||
+           counter == BufferFlushDraw ||
+           counter == BufferFlushCompute ||
+           counter == BufferFlushCopy ||
+           counter == BufferFlushImage ||
+           counter == BufferFlushOther ||
+           counter == ImageFlushSubmit ||
+           counter == ImageFlushDraw ||
+           counter == ImageFlushCompute ||
+           counter == ImageFlushCopy ||
+           counter == ImageFlushImage ||
+           counter == ImageFlushOther ||
+           counter == ImageFlushTransit ||
+           counter == ImageFlushUpload ||
+           counter == ImageFlushDownload ||
+           counter == ImageFlushBlit ||
+           counter == ImageFlushClear ||
+           counter == ImageFlushSamples ||
+           counter == ImageFlushFeedback ||
+           counter == ImageFlushPresent ||
+           counter == ImageFlushTile ||
+           counter == RenderPassBegins ||
+           counter == RenderPassKeeps ||
+           counter == PendingImageMerges ||
+           counter == PendingImageMergeMisses;
 }
 
 inline std::atomic<u64>& LightweightReceipt(Counter counter) {
@@ -435,6 +503,36 @@ inline std::atomic<u64>& LightweightReceipt(Counter counter) {
     static std::atomic<u64> readback_done_page_expands{0};
     static std::atomic<u64> readback_done_batch_joins{0};
     static std::atomic<u64> readback_done_batch_groups{0};
+    static std::atomic<u64> pipeline_reuse_hits{0};
+    static std::atomic<u64> pipeline_reuse_misses{0};
+    static std::atomic<u64> pass_break_flushes{0};
+    static std::atomic<u64> image_barrier_flushes{0};
+    static std::atomic<u64> buffer_only_flushes{0};
+    static std::atomic<u64> buffer_flush_submit{0};
+    static std::atomic<u64> buffer_flush_draw{0};
+    static std::atomic<u64> buffer_flush_compute{0};
+    static std::atomic<u64> buffer_flush_copy{0};
+    static std::atomic<u64> buffer_flush_image{0};
+    static std::atomic<u64> buffer_flush_other{0};
+    static std::atomic<u64> image_flush_submit{0};
+    static std::atomic<u64> image_flush_draw{0};
+    static std::atomic<u64> image_flush_compute{0};
+    static std::atomic<u64> image_flush_copy{0};
+    static std::atomic<u64> image_flush_image{0};
+    static std::atomic<u64> image_flush_other{0};
+    static std::atomic<u64> image_flush_transit{0};
+    static std::atomic<u64> image_flush_upload{0};
+    static std::atomic<u64> image_flush_download{0};
+    static std::atomic<u64> image_flush_blit{0};
+    static std::atomic<u64> image_flush_clear{0};
+    static std::atomic<u64> image_flush_samples{0};
+    static std::atomic<u64> image_flush_feedback{0};
+    static std::atomic<u64> image_flush_present{0};
+    static std::atomic<u64> image_flush_tile{0};
+    static std::atomic<u64> render_pass_begins{0};
+    static std::atomic<u64> render_pass_keeps{0};
+    static std::atomic<u64> pending_image_merges{0};
+    static std::atomic<u64> pending_image_merge_misses{0};
     switch (counter) {
     case WriterFootprintProven:
         return writer_footprint_proven;
@@ -448,8 +546,70 @@ inline std::atomic<u64>& LightweightReceipt(Counter counter) {
         return readback_done_page_expands;
     case ReadbackDoneBatchJoins:
         return readback_done_batch_joins;
-    default:
+    case ReadbackDoneBatchGroups:
         return readback_done_batch_groups;
+    case PipelineReuseHits:
+        return pipeline_reuse_hits;
+    case PipelineReuseMisses:
+        return pipeline_reuse_misses;
+    case PassBreakFlushes:
+        return pass_break_flushes;
+    case ImageBarrierFlushes:
+        return image_barrier_flushes;
+    case BufferOnlyFlushes:
+        return buffer_only_flushes;
+    case BufferFlushSubmit:
+        return buffer_flush_submit;
+    case BufferFlushDraw:
+        return buffer_flush_draw;
+    case BufferFlushCompute:
+        return buffer_flush_compute;
+    case BufferFlushCopy:
+        return buffer_flush_copy;
+    case BufferFlushImage:
+        return buffer_flush_image;
+    case BufferFlushOther:
+        return buffer_flush_other;
+    case ImageFlushSubmit:
+        return image_flush_submit;
+    case ImageFlushDraw:
+        return image_flush_draw;
+    case ImageFlushCompute:
+        return image_flush_compute;
+    case ImageFlushCopy:
+        return image_flush_copy;
+    case ImageFlushImage:
+        return image_flush_image;
+    case ImageFlushOther:
+        return image_flush_other;
+    case ImageFlushTransit:
+        return image_flush_transit;
+    case ImageFlushUpload:
+        return image_flush_upload;
+    case ImageFlushDownload:
+        return image_flush_download;
+    case ImageFlushBlit:
+        return image_flush_blit;
+    case ImageFlushClear:
+        return image_flush_clear;
+    case ImageFlushSamples:
+        return image_flush_samples;
+    case ImageFlushFeedback:
+        return image_flush_feedback;
+    case ImageFlushPresent:
+        return image_flush_present;
+    case ImageFlushTile:
+        return image_flush_tile;
+    case RenderPassBegins:
+        return render_pass_begins;
+    case RenderPassKeeps:
+        return render_pass_keeps;
+    case PendingImageMerges:
+        return pending_image_merges;
+    case PendingImageMergeMisses:
+        return pending_image_merge_misses;
+    default:
+        return pending_image_merge_misses;
     }
 }
 
@@ -654,6 +814,12 @@ struct Tuning {
     /// Default off. Small demand reads whose writers are already done share one readback-queue
     /// submit when several are queued on the command processor (see BufferCache::JoinDoneBatch).
     std::atomic<bool> readback_done_batch{false};
+    /// Default off. A direct VS+PS draw reuses the previous pipeline when the key inputs and
+    /// specialization words match, after the flat user-data table is refreshed.
+    std::atomic<bool> pipeline_flat_reuse{false};
+    /// Default off. A second transition of an image already waiting in this batch, to the same
+    /// layout and the same subresource range, widens that barrier instead of submitting it.
+    std::atomic<bool> pending_image_merge{false};
     /// Only exact module-proven GDS counter footprints; descriptors/queue ownership unchanged.
     std::atomic<bool> gds_counter_scope{false};
     /// Draws without vertices and dispatches without workgroups are left out before their

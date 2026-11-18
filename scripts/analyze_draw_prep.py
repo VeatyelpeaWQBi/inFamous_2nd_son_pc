@@ -259,15 +259,74 @@ def analyze(session):
                 budget_acceptance=False,
                 limitation="Only direct-draw CPU wall time, sampled once per 256-call block. "
                            "Per-EOP numbers are weighted estimates, not exact self time or "
-                           "a rendered frame critical path. Buffer/texture and buffer-detail "
-                           "times are nested and must not be added to their parent phases. "
+                           "a rendered frame critical path. Protocol 1 buffer/texture clocks are "
+                           "nested and must not be added to their parent phases. Protocol 2 "
+                           "draw_prep_buffer_detail rows are a separate 1/1024 sample (a obtain, "
+                           "b image invalidation, c hazard, d BindBuffers) and must not be added "
+                           "to the nine phase estimates. "
                            "Indirect draws, compute dispatches and unsampled outliers remain outside "
-                           "this budget. Protocol 1 enables nested clocks and is too intrusive for "
+                           "this budget. A draw_prep_dispatch row with nonzero c or d packs four "
+                           "u32 spans: pipeline, bind, record, retire. They are not draw phases. "
+                           "Protocol 1 enables nested clocks and is too intrusive for "
                            "budget acceptance. Protocol 2 times one phase per selected call, plus "
                            "an independent whole-draw control once per nine sampling blocks. "
                            "Phase estimates are from different calls: compare their sum with the control, "
                            "do not assume equality. Clock/trace overhead and sampling variation remain. "
                            "This diagnostic is never a lightweight FPS acceptance trial.")
+
+
+def dispatch_prep_summary(session: Path):
+    """Whole DispatchDirect CPU time, one call in 256. Not part of the direct-draw phases.
+
+    When c or d is nonzero, c packs pipeline then bind and d packs record then retire,
+    each as a u32 nanosecond span. a and b remain the whole call. Older traces leave
+    both at zero and have no phase split.
+    """
+    total_ns = 0
+    samples = 0
+    phases = [0, 0, 0, 0]
+    phased = 0
+    with (Path(session) / "path-trace.csv").open(encoding="utf-8-sig", newline="") as stream:
+        for raw in csv.DictReader(stream):
+            if raw["event"] != "draw_prep_dispatch":
+                continue
+            samples += 1
+            total_ns += int(raw["b"]) - int(raw["a"])
+            packed_c = int(raw["c"])
+            packed_d = int(raw["d"])
+            if packed_c or packed_d:
+                phased += 1
+                phases[0] += (packed_c >> 32) & 0xffffffff
+                phases[1] += packed_c & 0xffffffff
+                phases[2] += (packed_d >> 32) & 0xffffffff
+                phases[3] += packed_d & 0xffffffff
+    summary = dict(samples=samples, total_ns=total_ns,
+                   mean_us=total_ns / samples / 1e3 if samples else None)
+    if phased:
+        summary.update(phased_samples=phased, before_bind_ns=phases[0], bind_ns=phases[1],
+                       record_ns=phases[2], retire_ns=phases[3])
+    return summary
+
+
+def buffer_detail_summary(session: Path):
+    """Read draw_prep_buffer_detail rows. Not part of the nine-phase budget."""
+    totals = {"obtain_ns": 0, "invalidate_ns": 0, "hazard_ns": 0, "bind_ns": 0}
+    samples = 0
+    with (Path(session) / "path-trace.csv").open(encoding="utf-8-sig", newline="") as stream:
+        for raw in csv.DictReader(stream):
+            if raw["event"] != "draw_prep_buffer_detail":
+                continue
+            samples += 1
+            totals["obtain_ns"] += int(raw["a"])
+            totals["invalidate_ns"] += int(raw["b"])
+            totals["hazard_ns"] += int(raw["c"])
+            totals["bind_ns"] += int(raw["d"])
+    bind = totals["bind_ns"]
+    shares = {key: (totals[key] / bind if bind else None)
+              for key in ("obtain_ns", "invalidate_ns", "hazard_ns")}
+    return dict(samples=samples, **totals, share_of_bind=shares,
+                outside_bind_ns=bind - totals["obtain_ns"] - totals["invalidate_ns"] -
+                totals["hazard_ns"] if bind else None)
 
 
 if __name__ == "__main__":

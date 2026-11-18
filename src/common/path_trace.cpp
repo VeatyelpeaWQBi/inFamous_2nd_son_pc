@@ -73,8 +73,9 @@ constexpr std::array Names{
     "draw_prep_buffer_detail", "draw_prep_identity", "draw_prep_limit",
     "draw_prep_phase",
     "read_prefetch_job", "read_prefetch_batch",
+    "draw_prep_dispatch",
 };
-static_assert(Names.size() == static_cast<u32>(Kind::ReadPrefetchBatch) + 1);
+static_assert(Names.size() == static_cast<u32>(Kind::DrawPrepDispatch) + 1);
 struct State {
     std::array<Slot, MaxThreads> slots;
     std::atomic<u32> next_slot{0};
@@ -405,6 +406,7 @@ void Emit(Kind kind, u64 id, u64 a, u64 b, u64 c, u64 d) noexcept {
         kind != Kind::DrawPrepResources && kind != Kind::DrawPrepBufferDetail &&
         kind != Kind::DrawPrepIdentity && kind != Kind::DrawPrepLimit &&
         kind != Kind::DrawPrepPhase &&
+        kind != Kind::DrawPrepDispatch &&
         kind != Kind::FrameSample && kind != Kind::FlipEopRegister &&
         kind != Kind::SubmitQueued && kind != Kind::SubmitDriverBegin &&
         kind != Kind::SubmitDriverEnd) {

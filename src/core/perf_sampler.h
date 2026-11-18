@@ -144,6 +144,9 @@ void ApplyGameProfile(std::string_view serial);
  *                                 as they are by the command processor
  *   pipeline_key_memo = 0         1: a draw with the pipeline key of the draw before reuses its
  *                                 pipeline
+ *   pipeline_flat_reuse = 0       1: a direct VS+PS draw reuses that pipeline when key inputs match,
+ *                                 after refreshing the flat user-data table. On for CUSA00309
+ *                                 after one lightweight ultimate window improved.
  *   bind_prefetch = 0             1: the memo entries of the resource lookups of a draw are
  *                                 prefetched, a draw ahead with the scout (whose texture keys
  *                                 are then taken as they are)

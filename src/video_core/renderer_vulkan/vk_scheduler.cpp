@@ -566,8 +566,10 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
 
 void Scheduler::BeginRendering(const RenderState& new_state) {
     if (is_rendering && render_state == new_state) {
+        Common::Perf::Add(Common::Perf::RenderPassKeeps);
         return;
     }
+    Common::Perf::Add(Common::Perf::RenderPassBegins);
     EndRendering();
     is_rendering = true;
     render_state = new_state;

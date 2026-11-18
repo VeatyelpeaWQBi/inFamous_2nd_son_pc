@@ -222,7 +222,7 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
                                                           256, false, true);
 
     scheduler.EndRendering();
-    runtime.FlushBarriers();
+    runtime.FlushFor(Vulkan::Runtime::BarrierOrigin::Tile);
 
     const auto cmdbuf = scheduler.Recorder();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, GetTilingPipeline(info, false));
@@ -325,7 +325,7 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
     }
 
     runtime.DownloadImage(&in_image, staging.buffer, buffer_copies);
-    runtime.FlushBarriers();
+    runtime.FlushFor(Vulkan::Runtime::BarrierOrigin::Tile);
 
     const auto cmdbuf = scheduler.Recorder();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, GetTilingPipeline(info, true));

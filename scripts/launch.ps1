@@ -50,10 +50,13 @@ if($RendererPgoTrial -ne 'Off' -and
     throw 'Renderer PGO requires its own native super capture.'
 }
 if($CriticalCapture -and (-not $SuperCapture -or $isDiagnostic)){throw 'Critical capture requires the native super collector.'}
+$drawPrepForeignCandidate = $C73ScanCandidate -or $ParticlePollPauseCandidate -or $AccessUnionCandidate -or
+    $ReadbackCopyStageCandidate -or $ImageReadTransitionCandidate -or $FeedbackArenaCandidate -or
+    $VertexInputKeyCandidate -or $FeedbackArenaGroupCandidate -or $FeedbackArenaTiledCandidate -or $SuperPool
 if($DrawPrepAudit -and (-not $CriticalCapture -or -not $SuperCaptureBatch -or $isDiagnostic -or
    $CpuHotspots -or $ReadbackBarrierAudit -or $PageProtectAudit -or $ComputeScopeAudit -or
-   $ReadbackWaitScopeAudit -or $ComputeProtectAudit -or -not $FeedbackArenaPoolCandidate)){
-    throw 'Draw preparation audit requires its owned compact-pool native capture.'
+   $ReadbackWaitScopeAudit -or $ComputeProtectAudit -or $drawPrepForeignCandidate)){
+    throw 'Draw preparation audit requires its own native critical capture, on the current default or the compact pool.'
 }
 if($ReadbackBarrierAudit -and (-not $CriticalCapture -or -not $SuperCaptureBatch)){
     throw 'Readback barrier audit requires an owned native critical capture.'

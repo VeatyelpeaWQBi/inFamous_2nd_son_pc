@@ -817,7 +817,11 @@ void PipelineCache::CompileAsync(Pipeline* pipeline) {
 
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params) {
     draw_indirect_params = params;
+    if (const auto* reused = TryReuseGraphicsPipeline()) {
+        return reused;
+    }
     if (!RefreshGraphicsKey()) {
+        RememberGraphicsReuse(nullptr);
         return nullptr;
     }
     // Pipeline key memo: draws in a row mostly use the same pipeline, found again without
@@ -826,6 +830,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         Common::Perf::GetTuning().pipeline_key_memo.load(std::memory_order_relaxed);
     if (key_memo && last_graphics_pipeline != nullptr && last_graphics_key == graphics_key) {
         Common::Perf::Add(Common::Perf::PipelineKeyMemoHits);
+        RememberGraphicsReuse(last_graphics_pipeline);
         return last_graphics_pipeline;
     }
     const auto [it, is_new] = graphics_pipelines.try_emplace(graphics_key);
@@ -866,8 +871,10 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             pipeline->Compile();
         }
         Common::Perf::Add(Common::Perf::PipelineStallNs, Common::Perf::NowNs() - start_ns);
+        RememberGraphicsReuse(pipeline);
         return pipeline;
     }
+    RememberGraphicsReuse(it->second.get());
     return it->second.get();
 }
 
@@ -1493,6 +1500,150 @@ void SpecializationInputs(const InfoT& info, const Shader::Backend::Bindings& bi
     }
     DEBUG_ASSERT(out == words.data() + words.size());
 }
+
+namespace {
+
+u64 HashGraphicsKeyInputs(const AmdGpu::Regs& regs) {
+    struct Inputs {
+        u64 ps_address;
+        u64 vs_address;
+        u32 stage_raw;
+        u32 primitive;
+        AmdGpu::PolygonControl polygon;
+        AmdGpu::ClipperControl clipper;
+        AmdGpu::DepthRenderOverride depth_override;
+        AmdGpu::DepthBuffer depth;
+        AmdGpu::ColorBufferMask shader_mask;
+        AmdGpu::ColorBufferMask target_mask;
+        AmdGpu::ColorControl color_control;
+        AmdGpu::ColorExportFormat color_export;
+        AmdGpu::ShaderExportFormat z_export;
+        AmdGpu::PsInput ps_ena;
+        AmdGpu::PsInput ps_flags;
+        u32 num_interp;
+        AmdGpu::BarycentricControl barycentric;
+        AmdGpu::VsOutputControl vs_out;
+        AmdGpu::DepthShaderControl depth_shader;
+        AmdGpu::AaConfig aa;
+        AmdGpu::LsHsConfig ls_hs;
+        u32 step0;
+        u32 step1;
+        std::array<AmdGpu::BlendControl, AmdGpu::NUM_COLOR_BUFFERS> blend;
+        std::array<AmdGpu::PsInputControl, 32> ps_inputs;
+        AmdGpu::ColorBuffer colors[AmdGpu::NUM_COLOR_BUFFERS];
+    };
+    Inputs inputs{};
+    inputs.ps_address = regs.ps_program.address;
+    inputs.vs_address = regs.vs_program.address;
+    inputs.stage_raw = regs.stage_enable.raw;
+    inputs.primitive = static_cast<u32>(regs.primitive_type);
+    inputs.polygon = regs.polygon_control;
+    inputs.clipper = regs.clipper_control;
+    inputs.depth_override = regs.depth_render_override;
+    inputs.depth = regs.depth_buffer;
+    inputs.shader_mask = regs.color_shader_mask;
+    inputs.target_mask = regs.color_target_mask;
+    inputs.color_control = regs.color_control;
+    inputs.color_export = regs.color_export_format;
+    inputs.z_export = regs.z_export_format;
+    inputs.ps_ena = regs.ps_input_ena;
+    inputs.ps_flags = regs.ps_input_addr;
+    inputs.num_interp = regs.num_interp;
+    inputs.barycentric = regs.barycentric_control;
+    inputs.vs_out = regs.vs_output_control;
+    inputs.depth_shader = regs.depth_shader_control;
+    inputs.aa = regs.aa_config;
+    inputs.ls_hs = regs.ls_hs_config;
+    inputs.step0 = regs.vgt_instance_step_rate_0;
+    inputs.step1 = regs.vgt_instance_step_rate_1;
+    inputs.blend = regs.blend_control;
+    inputs.ps_inputs = regs.ps_inputs;
+    std::memcpy(inputs.colors, regs.color_buffers, sizeof(inputs.colors));
+    return XXH3_64bits(&inputs, sizeof(inputs));
+}
+
+} // namespace
+
+} // namespace
+
+const GraphicsPipeline* PipelineCache::TryReuseGraphicsPipeline() {
+    if (!Common::Perf::GetTuning().pipeline_flat_reuse.load(std::memory_order_relaxed) ||
+        !reuse_valid || last_graphics_pipeline == nullptr ||
+        draw_indirect_params.vertex_sgpr_offset != 0 ||
+        draw_indirect_params.instance_sgpr_offset != 0 ||
+        !instance.IsVertexInputDynamicState()) {
+        return nullptr;
+    }
+    const auto& regs = liverpool->regs;
+    if (regs.stage_enable.raw != AmdGpu::ShaderStageEnable::VgtStages::Vs ||
+        regs.ps_program.address != reuse_ps_addr || regs.vs_program.address != reuse_vs_addr ||
+        HashGraphicsKeyInputs(regs) != reuse_regs_hash) {
+        return nullptr;
+    }
+    auto refresh = [this](const auto& program) -> Shader::Info* {
+        const auto params = GetStageParams(program);
+        const auto it = program_cache.find(params.hash);
+        if (it == program_cache.end()) {
+            return nullptr;
+        }
+        Shader::Info& info = it.value()->info;
+        info.user_data = params.user_data;
+        info.pgm_base = params.Base();
+        info.RefreshFlatBuf();
+        return &info;
+    };
+    Shader::Info* ps = refresh(regs.ps_program);
+    Shader::Info* vs = refresh(regs.vs_program);
+    if (ps == nullptr || vs == nullptr) {
+        reuse_valid = false;
+        return nullptr;
+    }
+    Shader::Backend::Bindings binding{};
+    boost::container::small_vector<u32, 160> words;
+    SpecializationInputs(*ps, binding, words);
+    ps->AddBindings(binding);
+    SpecializationInputs(*vs, binding, words);
+    const u64 spec = XXH3_64bits(words.data(), words.size() * sizeof(u32));
+    if (spec != reuse_spec_hash) {
+        Common::Perf::Add(Common::Perf::PipelineReuseMisses);
+        reuse_valid = false;
+        return nullptr;
+    }
+    Common::Perf::Add(Common::Perf::PipelineReuseHits);
+    return last_graphics_pipeline;
+}
+
+void PipelineCache::RememberGraphicsReuse(const GraphicsPipeline* pipeline) {
+    reuse_valid = false;
+    if (pipeline == nullptr ||
+        !Common::Perf::GetTuning().pipeline_flat_reuse.load(std::memory_order_relaxed) ||
+        draw_indirect_params.vertex_sgpr_offset != 0 ||
+        draw_indirect_params.instance_sgpr_offset != 0 ||
+        !instance.IsVertexInputDynamicState()) {
+        return;
+    }
+    const auto& regs = liverpool->regs;
+    if (regs.stage_enable.raw != AmdGpu::ShaderStageEnable::VgtStages::Vs) {
+        return;
+    }
+    const Shader::Info* ps = infos[static_cast<u32>(Shader::SwStage::Fragment)];
+    const Shader::Info* vs = infos[static_cast<u32>(Shader::SwStage::Vertex)];
+    if (ps == nullptr || vs == nullptr) {
+        return;
+    }
+    Shader::Backend::Bindings binding{};
+    boost::container::small_vector<u32, 160> words;
+    SpecializationInputs(*ps, binding, words);
+    ps->AddBindings(binding);
+    SpecializationInputs(*vs, binding, words);
+    reuse_spec_hash = XXH3_64bits(words.data(), words.size() * sizeof(u32));
+    reuse_regs_hash = HashGraphicsKeyInputs(regs);
+    reuse_ps_addr = regs.ps_program.address;
+    reuse_vs_addr = regs.vs_program.address;
+    reuse_valid = true;
+}
+
+namespace {
 
 u64 SpecializationKey(std::span<const u32> words, const Shader::RuntimeInfo& runtime_info) {
     return HashCombine(XXH3_64bits(words.data(), words.size() * sizeof(u32)),
